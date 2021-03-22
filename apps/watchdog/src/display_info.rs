@@ -181,24 +181,26 @@ impl MemoryData {
 
 #[derive(Serialize, PartialEq, Clone, Debug, Default)]
 pub struct OcamlDiskData {
+    debugger: u64,
     block_storage: u64,
     context_irmin: u64,
 }
 
 impl fmt::Display for OcamlDiskData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let total = self.block_storage + self.context_irmin;
+        let total = self.block_storage + self.context_irmin + self.debugger;
         write!(
             f,
-            "{} MB (total)\n\tBlock storage: {} MB\n\tContext: {} MB",
-            total, self.block_storage, self.context_irmin,
+            "{} MB (total)\n\tBlock storage: {} MB\n\tContext: {} MB\n\tDebugger: {} MB",
+            total, self.block_storage, self.context_irmin, self.debugger
         )
     }
 }
 
 impl OcamlDiskData {
-    pub fn new(block_storage: u64, context_irmin: u64) -> Self {
+    pub fn new(debugger: u64, block_storage: u64, context_irmin: u64) -> Self {
         Self {
+            debugger,
             block_storage,
             context_irmin,
         }
@@ -206,6 +208,7 @@ impl OcamlDiskData {
 
     pub fn to_megabytes(&self) -> Self {
         Self {
+            debugger: self.debugger / 1024 / 1024,
             block_storage: self.block_storage / 1024 / 1024,
             context_irmin: self.context_irmin / 1024 / 1024,
         }
@@ -246,6 +249,7 @@ impl fmt::Display for DiskData {
 
 #[derive(Serialize, PartialEq, Clone, Debug, Default)]
 pub struct TezedgeDiskData {
+    debugger: u64,
     context_irmin: u64,
     context_merkle_rocksdb: u64,
     block_storage: u64,
@@ -256,6 +260,7 @@ pub struct TezedgeDiskData {
 impl fmt::Display for TezedgeDiskData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let TezedgeDiskData {
+            debugger,
             context_actions,
             context_irmin,
             context_merkle_rocksdb,
@@ -263,26 +268,29 @@ impl fmt::Display for TezedgeDiskData {
             main_db,
         } = self;
 
-        let total = context_actions
+        let total = debugger
+            + context_actions
             + context_irmin
             + context_merkle_rocksdb
             + block_storage
             + main_db;
         writeln!(
             f,
-            "{} MB (total)\n\tMain database: {} MB\n\tContex - irmin: {} MB\n\tContext - rust_merkel_tree: {} MB\n\tContext actions: {} MB\n\tBlock storage (commit log): {} MB",
+            "{} MB (total)\n\tMain database: {} MB\n\tContex - irmin: {} MB\n\tContext - rust_merkel_tree: {} MB\n\tContext actions: {} MB\n\tBlock storage (commit log): {} MB\n\tDebugger: {} MB",
             total,
             main_db,
             context_irmin,
             context_merkle_rocksdb,
             context_actions,
             block_storage,
+            debugger,
         )
     }
 }
 
 impl TezedgeDiskData {
     pub fn new(
+        debugger: u64,
         context_irmin: u64,
         context_merkle_rocksdb: u64,
         block_storage: u64,
@@ -290,6 +298,7 @@ impl TezedgeDiskData {
         main_db: u64,
     ) -> Self {
         Self {
+            debugger,
             context_irmin,
             context_merkle_rocksdb,
             block_storage,
@@ -300,6 +309,7 @@ impl TezedgeDiskData {
 
     pub fn to_megabytes(&self) -> Self {
         Self {
+            debugger: self.debugger / 1024 / 1024,
             context_irmin: self.context_irmin / 1024 / 1024,
             context_merkle_rocksdb: self.context_merkle_rocksdb / 1024 / 1024,
             block_storage: self.block_storage / 1024 / 1024,
