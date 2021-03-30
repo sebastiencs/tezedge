@@ -48,16 +48,8 @@ pub enum StringTreeEntry {
     Null,
 }
 
-/// Abstraction on context manipulation
-pub trait ContextApi {
-    // set key-value
-    fn set(
-        &mut self,
-        context_hash: &Option<ContextHash>,
-        new_tree_id: TreeId,
-        key: &ContextKey,
-        value: ContextValue,
-    ) -> Result<(), ContextError>;
+/// Used by the shell
+pub trait RepositoryApi {
     // checkout context for hash
     fn checkout(&self, context_hash: &ContextHash) -> Result<(), ContextError>;
     // commit current context diff to storage
@@ -70,6 +62,19 @@ pub trait ContextApi {
         message: String,
         date: i64,
     ) -> Result<ContextHash, ContextError>;
+}
+
+/// Abstraction on context manipulation
+/// Used by the protocol
+pub trait ContextApi {
+    // set key-value
+    fn set(
+        &mut self,
+        context_hash: &Option<ContextHash>,
+        new_tree_id: TreeId,
+        key: &ContextKey,
+        value: ContextValue,
+    ) -> Result<(), ContextError>;
     fn delete_to_diff(
         &self,
         context_hash: &Option<ContextHash>,

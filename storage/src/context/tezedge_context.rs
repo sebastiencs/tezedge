@@ -14,23 +14,10 @@ use crate::context::actions::{get_new_tree_hash, get_tree_id};
 use crate::context::merkle::hash::EntryHash;
 use crate::context::merkle::merkle_storage::{MerkleError, MerkleStorage};
 use crate::context::merkle::merkle_storage_stats::MerkleStoragePerfReport;
-use crate::context::{ContextApi, ContextError, ContextKey, ContextValue, StringTreeEntry, TreeId};
+use crate::context::{ContextApi, ContextError, ContextKey, ContextValue, RepositoryApi, StringTreeEntry, TreeId};
 use crate::{BlockStorage, BlockStorageReader, StorageError};
 
-impl ContextApi for TezedgeContext {
-    fn set(
-        &mut self,
-        _context_hash: &Option<ContextHash>,
-        new_tree_id: TreeId,
-        key: &ContextKey,
-        value: ContextValue,
-    ) -> Result<(), ContextError> {
-        let mut merkle = self.merkle.write()?;
-        merkle.set(new_tree_id, key, value)?;
-
-        Ok(())
-    }
-
+impl RepositoryApi for TezedgeContext {
     fn checkout(&self, context_hash: &ContextHash) -> Result<(), ContextError> {
         let context_hash_arr: EntryHash = context_hash.as_ref().as_slice().try_into()?;
         let mut merkle = self.merkle.write()?;
@@ -56,6 +43,21 @@ impl ContextApi for TezedgeContext {
         self.associate_block_and_context_hash(block_hash, &commit_hash, parent_context_hash)?;
 
         Ok(commit_hash)
+    }
+}
+
+impl ContextApi for TezedgeContext {
+    fn set(
+        &mut self,
+        _context_hash: &Option<ContextHash>,
+        new_tree_id: TreeId,
+        key: &ContextKey,
+        value: ContextValue,
+    ) -> Result<(), ContextError> {
+        let mut merkle = self.merkle.write()?;
+        merkle.set(new_tree_id, key, value)?;
+
+        Ok(())
     }
 
     fn delete_to_diff(
