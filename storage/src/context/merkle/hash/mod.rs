@@ -150,7 +150,8 @@ fn hash_long_inode(inode: &Inode) -> Result<EntryHash, HashingError> {
                     NodeKind::Leaf => hasher.update(&[1u8]),
                     NodeKind::NonLeaf => hasher.update(&[0u8]),
                 };
-                hasher.update(node.entry_hash.as_ref());
+                hasher.update(&hash_entry(&node.entry)?.as_ref());
+                // hasher.update(node.entry_hash.as_ref());
             }
         }
         Inode::Tree {
@@ -213,7 +214,8 @@ fn hash_short_inode(tree: &Tree) -> Result<EntryHash, HashingError> {
         leb128::write::unsigned(&mut hasher, k.len() as u64)?;
         hasher.update(k.as_bytes());
         hasher.update(&(ENTRY_HASH_LEN as u64).to_be_bytes());
-        hasher.update(&v.entry_hash.as_ref());
+        hasher.update(&hash_entry(&v.entry)?.as_ref());
+        // hasher.update(&v.entry_hash.as_ref());
     }
 
     Ok(hasher.finalize_boxed().as_ref().try_into()?)

@@ -15,7 +15,8 @@ use crypto::hash::HashType;
 use crate::context::gc::{
     collect_hashes_recursively, fetch_entry_from_store, GarbageCollectionError, GarbageCollector,
 };
-use crate::context::merkle::hash::EntryHash;
+// use crate::context::merkle::hash::EntryHash;
+use crate::context::merkle::hash::{hash_entry, EntryHash};
 use crate::context::merkle::Entry;
 use crate::context::{ContextKeyValueStoreSchema, ContextValue};
 use crate::persistent::database::DBError;
@@ -374,7 +375,7 @@ fn kvstore_gc_thread_fn<T: KeyValueStoreBackend<ContextKeyValueStoreSchema>>(
                 match entry {
                     Entry::Blob(_) => {}
                     Entry::Tree(tree) => {
-                        let children = tree.into_iter().map(|(_, node)| *node.entry_hash);
+                        let children = tree.into_iter().map(|(_, node)| hash_entry(&node.entry).unwrap());
                         todo_keys.extend(children);
                     }
                     Entry::Commit(commit) => {
