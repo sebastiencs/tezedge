@@ -5,7 +5,7 @@
 //!
 //! A document describing the algorithm can be found [here](https://github.com/tarides/tezos-context-hash).
 
-use std::{array::TryFromSliceError, convert::TryInto, io};
+use std::{array::TryFromSliceError, convert::TryInto, io, rc::Rc};
 
 use blake2::digest::{InvalidOutputSize, Update, VariableOutput};
 use blake2::VarBlake2b;
@@ -59,7 +59,7 @@ impl From<io::Error> for HashingError {
 /// Inode representation used for hashing directories with >256 entries.
 enum Inode {
     Empty,
-    Value(Vec<(String, Node)>),
+    Value(Vec<(Rc<String>, Node)>),
     Tree {
         depth: u32,
         children: usize,
@@ -81,7 +81,7 @@ fn index(depth: u32, name: &str) -> u32 {
 // IMPORTANT: entries must be sorted in lexicographic order of the name
 // Because we use `OrdMap`, this holds true when we iterate the items, but this is
 // something to keep in mind if the representation of `Tree` changes.
-fn partition_entries(depth: u32, entries: &[(&String, &Node)]) -> Result<Inode, HashingError> {
+fn partition_entries(depth: u32, entries: &[(&Rc<String>, &Node)]) -> Result<Inode, HashingError> {
     if entries.is_empty() {
         Ok(Inode::Empty)
     } else if entries.len() <= 32 {
@@ -98,7 +98,7 @@ fn partition_entries(depth: u32, entries: &[(&String, &Node)]) -> Result<Inode, 
 
         // pointers = {p(i) | i <- [0..31], t(i) != Empty}
         for i in 0..=31 {
-            let entries_at_depth_and_index_i: Vec<(&String, &Node)> = entries
+            let entries_at_depth_and_index_i: Vec<(&Rc<String>, &Node)> = entries
                 .iter()
                 .filter(|(name, _)| index(depth, name) == i)
                 .cloned()
@@ -150,7 +150,22 @@ fn hash_long_inode(inode: &Inode) -> Result<EntryHash, HashingError> {
                     NodeKind::Leaf => hasher.update(&[1u8]),
                     NodeKind::NonLeaf => hasher.update(&[0u8]),
                 };
-                hasher.update(&hash_entry(&node.entry)?.as_ref());
+                println!("LAAAAB");
+                // hasher.update(&hash_entry(&node.entry)?.as_ref());
+
+                let hash = match node.entry_hash.get() {
+                    Some(hash) => {
+                        hash
+                    }
+                    None => {
+                        let hash = hash_entry(node.entry.borrow().as_ref().unwrap())?;
+                        node.entry_hash.set(Some(hash));
+                        hash
+                    }
+                };
+
+                hasher.update(&hash);
+
                 // hasher.update(node.entry_hash.as_ref());
             }
         }
@@ -214,7 +229,27 @@ fn hash_short_inode(tree: &Tree) -> Result<EntryHash, HashingError> {
         leb128::write::unsigned(&mut hasher, k.len() as u64)?;
         hasher.update(k.as_bytes());
         hasher.update(&(ENTRY_HASH_LEN as u64).to_be_bytes());
-        hasher.update(&hash_entry(&v.entry)?.as_ref());
+
+        let hash = match v.entry_hash.get() {
+            Some(hash) => {
+                hash
+            }
+            None => {
+                let hash = hash_entry(v.entry.borrow().as_ref().unwrap())?;
+                v.entry_hash.set(Some(hash));
+                hash
+            }
+        };
+
+        // println!("ENTRY={:p} {:?}", &v.entry, match v.entry {
+        //     Entry::Blob(_) => "Blob",
+        //     Entry::Tree(_) => "Tree",
+        //     Entry::Commit(_) => "Commit"
+        // });
+
+        hasher.update(&hash);
+
+        // hasher.update(&hash_entry(&v.entry)?.as_ref());
         // hasher.update(&v.entry_hash.as_ref());
     }
 
@@ -226,7 +261,8 @@ fn hash_short_inode(tree: &Tree) -> Result<EntryHash, HashingError> {
 pub(crate) fn hash_tree(tree: &Tree) -> Result<EntryHash, HashingError> {
     // If there are >256 entries, we need to partition the tree and hash the resulting inode
     if tree.len() > 256 {
-        let entries: Vec<(&String, &Node)> = tree.iter().map(|(s, n)| (s, n.as_ref())).collect();
+        println!("LONG");
+        let entries: Vec<(&Rc<String>, &Node)> = tree.iter().map(|(s, n)| (s, n.as_ref())).collect();
         let inode = partition_entries(0, &entries)?;
         hash_long_inode(&inode)
     } else {

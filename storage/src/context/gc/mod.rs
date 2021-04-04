@@ -87,7 +87,7 @@ pub fn collect_hashes(
                     for (_, child_node) in tree.iter() {
                         let entry = &child_node.entry;
                         //let entry = fetch_entry_from_store(store, *child_node.entry_hash)?;
-                        collect_hashes(&entry, &mut b, cache, store)?;
+                        collect_hashes(entry.borrow().as_ref().unwrap(), &mut b, cache, store)?;
                     }
                     cache.insert(hash_entry(entry)?, b.clone());
                     batch.extend(b);
