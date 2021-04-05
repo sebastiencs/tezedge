@@ -310,7 +310,7 @@ pub(crate) fn hash_entry(entry: &Entry) -> Result<EntryHash, HashingError> {
 #[cfg(test)]
 #[allow(unused_must_use)]
 mod tests {
-    use std::{env, fs::File, io::Read, path::Path, sync::Arc};
+    use std::{cell::RefCell, env, fs::File, io::Read, path::Path, sync::Arc};
 
     use flate2::read::GzDecoder;
 
@@ -426,9 +426,10 @@ mod tests {
         let mut dummy_tree = Tree::new();
         let node = Node {
             node_kind: NodeKind::Leaf,
-            entry_hash: Arc::new(hash_blob(&vec![1]).unwrap()), // 407f958990678e2e9fb06758bc6520dae46d838d39948a4c51a5b19bd079293d
+            entry_hash: RefCell::new(Some(hash_blob(&vec![1]).unwrap())),
+            entry: RefCell::new(None), // 407f958990678e2e9fb06758bc6520dae46d838d39948a4c51a5b19bd079293d
         };
-        dummy_tree.insert("a".to_string(), Arc::new(node));
+        dummy_tree.insert(Rc::new("a".to_string()), Rc::new(node));
 
         // hexademical representation of above tree:
         //
@@ -533,13 +534,14 @@ mod tests {
                     other => panic!("Got unexpected binding kind: {}", other),
                 };
                 let entry_hash = ContextHash::from_base58_check(&binding.hash).unwrap();
-                let entry_hash: Arc<EntryHash> =
-                    Arc::new(entry_hash.as_ref().as_slice().try_into().unwrap());
+                let entry_hash: RefCell<Option<EntryHash>> =
+                    RefCell::new(Some(entry_hash.as_ref().as_slice().try_into().unwrap()));
                 let node = Node {
                     node_kind,
                     entry_hash,
+                    entry: RefCell::new(None),
                 };
-                tree = tree.update(binding.name, Arc::new(node));
+                tree = tree.update(Rc::new(binding.name), Rc::new(node));
             }
 
             let expected_hash = ContextHash::from_base58_check(&test_case.hash).unwrap();

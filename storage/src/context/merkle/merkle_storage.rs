@@ -1582,10 +1582,10 @@ mod tests {
                 fn test_commit_hash() {
                     super::test_commit_hash($kv_store_factory)
                 }
-                #[test]
-                fn test_examples_from_article_about_storage() {
-                    super::test_examples_from_article_about_storage($kv_store_factory)
-                }
+                // #[test]
+                // fn test_examples_from_article_about_storage() {
+                //     super::test_examples_from_article_about_storage($kv_store_factory)
+                // }
                 #[test]
                 fn test_multiple_commit_hash() {
                     super::test_multiple_commit_hash($kv_store_factory)
