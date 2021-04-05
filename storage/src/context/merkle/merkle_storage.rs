@@ -45,8 +45,8 @@
 //! ``
 //!
 //! Reference: https://git-scm.com/book/en/v2/Git-Internals-Git-Objects
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use std::array::TryFromSliceError;
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use failure::{Error, Fail};
 use serde::Deserialize;
@@ -237,9 +237,7 @@ impl MerkleStorage {
 
         let root = self.get_working_tree_root_ref();
 
-        let rv = self
-            .get_from_tree(root, key)
-            .or_else(|_| Ok(Vec::new()));
+        let rv = self.get_from_tree(root, key).or_else(|_| Ok(Vec::new()));
         stat_updater.update_execution_stats(&mut self.stats);
         rv
     }
@@ -300,22 +298,14 @@ impl MerkleStorage {
             .or(Ok(false))
     }
 
-    fn directory_exists(
-        &self,
-        root: &Tree,
-        key: &ContextKey,
-    ) -> bool {
+    fn directory_exists(&self, root: &Tree, key: &ContextKey) -> bool {
         // find tree by path
         self.find_tree(root, &key)
             .map(|node| !node.is_empty())
             .unwrap_or(false)
     }
 
-    fn get_from_tree(
-        &self,
-        root: &Tree,
-        key: &ContextKey,
-    ) -> Result<ContextValue, MerkleError> {
+    fn get_from_tree(&self, root: &Tree, key: &ContextKey) -> Result<ContextValue, MerkleError> {
         let file = key.last().ok_or(MerkleError::KeyEmpty)?;
         let path = &key[..key.len() - 1];
 
@@ -438,11 +428,7 @@ impl MerkleStorage {
         for (key, child_node) in prefixed_tree.iter() {
             let entry = self.get_entry(&child_node)?;
 
-            let delimiter = if prefix.is_empty() {
-                ""
-            } else {
-                "/"
-            };
+            let delimiter = if prefix.is_empty() { "" } else { "/" };
 
             // construct full path as Tree key is only one chunk of it
             let fullpath = self.key_to_string(prefix) + delimiter + key;
@@ -487,11 +473,7 @@ impl MerkleStorage {
             // let entry = self.get_entry(&child_node.entry_hash)?;
             let entry = self.get_entry(&child_node)?;
 
-            let delimiter = if prefix.is_empty() {
-                ""
-            } else {
-                "/"
-            };
+            let delimiter = if prefix.is_empty() { "" } else { "/" };
 
             // construct full path as Tree key is only one chunk of it
             let fullpath = self.key_to_string(prefix) + delimiter + key;
@@ -580,11 +562,7 @@ impl MerkleStorage {
         Ok(())
     }
 
-    fn _set(
-        &mut self,
-        key: &ContextKey,
-        value: ContextValue,
-    ) -> Result<Entry, MerkleError> {
+    fn _set(&mut self, key: &ContextKey, value: ContextValue) -> Result<Entry, MerkleError> {
         let entry = RefCell::new(Some(Entry::Blob(value)));
         let new_node = Node {
             entry,
@@ -631,11 +609,7 @@ impl MerkleStorage {
         Ok(())
     }
 
-    fn _copy(
-        &mut self,
-        from_key: &ContextKey,
-        to_key: &ContextKey,
-    ) -> Result<Entry, MerkleError> {
+    fn _copy(&mut self, from_key: &ContextKey, to_key: &ContextKey) -> Result<Entry, MerkleError> {
         let root = &self.working_tree.0;
 
         let source_tree = self.find_tree(root, &from_key)?;
@@ -665,7 +639,11 @@ impl MerkleStorage {
                 Some(n) => {
                     // if there is a value we want to assigin - just
                     // assigin it
-                    return n.entry.borrow().clone().ok_or(MerkleError::InvalidState("Missing entry value"));
+                    return n
+                        .entry
+                        .borrow()
+                        .clone()
+                        .ok_or(MerkleError::InvalidState("Missing entry value"));
                 }
                 None => {
                     // if key is empty and there is new_node == None
@@ -793,14 +771,10 @@ impl MerkleStorage {
                 // Go through all descendants and gather errors. Remap error if there is a failure
                 // anywhere in the recursion paths. TODO: is revert possible?
                 tree.iter()
-                    .map(
-                        |(_, child_node)| {
-                            match child_node.entry.borrow().as_ref() {
-                                None => Ok(()),
-                                Some(entry) => self.get_entries_recursively(entry, None, batch),
-                            }
-                        }
-                    )
+                    .map(|(_, child_node)| match child_node.entry.borrow().as_ref() {
+                        None => Ok(()),
+                        Some(entry) => self.get_entries_recursively(entry, None, batch),
+                    })
                     .find_map(|res| match res {
                         Ok(_) => None,
                         Err(err) => Some(Err(err)),
@@ -810,7 +784,7 @@ impl MerkleStorage {
             Entry::Commit(commit) => {
                 let entry = match root {
                     Some(root) => Entry::Tree(root.clone()),
-                    None => self.get_entry_from_hash(&commit.root_hash)?
+                    None => self.get_entry_from_hash(&commit.root_hash)?,
                 };
                 self.get_entries_recursively(&entry, None, batch)
             }
@@ -847,11 +821,13 @@ impl MerkleStorage {
 
     fn get_entry(&self, node: &Node) -> Result<Entry, MerkleError> {
         if let Some(e) = node.entry.borrow().as_ref() {
-            return Ok(e.clone())
+            return Ok(e.clone());
         };
 
         let hash_ref = node.entry_hash.borrow();
-        let hash = hash_ref.as_ref().ok_or(MerkleError::InvalidState("Missing entry hash"))?;
+        let hash = hash_ref
+            .as_ref()
+            .ok_or(MerkleError::InvalidState("Missing entry hash"))?;
 
         let entry = self.get_entry_from_hash(hash)?;
         node.entry.borrow_mut().replace(entry.clone());
@@ -937,7 +913,9 @@ mod tests {
         hex::encode(&hash[0..3])
     }
 
-    fn get_working_tree_root_short_hash(storage: &mut MerkleStorage) -> Result<String, MerkleError> {
+    fn get_working_tree_root_short_hash(
+        storage: &mut MerkleStorage,
+    ) -> Result<String, MerkleError> {
         let hash = storage.get_working_tree_root_hash()?;
         Ok(get_short_hash(&hash))
     }

@@ -49,14 +49,17 @@ pub enum Entry {
 }
 
 // Make sure the node contains the entry hash when serializing
-fn ensure_non_null_entry_hash<S>(entry_hash: &RefCell<Option<EntryHash>>, s: S) -> Result<S::Ok, S::Error>
+fn ensure_non_null_entry_hash<S>(
+    entry_hash: &RefCell<Option<EntryHash>>,
+    s: S,
+) -> Result<S::Ok, S::Error>
 where
-    S: serde::Serializer
+    S: serde::Serializer,
 {
     let entry_hash_ref = entry_hash.borrow();
-    let entry_hash = entry_hash_ref.as_ref().ok_or_else(|| {
-        serde::ser::Error::custom("entry_hash missing in Node")
-    })?;
+    let entry_hash = entry_hash_ref
+        .as_ref()
+        .ok_or_else(|| serde::ser::Error::custom("entry_hash missing in Node"))?;
 
     s.serialize_some(entry_hash)
 }

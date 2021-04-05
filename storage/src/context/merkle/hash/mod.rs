@@ -154,11 +154,14 @@ fn hash_long_inode(inode: &Inode) -> Result<EntryHash, HashingError> {
                 };
 
                 let hash = match &mut *node.entry_hash.borrow_mut() {
-                    Some(hash) => {
-                        *hash
-                    }
+                    Some(hash) => *hash,
                     entry_hash @ None => {
-                        let hash = hash_entry(node.entry.borrow().as_ref().ok_or(HashingError::MissingEntry)?)?;
+                        let hash = hash_entry(
+                            node.entry
+                                .borrow()
+                                .as_ref()
+                                .ok_or(HashingError::MissingEntry)?,
+                        )?;
                         entry_hash.replace(hash);
                         hash
                     }
@@ -229,11 +232,14 @@ fn hash_short_inode(tree: &Tree) -> Result<EntryHash, HashingError> {
         hasher.update(&(ENTRY_HASH_LEN as u64).to_be_bytes());
 
         let hash = match &mut *v.entry_hash.borrow_mut() {
-            Some(hash) => {
-                *hash
-            }
+            Some(hash) => *hash,
             entry_hash @ None => {
-                let hash = hash_entry(v.entry.borrow().as_ref().ok_or(HashingError::MissingEntry)?)?;
+                let hash = hash_entry(
+                    v.entry
+                        .borrow()
+                        .as_ref()
+                        .ok_or(HashingError::MissingEntry)?,
+                )?;
                 entry_hash.replace(hash);
                 hash
             }
@@ -250,7 +256,8 @@ fn hash_short_inode(tree: &Tree) -> Result<EntryHash, HashingError> {
 pub(crate) fn hash_tree(tree: &Tree) -> Result<EntryHash, HashingError> {
     // If there are >256 entries, we need to partition the tree and hash the resulting inode
     if tree.len() > 256 {
-        let entries: Vec<(&Rc<String>, &Node)> = tree.iter().map(|(s, n)| (s, n.as_ref())).collect();
+        let entries: Vec<(&Rc<String>, &Node)> =
+            tree.iter().map(|(s, n)| (s, n.as_ref())).collect();
         let inode = partition_entries(0, &entries)?;
         hash_long_inode(&inode)
     } else {
