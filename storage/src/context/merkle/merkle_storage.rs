@@ -236,8 +236,8 @@ impl MerkleStorage {
         let stat_updater = StatUpdater::new(MerkleStorageAction::Get, Some(key));
 
         let root = self.get_working_tree_root_ref();
-
         let rv = self.get_from_tree(root, key).or_else(|_| Ok(Vec::new()));
+
         stat_updater.update_execution_stats(&mut self.stats);
         rv
     }
@@ -451,13 +451,13 @@ impl MerkleStorage {
     ) -> Result<Option<Vec<(ContextKey, ContextValue)>>, MerkleError> {
         let stat_updater =
             StatUpdater::new(MerkleStorageAction::GetKeyValuesByPrefix, Some(prefix));
+
         let commit = self.get_commit(context_hash)?;
         let entry = self.get_entry_from_hash(&commit.root_hash)?;
         let root_tree = self.get_tree(&entry)?;
-
         let rv = self._get_key_values_by_prefix(root_tree, prefix);
-        stat_updater.update_execution_stats(&mut self.stats);
 
+        stat_updater.update_execution_stats(&mut self.stats);
         rv
     }
 
@@ -535,7 +535,6 @@ impl MerkleStorage {
         let rv = Ok(new_commit_hash);
 
         stat_updater.update_execution_stats(&mut self.stats);
-
         rv
     }
 
@@ -908,17 +907,6 @@ mod tests {
     use crate::context::ContextValue;
 
     use super::*;
-
-    fn get_short_hash(hash: &EntryHash) -> String {
-        hex::encode(&hash[0..3])
-    }
-
-    fn get_working_tree_root_short_hash(
-        storage: &mut MerkleStorage,
-    ) -> Result<String, MerkleError> {
-        let hash = storage.get_working_tree_root_hash()?;
-        Ok(get_short_hash(&hash))
-    }
 
     fn test_duplicate_entry_in_working_tree(kv_store_factory: &TestContextKvStoreFactoryInstance) {
         let mut storage = MerkleStorage::new(
