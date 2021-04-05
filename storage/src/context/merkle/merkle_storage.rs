@@ -291,13 +291,12 @@ impl MerkleStorage {
     }
 
     fn value_exists(&self, tree: &Tree, key: &ContextKey) -> Result<bool, MerkleError> {
-        let mut full_path = key.to_vec();
-        let file = full_path.pop().ok_or(MerkleError::KeyEmpty)?;
-        let path = full_path;
+        let file = key.last().ok_or(MerkleError::KeyEmpty)?;
+        let path = &key[..key.len() - 1];
 
         // find tree by path
         self.find_tree(&tree, &path)
-            .map(|node| node.get(&file).is_some())
+            .map(|node| node.get(file).is_some())
             .or(Ok(false))
     }
 
@@ -317,14 +316,14 @@ impl MerkleStorage {
         root: &Tree,
         key: &ContextKey,
     ) -> Result<ContextValue, MerkleError> {
-        let mut full_path = key.to_vec();
-        let file = full_path.pop().ok_or(MerkleError::KeyEmpty)?;
-        let path = full_path;
+        let file = key.last().ok_or(MerkleError::KeyEmpty)?;
+        let path = &key[..key.len() - 1];
+
         // find tree by path
         let node = self.find_tree(&root, &path)?;
 
         // get file node from tree
-        let node = match node.get(&file) {
+        let node = match node.get(file) {
             None => {
                 return Err(MerkleError::ValueNotFound {
                     key: self.key_to_string(key),
@@ -511,7 +510,7 @@ impl MerkleStorage {
         let stat_updater = StatUpdater::new(MerkleStorageAction::Checkout, None);
         let commit = self.get_commit(&context_hash)?;
         let entry = self.get_entry_from_hash(&commit.root_hash)?;
-        let tree = self.get_tree_own(entry)?;
+        let tree = self.get_tree(&entry)?.clone();
 
         self.trees = HashMap::new();
         self.set_working_tree_root(tree, 0);
@@ -542,7 +541,7 @@ impl MerkleStorage {
             message,
         };
         let new_commit_hash = hash_commit(&new_commit)?;
-        let entry = Entry::Commit(new_commit.clone());
+        let entry = Entry::Commit(new_commit);
 
         // persist working tree entries to db
         let mut batch: Vec<(EntryHash, ContextValue)> = Vec::new();
@@ -573,8 +572,8 @@ impl MerkleStorage {
     ) -> Result<(), MerkleError> {
         let stat_updater = StatUpdater::new(MerkleStorageAction::Set, Some(key));
 
-        let new_root_hash = &self._set(key, value)?;
-        let new_root = self.get_tree(new_root_hash)?.clone();
+        let entry = &self._set(key, value)?;
+        let new_root = self.get_tree(entry)?.clone();
         self.set_working_tree_root(new_root, new_tree_id);
 
         stat_updater.update_execution_stats(&mut self.stats);
@@ -599,8 +598,8 @@ impl MerkleStorage {
     pub fn delete(&mut self, new_tree_id: TreeId, key: &ContextKey) -> Result<(), MerkleError> {
         let stat_updater = StatUpdater::new(MerkleStorageAction::Delete, Some(key));
 
-        let new_root_hash = &self._delete(key)?;
-        let new_root = self.get_tree(new_root_hash)?.clone();
+        let entry = &self._delete(key)?;
+        let new_root = self.get_tree(entry)?.clone();
         self.set_working_tree_root(new_root, new_tree_id);
 
         stat_updater.update_execution_stats(&mut self.stats);
@@ -624,8 +623,8 @@ impl MerkleStorage {
     ) -> Result<(), MerkleError> {
         let stat_updater = StatUpdater::new(MerkleStorageAction::Copy, Some(from_key));
 
-        let new_root_hash = self._copy(from_key, to_key)?;
-        let new_root = self.get_tree(&new_root_hash)?.clone();
+        let entry = self._copy(from_key, to_key)?;
+        let new_root = self.get_tree(&entry)?.clone();
         self.set_working_tree_root(new_root, new_tree_id);
 
         stat_updater.update_execution_stats(&mut self.stats);
@@ -666,7 +665,7 @@ impl MerkleStorage {
                 Some(n) => {
                     // if there is a value we want to assigin - just
                     // assigin it
-                    return Ok(n.entry.borrow_mut().take().unwrap());
+                    return Ok(n.entry.borrow().clone().unwrap());
                 }
                 None => {
                     // if key is empty and there is new_node == None
@@ -819,20 +818,6 @@ impl MerkleStorage {
     }
 
     fn get_tree<'e>(&self, entry: &'e Entry) -> Result<&'e Tree, MerkleError> {
-        match entry {
-            Entry::Tree(tree) => Ok(tree),
-            Entry::Blob(_) => Err(MerkleError::FoundUnexpectedStructure {
-                sought: "tree".to_string(),
-                found: "blob".to_string(),
-            }),
-            Entry::Commit { .. } => Err(MerkleError::FoundUnexpectedStructure {
-                sought: "tree".to_string(),
-                found: "commit".to_string(),
-            }),
-        }
-    }
-
-    fn get_tree_own(&self, entry: Entry) -> Result<Tree, MerkleError> {
         match entry {
             Entry::Tree(tree) => Ok(tree),
             Entry::Blob(_) => Err(MerkleError::FoundUnexpectedStructure {
