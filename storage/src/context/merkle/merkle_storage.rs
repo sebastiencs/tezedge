@@ -45,7 +45,7 @@
 //! ``
 //!
 //! Reference: https://git-scm.com/book/en/v2/Git-Internals-Git-Objects
-use std::{cell::{Cell, RefCell}, collections::HashMap, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use std::array::TryFromSliceError;
 
 use failure::{Error, Fail};
@@ -598,7 +598,7 @@ impl MerkleStorage {
         let entry = RefCell::new(Some(Entry::Blob(value)));
         let new_node = Node {
             entry,
-            entry_hash: Cell::new(None),
+            entry_hash: RefCell::new(None),
             node_kind: NodeKind::Leaf,
         };
         self.compute_new_root_with_change(&key, Some(new_node))
@@ -677,7 +677,7 @@ impl MerkleStorage {
                     // if there is a value we want to assigin - just
                     // assigin it
                     // println!("A");
-                    return Ok(n.entry.borrow().clone().unwrap());
+                    return Ok(n.entry.borrow_mut().take().unwrap());
                 }
                 None => {
                     // if key is empty and there is new_node == None
@@ -886,9 +886,10 @@ impl MerkleStorage {
             return Ok(e.clone())
         };
 
-        let hash = node.entry_hash.get().unwrap();
+        let hash_ref = node.entry_hash.borrow();
+        let hash = hash_ref.as_ref().unwrap();
 
-        let entry = self.get_entry_from_hash(&hash)?;
+        let entry = self.get_entry_from_hash(hash)?;
         node.entry.borrow_mut().replace(entry.clone());
 
         Ok(entry)
@@ -907,7 +908,7 @@ impl MerkleStorage {
     fn get_non_leaf(&self, entry: Entry) -> Node {
         Node {
             node_kind: NodeKind::NonLeaf,
-            entry_hash: Cell::new(None),
+            entry_hash: RefCell::new(None),
             entry: RefCell::new(Some(entry)),
         }
     }

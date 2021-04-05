@@ -150,23 +150,19 @@ fn hash_long_inode(inode: &Inode) -> Result<EntryHash, HashingError> {
                     NodeKind::Leaf => hasher.update(&[1u8]),
                     NodeKind::NonLeaf => hasher.update(&[0u8]),
                 };
-                println!("LAAAAB");
-                // hasher.update(&hash_entry(&node.entry)?.as_ref());
 
-                let hash = match node.entry_hash.get() {
+                let hash = match &mut *node.entry_hash.borrow_mut() {
                     Some(hash) => {
-                        hash
+                        *hash
                     }
-                    None => {
+                    entry_hash @ None => {
                         let hash = hash_entry(node.entry.borrow().as_ref().unwrap())?;
-                        node.entry_hash.set(Some(hash));
+                        entry_hash.replace(hash);
                         hash
                     }
                 };
 
                 hasher.update(&hash);
-
-                // hasher.update(node.entry_hash.as_ref());
             }
         }
         Inode::Tree {
@@ -230,27 +226,18 @@ fn hash_short_inode(tree: &Tree) -> Result<EntryHash, HashingError> {
         hasher.update(k.as_bytes());
         hasher.update(&(ENTRY_HASH_LEN as u64).to_be_bytes());
 
-        let hash = match v.entry_hash.get() {
+        let hash = match &mut *v.entry_hash.borrow_mut() {
             Some(hash) => {
-                hash
+                *hash
             }
-            None => {
+            entry_hash @ None => {
                 let hash = hash_entry(v.entry.borrow().as_ref().unwrap())?;
-                v.entry_hash.set(Some(hash));
+                entry_hash.replace(hash);
                 hash
             }
         };
 
-        // println!("ENTRY={:p} {:?}", &v.entry, match v.entry {
-        //     Entry::Blob(_) => "Blob",
-        //     Entry::Tree(_) => "Tree",
-        //     Entry::Commit(_) => "Commit"
-        // });
-
         hasher.update(&hash);
-
-        // hasher.update(&hash_entry(&v.entry)?.as_ref());
-        // hasher.update(&v.entry_hash.as_ref());
     }
 
     Ok(hasher.finalize_boxed().as_ref().try_into()?)
@@ -261,7 +248,6 @@ fn hash_short_inode(tree: &Tree) -> Result<EntryHash, HashingError> {
 pub(crate) fn hash_tree(tree: &Tree) -> Result<EntryHash, HashingError> {
     // If there are >256 entries, we need to partition the tree and hash the resulting inode
     if tree.len() > 256 {
-        println!("LONG");
         let entries: Vec<(&Rc<String>, &Node)> = tree.iter().map(|(s, n)| (s, n.as_ref())).collect();
         let inode = partition_entries(0, &entries)?;
         hash_long_inode(&inode)

@@ -376,23 +376,16 @@ fn kvstore_gc_thread_fn<T: KeyValueStoreBackend<ContextKeyValueStoreSchema>>(
                     Entry::Blob(_) => {}
                     Entry::Tree(tree) => {
                         let children = tree.into_iter().map(|(_, node)| {
-                            // println!("AAAA");
-
-                            match node.entry_hash.get() {
+                            match &mut *node.entry_hash.borrow_mut() {
                                 Some(hash) => {
-                                    hash
+                                    *hash
                                 }
-                                None => {
+                                entry_hash @ None => {
                                     let hash = hash_entry(node.entry.borrow().as_ref().unwrap()).unwrap();
-                                    node.entry_hash.set(Some(hash));
+                                    entry_hash.replace(hash);
                                     hash
                                 }
                             }
-
-                            // match node.entry_hash {
-
-                            // }
-                            // hash_entry(&node.entry).unwrap()
                         });
                         todo_keys.extend(children);
                     }
