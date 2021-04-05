@@ -175,12 +175,12 @@ impl ContextApi for TezedgeContext {
 
     fn set_merkle_root(&mut self, tree_id: TreeId) -> Result<(), ContextError> {
         let mut merkle = self.merkle.write()?;
-        merkle.stage_checkout(tree_id).map_err(ContextError::from)
+        merkle.working_tree_checkout(tree_id).map_err(ContextError::from)
     }
 
     fn get_merkle_root(&mut self) -> Result<EntryHash, ContextError> {
         let merkle = self.merkle.read()?;
-        merkle.get_staged_root_hash().map_err(ContextError::from)
+        merkle.get_working_tree_root_hash().map_err(ContextError::from)
     }
 
     fn block_applied(&self) -> Result<(), ContextError> {

@@ -93,17 +93,16 @@ enum Action {
 }
 
 pub struct MerkleStorage {
-    /// tree with current staging area (currently checked out context)
-    current_stage_tree: (Tree, TreeId),
+    /// Current working tree (currently checked out context)
+    working_tree: (Tree, TreeId),
     /// key value storage backend
     db: Box<ContextKeyValueStore>,
-    /// all different versions of the staging tree
+    /// all different versions of the working tree
     trees: HashMap<TreeId, Tree>,
-    /// HashMap for looking up entry index in self.staged by hash
+    /// Last commit hash
     last_commit_hash: Option<EntryHash>,
     /// storage latency statistics
     stats: MerkleStorageStatistics,
-    // staging_index: u32,
 }
 
 #[derive(Debug, Fail)]
@@ -142,8 +141,8 @@ pub enum MerkleError {
     FoundUnexpectedStructure { sought: String, found: String },
     #[fail(display = "Entry not found! Hash={}", hash)]
     EntryNotFound { hash: String },
-    #[fail(display = "Tree not in staging area! TreeId={}", tree_id)]
-    TreeNotFoundInStaging { tree_id: TreeId },
+    #[fail(display = "Tree not in working tree! TreeId={}", tree_id)]
+    TreeNotFoundInWorkingTree { tree_id: TreeId },
 
     /// Wrong user input errors
     #[fail(display = "No value under key {:?}.", key)]
@@ -215,14 +214,6 @@ pub enum CheckEntryHashError {
     },
 }
 
-fn display_hash(hash: &EntryHash) -> String {
-    let mut s = String::new();
-    for h in hash {
-        s.push_str(&format!("{:X}", h));
-    }
-    s
-}
-
 impl MerkleStorage {
     pub fn new(db: Box<ContextKeyValueStore>) -> Self {
         let tree = Tree::new();
@@ -234,17 +225,17 @@ impl MerkleStorage {
         MerkleStorage {
             db,
             trees: trees_map,
-            current_stage_tree: (tree, tree_id),
+            working_tree: (tree, tree_id),
             last_commit_hash: None,
             stats: MerkleStorageStatistics::default(),
         }
     }
 
-    /// Get value from current staged root
+    /// Get value from current working tree
     pub fn get(&mut self, key: &ContextKey) -> Result<ContextValue, MerkleError> {
         let stat_updater = StatUpdater::new(MerkleStorageAction::Get, Some(key));
 
-        let root = self.get_staged_root_ref();
+        let root = self.get_working_tree_root_ref();
 
         let rv = self
             .get_from_tree(root, key)
@@ -253,34 +244,34 @@ impl MerkleStorage {
         rv
     }
 
-    /// Check if value exists in current staged root
+    /// Check if value exists in current working tree
     pub fn mem(&mut self, key: &ContextKey) -> Result<bool, MerkleError> {
         let stat_updater = StatUpdater::new(MerkleStorageAction::Mem, Some(key));
 
-        let root = self.get_staged_root_ref();
+        let root = self.get_working_tree_root_ref();
         let rv = self.value_exists(root, key);
 
         stat_updater.update_execution_stats(&mut self.stats);
         rv
     }
 
-    /// Check if directory exists in current staged root
+    /// Check if directory exists in current working tree
     pub fn dirmem(&mut self, key: &ContextKey) -> Result<bool, MerkleError> {
         let stat_updater = StatUpdater::new(MerkleStorageAction::DirMem, Some(key));
 
-        let root = self.get_staged_root_ref();
+        let root = self.get_working_tree_root_ref();
         let rv = self.directory_exists(root, key);
 
         stat_updater.update_execution_stats(&mut self.stats);
         Ok(rv)
     }
 
-    /// Get value. Staging area is checked first, then last (checked out) commit.
+    /// Get value. Working tree is checked first, then last (checked out) commit.
     pub fn get_by_prefix(
         &mut self,
         prefix: &ContextKey,
     ) -> Result<Option<Vec<(ContextKey, ContextValue)>>, MerkleError> {
-        self._get_key_values_by_prefix(self.get_staged_root_ref(), prefix)
+        self._get_key_values_by_prefix(self.get_working_tree_root_ref(), prefix)
     }
 
     /// Get value from historical context identified by commit hash.
@@ -515,7 +506,7 @@ impl MerkleStorage {
         }
     }
 
-    /// Flush the staging area and and move to work on a certain commit from history.
+    /// Flush the working tree and and move to work on a certain commit from history.
     pub fn checkout(&mut self, context_hash: &EntryHash) -> Result<(), MerkleError> {
         let stat_updater = StatUpdater::new(MerkleStorageAction::Checkout, None);
         let commit = self.get_commit(&context_hash)?;
@@ -523,14 +514,14 @@ impl MerkleStorage {
         let tree = self.get_tree_own(entry)?;
 
         self.trees = HashMap::new();
-        self.set_stage_root(tree, 0);
+        self.set_working_tree_root(tree, 0);
         self.last_commit_hash = Some(context_hash.clone());
 
         stat_updater.update_execution_stats(&mut self.stats);
         Ok(())
     }
 
-    /// Take the current changes in the staging area, create a commit and persist all changes
+    /// Take the current changes in the working tree, create a commit and persist all changes
     /// to database under the new commit. Return last commit if there are no changes, that is
     /// empty commits are not allowed.
     pub fn commit(
@@ -540,11 +531,11 @@ impl MerkleStorage {
         message: String,
     ) -> Result<EntryHash, MerkleError> {
         let stat_updater = StatUpdater::new(MerkleStorageAction::Commit, None);
-        let staged_root_hash = self.get_staged_root_hash()?;
+        let root_hash = self.get_working_tree_root_hash()?;
         let parent_commit_hash = self.last_commit_hash;
 
         let new_commit = Commit {
-            root_hash: staged_root_hash,
+            root_hash,
             parent_commit_hash,
             time,
             author,
@@ -553,9 +544,9 @@ impl MerkleStorage {
         let new_commit_hash = hash_commit(&new_commit)?;
         let entry = Entry::Commit(new_commit.clone());
 
-        // persist staged entries to db
+        // persist working tree entries to db
         let mut batch: Vec<(EntryHash, ContextValue)> = Vec::new();
-        self.get_entries_recursively(&entry, Some(self.current_stage_tree.0.clone()), &mut batch)?;
+        self.get_entries_recursively(&entry, Some(&self.working_tree.0), &mut batch)?;
         // write all entries at once (depends on backend)
         self.db.write_batch(batch)?;
 
@@ -567,13 +558,13 @@ impl MerkleStorage {
         rv
     }
 
-    /// Set key/val to the staging area.
-    fn set_stage_root(&mut self, tree: Tree, tree_id: TreeId) {
-        self.current_stage_tree = (tree.clone(), tree_id);
+    /// Set key/val to the working tree.
+    fn set_working_tree_root(&mut self, tree: Tree, tree_id: TreeId) {
+        self.working_tree = (tree.clone(), tree_id);
         self.trees.insert(tree_id, tree);
     }
 
-    /// Set key/val to the staging area.
+    /// Set key/val to the working tree.
     pub fn set(
         &mut self,
         new_tree_id: TreeId,
@@ -584,7 +575,7 @@ impl MerkleStorage {
 
         let new_root_hash = &self._set(key, value)?;
         let new_root = self.get_tree(new_root_hash)?.clone();
-        self.set_stage_root(new_root, new_tree_id);
+        self.set_working_tree_root(new_root, new_tree_id);
 
         stat_updater.update_execution_stats(&mut self.stats);
         Ok(())
@@ -604,13 +595,13 @@ impl MerkleStorage {
         self.compute_new_root_with_change(&key, Some(new_node))
     }
 
-    /// Delete an item from the staging area.
+    /// Delete an item from the working tree.
     pub fn delete(&mut self, new_tree_id: TreeId, key: &ContextKey) -> Result<(), MerkleError> {
         let stat_updater = StatUpdater::new(MerkleStorageAction::Delete, Some(key));
 
         let new_root_hash = &self._delete(key)?;
         let new_root = self.get_tree(new_root_hash)?.clone();
-        self.set_stage_root(new_root, new_tree_id);
+        self.set_working_tree_root(new_root, new_tree_id);
 
         stat_updater.update_execution_stats(&mut self.stats);
         Ok(())
@@ -618,7 +609,7 @@ impl MerkleStorage {
 
     fn _delete(&mut self, key: &ContextKey) -> Result<Entry, MerkleError> {
         if key.is_empty() {
-            let root = self.get_staged_root();
+            let root = self.get_working_tree_root();
             return Ok(Entry::Tree(root));
         }
         self.compute_new_root_with_change(&key, None)
@@ -635,7 +626,7 @@ impl MerkleStorage {
 
         let new_root_hash = self._copy(from_key, to_key)?;
         let new_root = self.get_tree(&new_root_hash)?.clone();
-        self.set_stage_root(new_root, new_tree_id);
+        self.set_working_tree_root(new_root, new_tree_id);
 
         stat_updater.update_execution_stats(&mut self.stats);
         Ok(())
@@ -646,7 +637,7 @@ impl MerkleStorage {
         from_key: &ContextKey,
         to_key: &ContextKey,
     ) -> Result<Entry, MerkleError> {
-        let root = &self.current_stage_tree.0;
+        let root = &self.working_tree.0;
 
         let source_tree = self.find_tree(root, &from_key)?;
         Ok(self.compute_new_root_with_change(
@@ -666,7 +657,6 @@ impl MerkleStorage {
     /// * `new_node` - None for deletion, Some for inserting a hash under the key.
     fn compute_new_root_with_change(
         &mut self,
-        //root: &Tree,
         key: &[String],
         new_node: Option<Node>,
     ) -> Result<Entry, MerkleError> {
@@ -676,25 +666,19 @@ impl MerkleStorage {
                 Some(n) => {
                     // if there is a value we want to assigin - just
                     // assigin it
-                    // println!("A");
                     return Ok(n.entry.borrow_mut().take().unwrap());
                 }
                 None => {
                     // if key is empty and there is new_node == None
                     // that means that we just removed whole tree
                     // so set merkle storage root to empty dir and place
-                    // it in staging area
-                    // let tree = Tree::new();
-                    // let new_tree_hash = Arc::new(hash_tree(&tree)?);
-                    // self.put_to_staging_area(new_tree_hash.clone(), Entry::Tree(tree));
-                    // return Ok(new_tree_hash);
-                    // println!("B");
+                    // it in working tree
                     return Ok(Entry::Tree(Tree::new()));
                 }
             },
         };
 
-        let root = &self.current_stage_tree.0;
+        let root = &self.working_tree.0;
 
         let path = &key[..key.len() - 1];
         let mut tree = self.find_tree(root, path)?;
@@ -735,7 +719,7 @@ impl MerkleStorage {
             }
         };
 
-        // get entry by hash (from staged area or DB)
+        // get entry by hash (from working tree or DB)
         match self.get_entry(&child_node)? {
             Entry::Tree(tree) => self.find_tree(&tree, &key[1..]),
             Entry::Blob(_) => Ok(Tree::new()),
@@ -746,38 +730,33 @@ impl MerkleStorage {
         }
     }
 
-    /// Get latest staged tree. If it's empty, init genesis  and return genesis root.
-    fn get_staged_root(&self) -> Tree {
-        self.current_stage_tree.0.clone()
+    /// Get current working tree. If it's empty, init genesis  and return genesis root.
+    fn get_working_tree_root(&self) -> Tree {
+        self.working_tree.0.clone()
     }
 
-    fn get_staged_root_ref(&self) -> &Tree {
-        &self.current_stage_tree.0
+    fn get_working_tree_root_ref(&self) -> &Tree {
+        &self.working_tree.0
     }
 
-    pub fn get_staged_root_hash(&self) -> Result<EntryHash, MerkleError> {
-        // TOOD: unnecessery recalculation, should be one when set_staged_root
-        hash_tree(&self.current_stage_tree.0).map_err(MerkleError::from)
+    pub fn get_working_tree_root_hash(&self) -> Result<EntryHash, MerkleError> {
+        // TOOD: unnecessery recalculation, should be one when set_working_tree_root
+        hash_tree(&self.working_tree.0).map_err(MerkleError::from)
     }
 
-    pub fn stage_checkout(&mut self, tree_id: TreeId) -> Result<(), MerkleError> {
-        if tree_id == self.current_stage_tree.1 {
+    pub fn working_tree_checkout(&mut self, tree_id: TreeId) -> Result<(), MerkleError> {
+        if tree_id == self.working_tree.1 {
             return Ok(());
         }
 
         let tree = self
             .trees
             .get(&tree_id)
-            .ok_or(MerkleError::TreeNotFoundInStaging { tree_id })?
+            .ok_or(MerkleError::TreeNotFoundInWorkingTree { tree_id })?
             .clone();
-        self.set_stage_root(tree, tree_id);
+        self.set_working_tree_root(tree, tree_id);
         Ok(())
     }
-
-    // /// Put entry in staging area
-    // fn put_to_staging_area(&mut self, key: Arc<EntryHash>, value: Entry) {
-    //     self.staged.insert(key, value);
-    // }
 
     /// Marks all the entries from last commit as used
     /// so GC can know when to remove them
@@ -800,7 +779,7 @@ impl MerkleStorage {
     fn get_entries_recursively(
         &self,
         entry: &Entry,
-        root: Option<Tree>,
+        root: Option<&Tree>,
         batch: &mut Vec<(EntryHash, ContextValue)>,
     ) -> Result<(), MerkleError> {
         // add entry to batch
@@ -831,7 +810,7 @@ impl MerkleStorage {
             }
             Entry::Commit(commit) => {
                 let entry = match root {
-                    Some(root) => Entry::Tree(root),
+                    Some(root) => Entry::Tree(root.clone()),
                     None => self.get_entry_from_hash(&commit.root_hash)?
                 };
                 self.get_entries_recursively(&entry, None, batch)
@@ -1014,15 +993,15 @@ mod tests {
         hex::encode(&hash[0..3])
     }
 
-    fn get_staged_root_short_hash(storage: &mut MerkleStorage) -> Result<String, MerkleError> {
-        let hash = storage.get_staged_root_hash()?;
+    fn get_working_tree_root_short_hash(storage: &mut MerkleStorage) -> Result<String, MerkleError> {
+        let hash = storage.get_working_tree_root_hash()?;
         Ok(get_short_hash(&hash))
     }
 
-    fn test_duplicate_entry_in_staging(kv_store_factory: &TestContextKvStoreFactoryInstance) {
+    fn test_duplicate_entry_in_working_tree(kv_store_factory: &TestContextKvStoreFactoryInstance) {
         let mut storage = MerkleStorage::new(
             kv_store_factory
-                .create("test_duplicate_entry_in_staging")
+                .create("test_duplicate_entry_in_working_tree")
                 .unwrap(),
         );
 
@@ -1040,7 +1019,7 @@ mod tests {
         storage
             .delete(4, &vec!["c".to_string(), "zoo".to_string()])
             .unwrap();
-        // now c/ is the same tree as a/ - which means there are two references to single entry in staging area
+        // now c/ is the same tree as a/ - which means there are two references to single entry in working tree
         // modify the tree and check that the other one was kept intact
         storage
             .set(5, &vec!["c".to_string(), "foo".to_string()], vec![3, 4])
@@ -1084,7 +1063,7 @@ mod tests {
             .commit(0, "Tezos".to_string(), "Genesis".to_string())
             .unwrap();
 
-        let hash = storage.get_staged_root_hash().unwrap();
+        let hash = storage.get_working_tree_root_hash().unwrap();
 
         assert_eq!([0xDB, 0xAE, 0xD7, 0xB6], hash[0..4]);
     }
@@ -1548,11 +1527,11 @@ mod tests {
         assert_eq!(storage.get(dummy_key).unwrap(), vec![2u8]);
 
         // checkout previous stage state
-        storage.stage_checkout(1).unwrap();
+        storage.working_tree_checkout(1).unwrap();
         assert_eq!(storage.get(dummy_key).unwrap(), vec![1u8]);
 
         // checkout newest stage state
-        storage.stage_checkout(2).unwrap();
+        storage.working_tree_checkout(2).unwrap();
         assert_eq!(storage.get(dummy_key).unwrap(), vec![2u8]);
     }
 
@@ -1573,11 +1552,11 @@ mod tests {
         assert_eq!(storage.get(key).unwrap(), empty_response);
 
         // // checkout previous stage state
-        storage.stage_checkout(1).unwrap();
+        storage.working_tree_checkout(1).unwrap();
         assert_eq!(storage.get(key).unwrap(), value);
 
         // checkout latest stage state
-        storage.stage_checkout(2).unwrap();
+        storage.working_tree_checkout(2).unwrap();
         assert_eq!(storage.get(key).unwrap(), empty_response);
     }
 
@@ -1600,7 +1579,7 @@ mod tests {
             .unwrap();
 
         // assert_eq!(storage.staged.is_empty(), false);
-        assert_eq!(storage.stage_checkout(1).is_err(), false);
+        assert_eq!(storage.working_tree_checkout(1).is_err(), false);
     }
 
     macro_rules! tests_with_storage {
@@ -1611,8 +1590,8 @@ mod tests {
                     super::test_tree_hash($kv_store_factory)
                 }
                 #[test]
-                fn test_duplicate_entry_in_staging() {
-                    super::test_duplicate_entry_in_staging($kv_store_factory)
+                fn test_duplicate_entry_in_working_tree() {
+                    super::test_duplicate_entry_in_working_tree($kv_store_factory)
                 }
                 #[test]
                 fn test_commit_hash() {
