@@ -36,6 +36,8 @@ pub enum HashingError {
     UnexpectedEmptyInode,
     #[fail(display = "Invalid hash value, reason: {}", _0)]
     InvalidHash(String),
+    #[fail(display = "Missing Entry")]
+    MissingEntry,
 }
 
 impl From<InvalidOutputSize> for HashingError {
@@ -156,7 +158,7 @@ fn hash_long_inode(inode: &Inode) -> Result<EntryHash, HashingError> {
                         *hash
                     }
                     entry_hash @ None => {
-                        let hash = hash_entry(node.entry.borrow().as_ref().unwrap())?;
+                        let hash = hash_entry(node.entry.borrow().as_ref().ok_or(HashingError::MissingEntry)?)?;
                         entry_hash.replace(hash);
                         hash
                     }
@@ -231,7 +233,7 @@ fn hash_short_inode(tree: &Tree) -> Result<EntryHash, HashingError> {
                 *hash
             }
             entry_hash @ None => {
-                let hash = hash_entry(v.entry.borrow().as_ref().unwrap())?;
+                let hash = hash_entry(v.entry.borrow().as_ref().ok_or(HashingError::MissingEntry)?)?;
                 entry_hash.replace(hash);
                 hash
             }

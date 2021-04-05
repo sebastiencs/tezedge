@@ -665,7 +665,7 @@ impl MerkleStorage {
                 Some(n) => {
                     // if there is a value we want to assigin - just
                     // assigin it
-                    return Ok(n.entry.borrow().clone().unwrap());
+                    return n.entry.borrow().clone().ok_or(MerkleError::InvalidState("Missing entry value"));
                 }
                 None => {
                     // if key is empty and there is new_node == None
@@ -851,7 +851,7 @@ impl MerkleStorage {
         };
 
         let hash_ref = node.entry_hash.borrow();
-        let hash = hash_ref.as_ref().unwrap();
+        let hash = hash_ref.as_ref().ok_or(MerkleError::InvalidState("Missing entry hash"))?;
 
         let entry = self.get_entry_from_hash(hash)?;
         node.entry.borrow_mut().replace(entry.clone());
@@ -891,47 +891,6 @@ impl MerkleStorage {
     pub fn get_last_commit_hash(&self) -> Option<EntryHash> {
         self.last_commit_hash
     }
-
-    // pub fn get_staged_entries(&self) -> Result<std::string::String, MerkleError> {
-    //     let mut result = String::new();
-    //     for (hash, entry) in &self.staged {
-    //         match entry {
-    //             Entry::Blob(blob) => {
-    //                 result += &format!("{}: Value {:?}, \n", hex::encode(&hash[0..3]), blob);
-    //             }
-
-    //             Entry::Tree(tree) => {
-    //                 if tree.is_empty() {
-    //                     continue;
-    //                 }
-    //                 let tree_hash = &hash_tree(tree)?[0..3];
-    //                 result += &format!("{}: Tree {{", hex::encode(tree_hash));
-
-    //                 for (path, val) in tree {
-    //                     let kind = if let NodeKind::NonLeaf = val.node_kind {
-    //                         "Tree"
-    //                     } else {
-    //                         "Value/Leaf"
-    //                     };
-    //                     result += &format!(
-    //                         "{}: {}({:?}), ",
-    //                         path,
-    //                         kind,
-    //                         hex::encode(&val.entry_hash[0..3])
-    //                     );
-    //                 }
-    //                 result += "}}\n";
-    //             }
-
-    //             Entry::Commit(_) => {
-    //                 return Err(MerkleError::InvalidState(
-    //                     "commits must not occur in staged area",
-    //                 ));
-    //             }
-    //         }
-    //     }
-    //     Ok(result)
-    // }
 
     /// Get various merkle storage statistics
     pub fn get_merkle_stats(&self) -> Result<MerkleStoragePerfReport, MerkleError> {
@@ -1072,56 +1031,6 @@ mod tests {
         assert_eq!([0xCA, 0x7B, 0xC7, 0x02], commit.unwrap()[0..4]);
         // full irmin hash: ca7bc7022ffbd35acc97f7defb00c486bb7f4d19a2d62790d5949775eb74f3c8
     }
-
-    // fn test_examples_from_article_about_storage(
-    //     kv_store_factory: &TestContextKvStoreFactoryInstance,
-    // ) {
-    //     let mut storage = MerkleStorage::new(
-    //         kv_store_factory
-    //             .create("test_examples_from_article_about_storage")
-    //             .unwrap(),
-    //     );
-
-    //     storage.set(1, &vec!["a".to_string()], vec![1]).unwrap();
-    //     let root = get_staged_root_short_hash(&mut storage).expect("hash error");
-    //     println!("SET [a] = 1\nROOT: {}", root);
-    //     println!("CONTENT {}", storage.get_staged_entries().unwrap());
-    //     assert_eq!(root, "d49a53".to_string());
-
-    //     storage
-    //         .set(2, &vec!["b".to_string(), "c".to_string()], vec![1])
-    //         .unwrap();
-    //     let root = get_staged_root_short_hash(&mut storage).expect("hash error");
-    //     println!("\nSET [b,c] = 1\nROOT: {}", root);
-    //     print!("{}", storage.get_staged_entries().unwrap());
-    //     assert_eq!(root, "ed8adf".to_string());
-
-    //     storage
-    //         .set(3, &vec!["b".to_string(), "d".to_string()], vec![2])
-    //         .unwrap();
-    //     let root = get_staged_root_short_hash(&mut storage).expect("hash error");
-    //     println!("\nSET [b,d] = 2\nROOT: {}", root);
-    //     print!("{}", storage.get_staged_entries().unwrap());
-    //     assert_eq!(root, "437186".to_string());
-
-    //     storage.set(4, &vec!["a".to_string()], vec![2]).unwrap();
-    //     let root = get_staged_root_short_hash(&mut storage).expect("hash error");
-    //     println!("\nSET [a] = 2\nROOT: {}", root);
-    //     print!("{}", storage.get_staged_entries().unwrap());
-    //     assert_eq!(root, "0d78b3".to_string());
-
-    //     let entries = storage.get_staged_entries().unwrap();
-    //     let commit_hash = storage
-    //         .commit(0, "Tezedge".to_string(), "persist changes".to_string())
-    //         .unwrap();
-    //     println!("\nCOMMIT time:0 author:'tezedge' message:'persist'");
-    //     println!("ROOT: {}", get_short_hash(&commit_hash));
-    //     if let Entry::Commit(c) = storage.get_entry(&commit_hash).unwrap() {
-    //         println!("{} : Commit{{time:{}, message:{}, author:{}, root_hash:{}, parent_commit_hash: None}}", get_short_hash(&commit_hash), c.time, c.message, c.author, get_short_hash(&c.root_hash));
-    //     }
-    //     print!("{}", entries);
-    //     assert_eq!("e6de3f", get_short_hash(&commit_hash))
-    // }
 
     fn test_multiple_commit_hash(kv_store_factory: &TestContextKvStoreFactoryInstance) {
         let mut storage = MerkleStorage::new(
