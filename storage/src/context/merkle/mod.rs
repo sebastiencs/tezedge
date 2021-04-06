@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 use crate::context::merkle::hash::EntryHash;
 use crate::context::ContextValue;
 
+use self::hash::{hash_entry, HashingError};
+
 pub mod hash;
 pub mod merkle_storage;
 pub mod merkle_storage_stats;
@@ -46,6 +48,29 @@ pub enum Entry {
     Tree(Tree),
     Blob(ContextValue),
     Commit(Commit),
+}
+
+impl Node {
+    pub fn entry_hash(&self) -> Result<EntryHash, hash::HashingError> {
+        match &mut *self
+            .entry_hash
+            .try_borrow_mut()
+            .map_err(|_| HashingError::EntryBorrow)?
+        {
+            Some(hash) => Ok(*hash),
+            entry_hash @ None => {
+                let hash = hash_entry(
+                    self.entry
+                        .try_borrow()
+                        .map_err(|_| HashingError::EntryBorrow)?
+                        .as_ref()
+                        .ok_or(HashingError::MissingEntry)?,
+                )?;
+                entry_hash.replace(hash);
+                Ok(hash)
+            }
+        }
+    }
 }
 
 // Make sure the node contains the entry hash when serializing

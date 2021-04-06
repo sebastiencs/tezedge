@@ -640,7 +640,8 @@ impl MerkleStorage {
                     // assigin it
                     return n
                         .entry
-                        .borrow()
+                        .try_borrow()
+                        .map_err(|_| MerkleError::InvalidState("Missing entry value"))?
                         .clone()
                         .ok_or(MerkleError::InvalidState("Missing entry value"));
                 }
@@ -770,9 +771,16 @@ impl MerkleStorage {
                 // Go through all descendants and gather errors. Remap error if there is a failure
                 // anywhere in the recursion paths. TODO: is revert possible?
                 tree.iter()
-                    .map(|(_, child_node)| match child_node.entry.borrow().as_ref() {
-                        None => Ok(()),
-                        Some(entry) => self.get_entries_recursively(entry, None, batch),
+                    .map(|(_, child_node)| {
+                        match child_node
+                            .entry
+                            .try_borrow()
+                            .map_err(|_| MerkleError::InvalidState("Entry borrows twice"))?
+                            .as_ref()
+                        {
+                            None => Ok(()),
+                            Some(entry) => self.get_entries_recursively(entry, None, batch),
+                        }
                     })
                     .find_map(|res| match res {
                         Ok(_) => None,
@@ -819,17 +827,29 @@ impl MerkleStorage {
     }
 
     fn get_entry(&self, node: &Node) -> Result<Entry, MerkleError> {
-        if let Some(e) = node.entry.borrow().as_ref() {
-            return Ok(e.clone());
+        if let Some(e) = node
+            .entry
+            .try_borrow()
+            .map_err(|_| MerkleError::InvalidState("The Entry is borrowed more than once"))?
+            .as_ref()
+            .cloned()
+        {
+            return Ok(e);
         };
 
-        let hash_ref = node.entry_hash.borrow();
+        let hash_ref = node
+            .entry_hash
+            .try_borrow()
+            .map_err(|_| MerkleError::InvalidState("The Entry is borrowed more than once"))?;
         let hash = hash_ref
             .as_ref()
             .ok_or(MerkleError::InvalidState("Missing entry hash"))?;
 
         let entry = self.get_entry_from_hash(hash)?;
-        node.entry.borrow_mut().replace(entry.clone());
+        node.entry
+            .try_borrow_mut()
+            .map_err(|_| MerkleError::InvalidState("The Entry is borrowed more than once"))?
+            .replace(entry.clone());
 
         Ok(entry)
     }

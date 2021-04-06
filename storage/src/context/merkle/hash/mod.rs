@@ -5,7 +5,7 @@
 //!
 //! A document describing the algorithm can be found [here](https://github.com/tarides/tezos-context-hash).
 
-use std::{array::TryFromSliceError, convert::TryInto, io, rc::Rc, sync::Arc};
+use std::{array::TryFromSliceError, convert::TryInto, io, sync::Arc};
 
 use blake2::digest::{InvalidOutputSize, Update, VariableOutput};
 use blake2::VarBlake2b;
@@ -38,6 +38,8 @@ pub enum HashingError {
     InvalidHash(String),
     #[fail(display = "Missing Entry")]
     MissingEntry,
+    #[fail(display = "The Entry is borrowed more than once")]
+    EntryBorrow,
 }
 
 impl From<InvalidOutputSize> for HashingError {
@@ -152,22 +154,7 @@ fn hash_long_inode(inode: &Inode) -> Result<EntryHash, HashingError> {
                     NodeKind::Leaf => hasher.update(&[1u8]),
                     NodeKind::NonLeaf => hasher.update(&[0u8]),
                 };
-
-                let hash = match &mut *node.entry_hash.borrow_mut() {
-                    Some(hash) => *hash,
-                    entry_hash @ None => {
-                        let hash = hash_entry(
-                            node.entry
-                                .borrow()
-                                .as_ref()
-                                .ok_or(HashingError::MissingEntry)?,
-                        )?;
-                        entry_hash.replace(hash);
-                        hash
-                    }
-                };
-
-                hasher.update(&hash);
+                hasher.update(&node.entry_hash()?);
             }
         }
         Inode::Tree {
@@ -230,22 +217,7 @@ fn hash_short_inode(tree: &Tree) -> Result<EntryHash, HashingError> {
         leb128::write::unsigned(&mut hasher, k.len() as u64)?;
         hasher.update(k.as_bytes());
         hasher.update(&(ENTRY_HASH_LEN as u64).to_be_bytes());
-
-        let hash = match &mut *v.entry_hash.borrow_mut() {
-            Some(hash) => *hash,
-            entry_hash @ None => {
-                let hash = hash_entry(
-                    v.entry
-                        .borrow()
-                        .as_ref()
-                        .ok_or(HashingError::MissingEntry)?,
-                )?;
-                entry_hash.replace(hash);
-                hash
-            }
-        };
-
-        hasher.update(&hash);
+        hasher.update(&v.entry_hash()?);
     }
 
     Ok(hasher.finalize_boxed().as_ref().try_into()?)
