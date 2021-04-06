@@ -45,8 +45,8 @@
 //! ``
 //!
 //! Reference: https://git-scm.com/book/en/v2/Git-Internals-Git-Objects
-use std::array::TryFromSliceError;
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{array::TryFromSliceError, sync::Arc};
+use std::{cell::RefCell, collections::HashMap};
 
 use failure::{Error, Fail};
 use serde::Deserialize;
@@ -661,7 +661,7 @@ impl MerkleStorage {
 
         match new_node {
             None => tree.remove(last),
-            Some(new_node) => tree.insert(Rc::new(last.clone()), Rc::new(new_node)),
+            Some(new_node) => tree.insert(Arc::new(last.clone()), Arc::new(new_node)),
         };
 
         if tree.is_empty() {
