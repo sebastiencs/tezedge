@@ -21,6 +21,38 @@ struct NodeKey (usize);
 //     root: NodeKey,
 // }
 
+// Calculates hash of commit
+// uses BLAKE2 binary 256 length hash function
+// hash is calculated as:
+// <hash length (8 bytes)><tree hash bytes>
+// <length of parent hash (8bytes)><parent hash bytes>
+// <time in epoch format (8bytes)
+// <commit author name length (8bytes)><commit author name bytes>
+// <commit message length (8bytes)><commit message bytes>
+pub(crate) fn hash_commit(commit: &Commit) -> Result<EntryHash, HashingError> {
+    let mut hasher = VarBlake2b::new(ENTRY_HASH_LEN)?;
+    hasher.update(&(ENTRY_HASH_LEN as u64).to_be_bytes());
+    hasher.update(&commit.root_hash);
+
+    if commit.parent_commit_hash.is_none() {
+        hasher.update(&(0_u64).to_be_bytes());
+    } else {
+        let parent_commit_hash = commit
+            .parent_commit_hash
+            .ok_or(HashingError::ValueExpected("parent_commit_hash"))?;
+        hasher.update(&(1_u64).to_be_bytes()); // # of parents; we support only 1
+        hasher.update(&(parent_commit_hash.len() as u64).to_be_bytes());
+        hasher.update(&parent_commit_hash);
+    }
+    hasher.update(&(commit.time as u64).to_be_bytes());
+    hasher.update(&(commit.author.len() as u64).to_be_bytes());
+    hasher.update(&commit.author.clone().into_bytes());
+    hasher.update(&(commit.message.len() as u64).to_be_bytes());
+    hasher.update(&commit.message.clone().into_bytes());
+
+    Ok(hasher.finalize_boxed().as_ref().try_into()?)
+}
+
 // Calculates hash of BLOB
 // uses BLAKE2 binary 256 length hash function
 // hash is calculated as <length of data (8 bytes)><data>
@@ -136,6 +168,8 @@ struct Node {
 
 struct NewMerkle {
     nodes: Vec<Node>,
+    /// Last commit hash
+    last_commit_hash: Option<EntryHash>,
 }
 
 struct MerkleSerializer<'a> {
@@ -143,6 +177,14 @@ struct MerkleSerializer<'a> {
     last_sibling: usize,
     hashes: Vec<(String, TreeNode)>,
     serialized: Vec<(EntryHash, ContextValue)>,
+}
+
+fn display_hash(hash: &[u8]) -> String {
+    let mut s = String::new();
+    for h in hash {
+        s.push_str(&format!("{:X}", h));
+    }
+    s
 }
 
 impl<'a> MerkleSerializer<'a> {
@@ -171,63 +213,53 @@ impl<'a> MerkleSerializer<'a> {
         // println!("{}CALLED ROW={} COL={} {:?} DEPTH={}", " ".repeat(depth), row, column, &self.nodes[row].key, depth);
 
         let mut row = row;
-        let mut entries = 1;
+        let mut nentries = 1;
 
         if let Some(new_column) = self.next_child(row, column) {
             println!("{}TREE1={}", " ".repeat(depth), self.nodes[row].key[column]);
 
             let tree_nentries = self.recursive(row, new_column, depth + 1);
-
             self.process_tree(&self.nodes[row], column, tree_nentries);
-
-            println!("{}LAST={:?}", " ".repeat(depth), self.hashes.last());
-
         } else {
             let hash = self.process_leaf(&self.nodes[row], column);
 
-            println!("{}LEAF1 {:?} HASH={:?}", " ".repeat(depth), self.nodes[row].key[column], Self::display_hash(&hash));
+            println!("{}LEAF1 {:?} HASH={:?}", " ".repeat(depth), self.nodes[row].key[column], display_hash(&hash));
         }
 
         while let Some(sibling) = self.next_sibling(row.max(self.last_sibling), column, depth) {
             // println!("{}FOUND SIBLING row={} col={} current_row={} {:?}", " ".repeat(depth), sibling, column, row, self.nodes[sibling].key.get(column));
             self.last_sibling = sibling;
 
-            entries += 1;
+            nentries += 1;
 
             if let Some(new_col) = self.next_child(sibling, column) {
                 println!("{}TREE2={}", " ".repeat(depth), self.nodes[sibling].key[column]);
 
                 let tree_nentries = self.recursive(sibling, new_col, depth + 1);
                 self.process_tree(&self.nodes[sibling], column, tree_nentries);
-
-                println!("{}LAST={:?}", " ".repeat(depth), self.hashes.last());
             } else {
                 let hash = self.process_leaf(&self.nodes[sibling], column);
 
-                println!("{}LEAF2 {:?} HASH={:?}", " ".repeat(depth), self.nodes[sibling].key[column], Self::display_hash(&hash));
+                println!("{}LEAF2 {:?} HASH={:?}", " ".repeat(depth), self.nodes[sibling].key[column], display_hash(&hash));
             }
             row = sibling;
         }
 
-        entries
+        nentries
     }
 
-    fn display_hash(hash: &[u8]) -> String {
-        let mut s = String::new();
-        for h in hash {
-        s.push_str(&format!("{:X}", h));
-        }
-        s
-    }
-
-    fn start_recursive(&mut self) {
+    fn start_recursive(mut self) -> (EntryHash, Vec<(EntryHash, ContextValue)>) {
         self.recursive(0, 0, 0);
 
         println!("REMAINING={:}", self.hashes.len());
 
         // let tree = Tree(hashes);
         let hash_tree = hash_tree(&self.hashes).unwrap();
-        println!("ROOT_HASH={:?}", Self::display_hash(&hash_tree));
+        println!("ROOT_HASH={:?}", display_hash(&hash_tree));
+
+        self.serialized.push((hash_tree, bincode::serialize(&Entry::Tree(Tree(self.hashes.to_vec()))).unwrap()));
+
+        (hash_tree, self.serialized)
 
         // let mut row = 0;
 
@@ -265,7 +297,7 @@ impl<'a> MerkleSerializer<'a> {
 
         let tree = &self.hashes[start..];
         let hash_tree = hash_tree(tree).unwrap();
-        // println!("{}FULL_HASH_TREE={:?}", " ".repeat(depth), Self::display_hash(&hash_tree));
+        // println!("{}FULL_HASH_TREE={:?}", " ".repeat(depth), display_hash(&hash_tree));
 
         self.serialized.push((hash_tree, bincode::serialize(&Entry::Tree(Tree(tree.to_vec()))).unwrap()));
 
@@ -281,6 +313,7 @@ impl NewMerkle {
     fn new() -> NewMerkle {
         NewMerkle {
             nodes: Vec::new(),
+            last_commit_hash: None,
             // last_sibling: 0,
             // root: NodeKey(0),
         }
@@ -295,213 +328,71 @@ impl NewMerkle {
 // key=["c", "moo"] value=[3, 4]
 // key=["c", "zoo"] value=[1, 2]
 
-    // fn next_child(&self, row: usize, column: usize) -> Option<usize> {
-    //     self.nodes.get(row)?.key.get(column + 1).map(|_| column + 1)
-
-    //     // let child = self.nodes.get(row)?.key.get(column + 1)?;
-    //     // Some(column + 1)
-    // }
-
-    // fn next_sibling(&self, row: usize, column: usize, depth: usize) -> Option<usize> {
-    //     let current = self.nodes.get(row)?.key.get(..=column)?;
-    //     let mut next_row = row + 1;
-
-    //     loop {
-    //         let sibling = self.nodes.get(next_row)?.key.get(..=column)?;
-    //         // println!("{}COMPARE CURRENT={:?} SIBLING={:?} row={} col={} next_row={}", " ".repeat(depth), current, sibling, row, column, next_row);
-    //         // println!("{}COMPARE2 CURRENT={:?} SIBLING={:?} CURRENT_LAST={:?} SIBLING_LAST={:?} ROW={} COL={} NEXT_ROW={}", " ".repeat(depth), current.get(..current.len() - 1), sibling.get(..sibling.len() - 1),
-    //         //          current.last(), sibling.last(), row, column, next_row);
-    //         if sibling.get(..sibling.len() - 1) == current.get(..current.len() - 1) {
-    //             if sibling.last() != current.last() {
-    //                 // if sibling != current {
-    //                 return Some(next_row);
-    //                 // if next_row != row + 1 {
-    //                 //     return Some(next_row);
-    //                 // } else {
-    //                 //     return None;
-    //                 // }
-    //             }
-    //         } else {
-    //             return None;
-    //         }
-    //         next_row += 1;
-    //     }
-    // }
-
-    // fn recursive(&mut self, row: usize, column: usize, depth: usize, hashes: &mut Vec<(String, TreeNode)>) -> usize {
-    //     // println!("{}CALLED ROW={} COL={} {:?} DEPTH={}", " ".repeat(depth), row, column, &self.nodes[row].key, depth);
-
-    //     // let mut hashes = vec![];
-
-    //     let mut row = row;
-    //     let mut entries = 1;
-
-    //     if let Some(new_column) = self.next_child(row, column) {
-    //         println!("{}TREE1={}", " ".repeat(depth), self.nodes[row].key[column]);
-
-    //         let tree_entries = self.recursive(row, new_column, depth + 1, hashes);
-
-    //         let hash_tree = hash_tree(&hashes[hashes.len() - tree_entries..]).unwrap();
-    //         println!("{}REAL_HASH_TREE={:?}", " ".repeat(depth), Self::display_hash(&hash_tree));
-
-    //         hashes.truncate(hashes.len() - tree_entries);
-
-    //         hashes.push((self.nodes[row].key[column].clone(), TreeNode {
-    //             node_kind: NodeKind::NonLeaf,
-    //             entry_hash: hash_tree,
-    //         }));
-
-    //         println!("{}LAST={:?}", " ".repeat(depth), hashes.last());
-
-    //     } else {
-    //         let node = &self.nodes[row];
-    //         let hash = Self::process_leaf(node);
-
-    //         println!("{}LEAF1 {:?} HASH={:?}", " ".repeat(depth), self.nodes[row].key[column], Self::display_hash(&hash));
-    //         hashes.push((self.nodes[row].key[column].clone(), TreeNode {
-    //             node_kind: NodeKind::Leaf,
-    //             entry_hash: hash,
-    //         }));
-    //         // entries += 1;
-    //     }
-
-    //     while let Some(sibling) = self.next_sibling(row.max(self.last_sibling), column, depth) {
-    //         // println!("{}FOUND SIBLING row={} col={} current_row={} {:?}", " ".repeat(depth), sibling, column, row, self.nodes[sibling].key.get(column));
-    //         self.last_sibling = sibling;
-
-    //         entries += 1;
-
-    //         if let Some(new_col) = self.next_child(sibling, column) {
-    //             println!("{}TREE2={}", " ".repeat(depth), self.nodes[sibling].key[column]);
-
-    //             let tree_entries = self.recursive(sibling, new_col, depth + 1, hashes);
-
-    //             let hash_tree = hash_tree(&hashes[hashes.len() - tree_entries..]).unwrap();
-    //             println!("{}REAL_HASH_TREE={:?}", " ".repeat(depth), Self::display_hash(&hash_tree));
-
-    //             hashes.truncate(hashes.len() - tree_entries);
-
-    //             hashes.push((self.nodes[sibling].key[column].clone(), TreeNode {
-    //                 node_kind: NodeKind::NonLeaf,
-    //                 entry_hash: hash_tree,
-    //             }));
-
-    //             println!("{}LAST={:?}", " ".repeat(depth), hashes.last());
-    //         } else {
-    //             let node = &self.nodes[sibling];
-    //             let hash = Self::process_leaf(node);
-
-    //             println!("{}LEAF2 {:?} HASH={:?}", " ".repeat(depth), self.nodes[sibling].key[column], Self::display_hash(&hash));
-    //             hashes.push((self.nodes[sibling].key[column].clone(), TreeNode {
-    //                 node_kind: NodeKind::Leaf,
-    //                 entry_hash: hash,
-    //             }));
-    //         }
-    //         row = sibling;
-    //     }
-
-    //     // println!("{}HASHES_LEN={:?} ENTRIES={}", " ".repeat(depth), hashes.len(), entries);
-
-    //     entries
-    // }
-
-    // fn start_recursive(&mut self) {
-    //     let mut hashes = vec![];
-
-    //     self.recursive(0, 0, 0, &mut hashes);
-
-    //     println!("REMAINING={:}", hashes.len());
-
-    //     // let tree = Tree(hashes);
-    //     let hash_tree = hash_tree(&hashes).unwrap();
-    //     println!("ROOT_HASH={:?}", Self::display_hash(&hash_tree));
-
-    //     // let mut row = 0;
-
-    //     // while let Some(child) = self.next_sibling(row, 0, 0) {
-    //     //     println!("## CALLED NEW REC AT {}", child);
-    //     //     self.recursive(child, 0, 0);
-    //     //     row = child;
-    //     // }
-    // }
-
-    fn serialize(&self) {
+    fn serialize(&self) -> (EntryHash, Vec<(EntryHash, ContextValue)>) {
         let mut ser = MerkleSerializer::new(&self.nodes);
-        ser.start_recursive();
+        ser.start_recursive()
     }
 
-    fn process_leaf(node: &Node) -> EntryHash {
-        let hash_blob = hash_blob(&node.value).unwrap();
-        // output.push((hash_blob, bincode::serialize(&Entry::Blob(node.value.clone())).unwrap()));
+    fn commit(
+        &mut self,
+        time: u64,
+        author: String,
+        message: String,
+    ) -> EntryHash {
+        let (root_hash, mut batch) = self.serialize();
+        let parent_commit_hash = self.last_commit_hash;
 
-        hash_blob
+        let new_commit = Commit {
+            root_hash,
+            parent_commit_hash,
+            time,
+            author,
+            message,
+        };
+        let new_commit_hash = hash_commit(&new_commit).unwrap();
 
-        // let tree: Tree = Tree(vec![
-        //     (node.key.last().cloned().unwrap(), TreeNode {
-        //         node_kind: NodeKind::Leaf,
-        //         entry_hash: hash_blob
-        //     })
-        // ]);
+        batch.push((new_commit_hash, bincode::serialize(&Entry::Commit(new_commit)).unwrap()));
 
-        // let hash_tree = hash_tree(&tree).unwrap();
-        // // output.push((hash_tree.clone(), bincode::serialize(&Entry::Tree(tree)).unwrap()));
+        self.last_commit_hash = Some(new_commit_hash);
 
-        // hash_tree
+        println!("COMMIT_HASH={:?}", display_hash(&new_commit_hash));
+
+        new_commit_hash
     }
 
-    // fn process_leaf(node: &Node, output: &mut Vec<(EntryHash, ContextValue)>) -> EntryHash {
-    //     let hash_blob = hash_blob(&node.value).unwrap();
-    //     output.push((hash_blob, bincode::serialize(&Entry::Blob(node.value.clone())).unwrap()));
+    // pub fn commit(
+    //     &mut self,
+    //     time: u64,
+    //     author: String,
+    //     message: String,
+    // ) -> Result<EntryHash, MerkleError> {
+    //     let root_hash = self.get_working_tree_root_hash()?;
+    //     let parent_commit_hash = self.last_commit_hash;
 
-    //     let tree: Tree = Tree(vec![
-    //         (node.key.last().cloned().unwrap(), TreeNode {
-    //             node_kind: NodeKind::Leaf,
-    //             entry_hash: hash_blob
-    //         })
-    //     ]);
+    //     let new_commit = Commit {
+    //         root_hash,
+    //         parent_commit_hash,
+    //         time,
+    //         author,
+    //         message,
+    //     };
+    //     let new_commit_hash = hash_commit(&new_commit)?;
+    //     let entry = Entry::Commit(new_commit);
 
-    //     let hash_tree = hash_tree(&tree).unwrap();
-    //     output.push((hash_tree.clone(), bincode::serialize(&Entry::Tree(tree)).unwrap()));
+    //     self.display_tree(&self.working_tree.0, 0);
 
-    //     hash_tree
+    //     // persist working tree entries to db
+    //     let mut batch: Vec<(EntryHash, ContextValue)> = Vec::new();
+    //     self.get_entries_recursively(&entry, Some(&self.working_tree.0), &mut batch)?;
+    //     // write all entries at once (depends on backend)
+    //     self.db.write_batch(batch)?;
+
+    //     self.last_commit_hash = Some(new_commit_hash);
+    //     let rv = Ok(new_commit_hash);
+
+    //     stat_updater.update_execution_stats(&mut self.stats);
+    //     rv
     // }
-
-    // fn run(&self) {
-    //     let mut all = vec![];
-
-    //     for node in self.nodes.iter().filter(|n| !n.removed) {
-    //         let hash_blob = hash_blob(&node.value).unwrap();
-    //         all.push((hash_blob, bincode::serialize(&Entry::Blob(node.value.clone())).unwrap()));
-
-    //         // pub node_kind: NodeKind,
-    //         // pub entry_hash: EntryHash,
-
-    //         let tree: Tree = Tree(vec![
-    //             (node.key.last().cloned().unwrap(), TreeNode {
-    //                 node_kind: NodeKind::Leaf,
-    //                 entry_hash: hash_blob
-    //             })
-    //         ]);
-
-    //         let hash_tree = hash_tree(&tree).unwrap();
-    //         all.push((hash_tree, bincode::serialize(&Entry::Tree(tree)).unwrap()));
-
-    //         //let hash_tree = hash_t
-
-    //     }
-
-    //     for (hash, _v) in &all {
-    //         println!("LA={:?}={:?}", Self::display_hash(hash), "data");
-    //     }
-    // }
-
-    fn display_hash(hash: &[u8]) -> String {
-        let mut s = String::new();
-        for h in hash {
-        s.push_str(&format!("{:X}", h));
-        }
-        s
-    }
 
     fn display(&self) {
         for node in &self.nodes {
@@ -633,7 +524,7 @@ impl NewMerkle {
 
         // let _: Vec<_> = self.nodes.drain(start..end + 1).collect();
 
-        for n in start..end + 1 {
+        for n in start..=end {
             self.nodes[n].removed = true;
         }
     }
@@ -711,7 +602,10 @@ mod tests {
         // storage.aaaa();
         // storage.recursive(0, 0, 0);
         // storage.start_recursive();
-        storage.serialize();
+        // storage.serialize();
+
+        storage.commit(1, "seb".to_string(), "ok".to_string());
+
 
         // storage.run();
     }
