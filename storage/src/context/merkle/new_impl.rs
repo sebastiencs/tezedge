@@ -423,6 +423,7 @@ impl NewMerkle {
             }
         };
 
+        let mut check_after = index + 1;
         let key_len = key.len();
 
         while index > 0 {
@@ -434,6 +435,20 @@ impl NewMerkle {
                 break;
             }
             index -= 1;
+        }
+
+        loop {
+            let node = match self.nodes.get_mut(check_after) {
+                Some(node) => node,
+                None => return
+            };
+            let len = node.key.len();
+            if len > key_len && &node.key[..key_len] == key {
+                node.removed = true;
+            } else {
+                break;
+            }
+            check_after += 1;
         }
     }
 
@@ -608,6 +623,27 @@ mod tests {
 
 
         // storage.run();
+    }
+
+    #[test]
+    fn test_new_impl_fix() {
+        println!("START", );
+
+        let mut storage = NewMerkle::new();
+
+        let a_foo: &ContextKey = &vec!["a".to_string(), "foo".to_string()];
+        let c_foo: &ContextKey = &vec!["c".to_string(), "foo".to_string()];
+
+        storage.set(&vec!["c".to_string(), "zoo".to_string()], vec![1, 2]);
+        storage.set(&vec!["a".to_string(), "goo".to_string()], vec![97, 98]); // TODO: goo should be removed because of the next line
+
+        println!("BEFORE", );
+        storage.display();
+
+        storage.set(&vec!["a".to_string()], vec![97, 98]);
+
+        println!("AFTER", );
+        storage.display();
     }
 
     // #[test]
