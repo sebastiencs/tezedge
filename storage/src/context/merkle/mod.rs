@@ -13,6 +13,7 @@ use self::hash::{hash_entry, HashingError};
 pub mod hash;
 pub mod merkle_storage;
 pub mod merkle_storage_stats;
+pub mod new_impl;
 
 // Tree must be an ordered structure for consistent hash in hash_tree.
 // The entry names *must* be in lexicographical order, as required by the hashing algorithm.
