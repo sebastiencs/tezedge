@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, collections::BTreeMap, convert::TryInto, ops::Range};
+use std::{borrow::Cow, cmp::Ordering, collections::BTreeMap, convert::TryInto, ops::Range};
 
 use blake2::VarBlake2b;
 use blake2::digest::{InvalidOutputSize, Update, VariableOutput};
@@ -145,9 +145,9 @@ pub struct TreeNode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub struct Tree (Vec<(Vec<u8>, TreeNode)>);
+pub struct Tree<'a> (Cow<'a, [(Vec<u8>, TreeNode)]>);
 
-impl Tree {
+impl<'a> Tree<'a> {
     fn get(&self, key: &str) -> Option<&TreeNode> {
         match self.0.binary_search_by(|node| {
             node.0.as_slice().cmp(key.as_bytes())
@@ -170,9 +170,9 @@ pub struct Commit {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub enum Entry {
-    Tree(Tree),
-    Blob(ContextValue),
+pub enum Entry<'a> {
+    Tree(Tree<'a>),
+    Blob(Cow<'a, ContextValue>),
     Commit(Commit),
 }
 
@@ -464,7 +464,7 @@ impl<'a> MerkleSerializer<'a> {
         let hash_tree = hash_tree(&self.hashes).unwrap();
         // println!("ROOT_HASH={:?}", display_hash(&hash_tree));
 
-        self.serialized.push((hash_tree, bincode::serialize(&Entry::Tree(Tree(self.hashes.to_vec()))).unwrap()));
+        self.serialized.push((hash_tree, bincode::serialize(&Entry::Tree(Tree(Cow::Borrowed(&self.hashes)))).unwrap()));
 
         (hash_tree, self.serialized)
 
@@ -495,7 +495,7 @@ impl<'a> MerkleSerializer<'a> {
             Some(hash) => hash,
             None => {
                 let entry_hash = hash_blob(&node.value.as_ref().unwrap()).unwrap();
-                self.serialized.push((entry_hash, bincode::serialize(&Entry::Blob(node.value.as_ref().unwrap().clone())).unwrap()));
+                self.serialized.push((entry_hash, bincode::serialize(&Entry::Blob(Cow::Borrowed(node.value.as_ref().unwrap()))).unwrap()));
                 entry_hash
             }
         };
@@ -505,22 +505,6 @@ impl<'a> MerkleSerializer<'a> {
         entry_hash
     }
 
-    // fn process_leaf(
-    //     &mut self,
-    //     node: &Node,
-    //     column: usize,
-    // ) -> EntryHash {
-    //     let entry_hash = match node.hash {
-    //         Some(hash) => hash,
-    //         None => hash_blob(&node.value.as_ref().unwrap()).unwrap()
-    //     };
-
-    //     self.serialized.push((entry_hash, bincode::serialize(&Entry::Blob(node.value.as_ref().unwrap().clone())).unwrap()));
-    //     self.hashes.push((node.key.get(column).unwrap().to_vec(), TreeNode { entry_hash, node_kind: node.kind.clone() }));
-
-    //     entry_hash
-    // }
-
     fn process_tree(&mut self, node: &Node, column: usize, tree_entries: usize) {
         let start = self.hashes.len() - tree_entries;
 
@@ -528,7 +512,7 @@ impl<'a> MerkleSerializer<'a> {
         let hash_tree = hash_tree(tree).unwrap();
         // println!("{}FULL_HASH_TREE={:?}", " ".repeat(depth), display_hash(&hash_tree));
 
-        self.serialized.push((hash_tree, bincode::serialize(&Entry::Tree(Tree(tree.to_vec()))).unwrap()));
+        self.serialized.push((hash_tree, bincode::serialize(&Entry::Tree(Tree(Cow::Borrowed(tree)))).unwrap()));
 
         self.hashes.truncate(start);
         self.hashes.push((node.key.get(column).unwrap().to_vec(), TreeNode {
@@ -634,7 +618,7 @@ impl NewMerkle {
 
         self.nodes.remove(insert_at);
 
-        for (key, node) in &tree.0 {
+        for (key, node) in tree.0.iter() {
             let mut key_prefix = prefix.to_vec();
             key_prefix.push(0);
             key_prefix.extend_from_slice(key.as_slice());
@@ -651,11 +635,11 @@ impl NewMerkle {
         }
     }
 
-    fn apply_tree_to_working_tree_at(&mut self, mut insert_at: usize, tree: &Tree) {
+    fn apply_tree_to_working_tree_at(&mut self, mut insert_at: usize, tree: Tree) {
         let prefix = self.nodes[insert_at].key.as_bytes().to_vec();
         self.nodes.remove(insert_at);
 
-        for (key, node) in &tree.0 {
+        for (key, node) in tree.0.iter() {
             let mut key_prefix = prefix.clone();
             key_prefix.push(0);
             key_prefix.extend_from_slice(key.as_slice());
@@ -836,12 +820,16 @@ impl NewMerkle {
             };
 
             match self.get_entry_from_hash(&entry_hash).map_err(|_| index)? {
-                Entry::Tree(tree) => {
-                    self.apply_tree_to_working_tree_at(index, &tree);
+                Entry::Tree(Tree(Cow::Owned(tree))) => {
+                    let tree = Tree(Cow::Borrowed(&tree));
+                    self.apply_tree_to_working_tree_at(index, tree);
                 }
                 Entry::Blob(blob) => {
-                    self.nodes[index].value = Some(blob.clone());
+                    self.nodes[index].value = Some((*blob).clone());
                     return Ok(index);
+                }
+                Entry::Tree(Tree(Cow::Borrowed(_))) => {
+
                 }
                 Entry::Commit(_) => {
                 }
@@ -1027,7 +1015,8 @@ impl NewMerkle {
         let commit = self.get_commit(&context_hash)?;
         let entry = self.get_entry_from_hash(&commit.root_hash)?;
         let tree = self.get_tree(&entry)?;
-        self.apply_tree_to_root(tree);
+        let tree = Tree(Cow::Owned(tree.0.into_owned()));
+        self.apply_tree_to_root(&tree);
 
         // self.nodes = nodes;
 
@@ -1066,9 +1055,9 @@ impl NewMerkle {
         }
     }
 
-    fn get_tree<'e>(&self, entry: &'e Entry) -> Result<&'e Tree, MerkleError> {
+    fn get_tree<'e>(&self, entry: &'e Entry) -> Result<Tree<'e>, MerkleError> {
         match entry {
-            Entry::Tree(tree) => Ok(tree),
+            Entry::Tree(tree) => Ok(Tree(Cow::Borrowed(&tree.0))),
             Entry::Blob(_) => Err(MerkleError::FoundUnexpectedStructure {
                 sought: "tree".to_string(),
                 found: "blob".to_string(),
@@ -1099,7 +1088,7 @@ impl NewMerkle {
 
         // get blob by hash
         match self.get_entry_from_hash(&node.entry_hash)? {
-            Entry::Blob(blob) => Ok(blob),
+            Entry::Blob(blob) => Ok((*blob).clone()),
             _ => Err(MerkleError::ValueIsNotABlob {
                 key: self.key_to_string(key),
             }),
@@ -1123,7 +1112,7 @@ impl NewMerkle {
             Some(first) => first,
             None => {
                 // terminate recursion if end of path was reached
-                return Ok(root.clone());
+                return Ok(Tree(Cow::Owned(root.0.to_vec())));
             }
         };
 
@@ -1131,14 +1120,14 @@ impl NewMerkle {
         let child_node = match root.get(first) {
             Some(hash) => hash,
             None => {
-                return Ok(Tree(vec![]));
+                return Ok(Tree(Cow::Owned(vec![])));
             }
         };
 
         // get entry by hash (from working tree or DB)
         match self.get_entry_from_hash(&child_node.entry_hash)? {
             Entry::Tree(tree) => self.find_tree(&tree, &key[1..]),
-            Entry::Blob(_) => Ok(Tree(vec![])),
+            Entry::Blob(_) => Ok(Tree(Cow::Owned(vec![]))),
             Entry::Commit { .. } => Err(MerkleError::FoundUnexpectedStructure {
                 sought: "Tree/Blob".to_string(),
                 found: "commit".to_string(),
@@ -1156,7 +1145,7 @@ impl NewMerkle {
 
         let commit = self.get_commit(commit_hash)?;
         let entry = self.get_entry_from_hash(&commit.root_hash)?;
-        let rv = self.get_from_tree(self.get_tree(&entry)?, key);
+        let rv = self.get_from_tree(&self.get_tree(&entry)?, key);
 
         // stat_updater.update_execution_stats(&mut self.stats);
         rv
@@ -1317,20 +1306,20 @@ mod tests {
         println!("BEFORE APPLY", );
         storage.display();
 
-        storage.apply_tree_to_root(&Tree(vec![
+        storage.apply_tree_to_root(&Tree(Cow::Owned(vec![
             (vec![101], TreeNode { node_kind: NodeKind::Leaf, entry_hash: [1; 32] }),
             (vec![102], TreeNode { node_kind: NodeKind::Leaf, entry_hash: [1; 32] })
-        ]));
+        ])));
 
         println!("AFTER APPLY", );
         storage.display();
 
-        storage.apply_tree_to_working_tree(&[101], &Tree(vec![
+        storage.apply_tree_to_working_tree(&[101], &Tree(Cow::Owned(vec![
             (vec![102], TreeNode { node_kind: NodeKind::Leaf, entry_hash: [1; 32] }),
             (vec![103], TreeNode { node_kind: NodeKind::Leaf, entry_hash: [1; 32] }),
             (vec![104], TreeNode { node_kind: NodeKind::Leaf, entry_hash: [1; 32] }),
             (vec![105], TreeNode { node_kind: NodeKind::Leaf, entry_hash: [1; 32] })
-        ]));
+        ])));
 
         println!("AFTER APPLY2", );
         storage.display();
