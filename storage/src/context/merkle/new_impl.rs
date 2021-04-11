@@ -1,4 +1,4 @@
-use std::{borrow::Cow, cmp::Ordering, collections::BTreeMap, convert::TryInto, ops::Range};
+use std::{borrow::Cow, cmp::Ordering, collections::BTreeMap, convert::TryInto, ops::{Index, IndexMut, Range}};
 
 use blake2::VarBlake2b;
 use blake2::digest::{InvalidOutputSize, Update, VariableOutput};
@@ -291,8 +291,7 @@ impl NodeKey {
 
             if index == range.start {
                 start = elem_index + 1;
-            }
-            if index == range.end {
+            } else if index == range.end {
                 return Some(&self.data[start..elem_index])
             }
         }
@@ -317,8 +316,130 @@ impl NodeKey {
     }
 }
 
+struct Nodes {
+    keys: Vec<usize>,
+    nodes: slab::Slab<Node>,
+}
+
+impl Nodes {
+    fn new() -> Nodes {
+        Nodes {
+            keys: vec![],
+            nodes: slab::Slab::new(),
+        }
+    }
+
+    fn get(&self, index: usize) -> Option<&Node> {
+        let key = self.keys.get(index).copied()?;
+        self.nodes.get(key)
+    }
+
+    fn get_mut(&mut self, index: usize) -> Option<&mut Node> {
+        let key = self.keys.get(index).copied()?;
+        self.nodes.get_mut(key)
+    }
+
+    fn insert(&mut self, index: usize, elem: Node) {
+        let key = self.nodes.insert(elem);
+        self.keys.insert(index, key);
+    }
+
+    fn remove(&mut self, index: usize) {
+        let key = match self.keys.get(index).copied() {
+            Some(key) => key,
+            None => return
+        };
+
+        self.keys.remove(index);
+        self.nodes.remove(key);
+    }
+
+    fn len(&self) -> usize {
+        self.keys.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.keys.is_empty()
+    }
+
+    fn clear(&mut self) {
+        self.nodes.clear();
+        self.keys.clear();
+    }
+
+    fn binary_search_by<'a, F>(&'a self, mut fun: F) -> Result<usize, usize>
+    where
+        F: FnMut(&'a Node) -> Ordering,
+    {
+        self.keys.binary_search_by(|key| {
+            let node = &self.nodes[*key];
+            fun(node)
+        })
+    }
+
+    pub fn retain<F>(&mut self, mut fun: F)
+    where
+        F: FnMut(&Node) -> bool,
+    {
+        let nodes = &self.nodes;
+
+        self.keys.retain(|key| {
+            let node = &nodes[*key];
+            fun(node)
+        })
+    }
+
+    fn clone_range(&self, start: usize, end: usize) -> Vec<Node> {
+        let mut vec = Vec::with_capacity(end - start + 1);
+
+        for index in start..=end {
+            let key = self.keys[index];
+            let node = &self.nodes[key];
+            vec.push(node.clone());
+        }
+
+        vec
+    }
+
+    fn iter(&self) -> NodesIterator {
+        NodesIterator { nodes: self, current: 0 }
+    }
+}
+
+struct NodesIterator<'a> {
+    nodes: &'a Nodes,
+    current: usize
+}
+
+impl<'a> Iterator for NodesIterator<'a> {
+    type Item = &'a Node;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let key = self.nodes.keys.get(self.current).copied()?;
+        let node = &self.nodes.nodes[key];
+        self.current += 1;
+        Some(node)
+    }
+}
+
+impl Index<usize> for Nodes {
+    type Output = Node;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        let key = self.keys[index];
+        &self.nodes[key]
+    }
+}
+
+impl IndexMut<usize> for Nodes {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        let key = self.keys[index];
+        &mut self.nodes[key]
+    }
+}
+
 pub struct NewMerkle {
-    nodes: Vec<Box<Node>>,
+    nodes: Nodes,
     /// key value storage backend
     db: Box<ContextKeyValueStore>,
     /// Last commit hash
@@ -326,7 +447,7 @@ pub struct NewMerkle {
 }
 
 struct MerkleSerializer<'a> {
-    nodes: &'a [Box<Node>],
+    nodes: &'a Nodes,
     last_sibling: usize,
     hashes: Vec<(Vec<u8>, TreeNode)>,
     serialized: Vec<(EntryHash, ContextValue)>,
@@ -477,7 +598,7 @@ impl<'a> MerkleSerializer<'a> {
         // }
     }
 
-    fn new(nodes: &[Box<Node>]) -> MerkleSerializer {
+    fn new(nodes: &Nodes) -> MerkleSerializer {
         MerkleSerializer {
             nodes,
             last_sibling: 0,
@@ -526,7 +647,7 @@ impl NewMerkle {
     pub fn new(db: Box<ContextKeyValueStore>) -> NewMerkle {
         NewMerkle {
             db,
-            nodes: Vec::new(),
+            nodes: Nodes::new(),
             last_commit_hash: None,
             // last_sibling: 0,
             // root: NodeKey(0),
@@ -594,13 +715,13 @@ impl NewMerkle {
         };
 
         for (key, node) in tree.0.iter() {
-            self.nodes.insert(index, Box::new(Node {
+            self.nodes.insert(index, Node {
                 key: NodeKey::from(key),
                 value: None,
                 hash: Some(node.entry_hash),
                 removed: false,
                 kind: node.node_kind.clone(),
-            }));
+            });
             index += 1;
         }
     }
@@ -624,13 +745,13 @@ impl NewMerkle {
             key_prefix.extend_from_slice(key.as_slice());
             let key = NodeKey { data: key_prefix };
 
-            self.nodes.insert(insert_at, Box::new(Node {
+            self.nodes.insert(insert_at, Node {
                 key,
                 value: None,
                 hash: Some(node.entry_hash),
                 removed: false,
                 kind: node.node_kind.clone(),
-            }));
+            });
             insert_at += 1;
         }
     }
@@ -645,19 +766,19 @@ impl NewMerkle {
             key_prefix.extend_from_slice(key.as_slice());
             let key = NodeKey { data: key_prefix };
 
-            self.nodes.insert(insert_at, Box::new(Node {
+            self.nodes.insert(insert_at, Node {
                 key,
                 value: None,
                 hash: Some(node.entry_hash),
                 removed: false,
                 kind: node.node_kind.clone(),
-            }));
+            });
             insert_at += 1;
         }
     }
 
     fn display(&self) {
-        for node in &self.nodes {
+        for node in self.nodes.iter() {
             // if !node.removed {
             //     println!("key={:?} value={:?}", node.key, node.value);
             // }
@@ -676,6 +797,8 @@ impl NewMerkle {
         let key_bytes = NodeKey::new(key);
 
         let res = self.find_path(&key_bytes);
+
+        println!("RES={:?}", res);
 
         // let time_bytes = now.elapsed();
 
@@ -698,13 +821,13 @@ impl NewMerkle {
                 let key = key_bytes.clone();
                 // time_clone = Some(now.elapsed() - search);
 
-                self.nodes.insert(index_missing, Box::new(Node {
+                self.nodes.insert(index_missing, Node {
                     key,
                     value: Some(value),
                     hash: None,
                     kind: NodeKind::Leaf,
                     removed: false,
-                }));
+                });
 
                 // time_insert = Some(now.elapsed() - time_clone.unwrap());
 
@@ -820,16 +943,13 @@ impl NewMerkle {
             };
 
             match self.get_entry_from_hash(&entry_hash).map_err(|_| index)? {
-                Entry::Tree(Tree(Cow::Owned(tree))) => {
-                    let tree = Tree(Cow::Borrowed(&tree));
+                Entry::Tree(tree) => {
+                    let tree = Tree(Cow::Owned(tree.0.into_owned()));
                     self.apply_tree_to_working_tree_at(index, tree);
                 }
                 Entry::Blob(blob) => {
-                    self.nodes[index].value = Some((*blob).clone());
+                    self.nodes[index].value = Some(blob.into_owned());
                     return Ok(index);
-                }
-                Entry::Tree(Tree(Cow::Borrowed(_))) => {
-
                 }
                 Entry::Commit(_) => {
                 }
@@ -876,7 +996,8 @@ impl NewMerkle {
             index += 1;
         }
 
-        let mut new = self.nodes[start..=index].to_vec();
+        let mut new = self.nodes.clone_range(start, index);
+        // let mut new = self.nodes[start..=index].to_vec();
 
         self.delete(to_key);
 
@@ -1000,9 +1121,20 @@ impl NewMerkle {
 
         // let _: Vec<_> = self.nodes.drain(start..end + 1).collect();
 
-        for node in &mut self.nodes[start..=end] {
+        for index in start..=end {
+            let node = &mut self.nodes[index];
             node.removed = true;
         }
+
+        // while start <= end {
+        //     let node = &mut self.nodes[start];
+        //     node.removed = true;
+        //     start += 1;
+        // }
+
+        // for node in &mut self.nodes[start..=end] {
+        //     node.removed = true;
+        // }
 
         self.nodes.retain(|n| !n.removed);
     }
