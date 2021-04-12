@@ -3,6 +3,7 @@ use std::{borrow::Cow, cmp::Ordering, collections::{BTreeMap, HashMap, hash_map:
 use blake2::VarBlake2b;
 use blake2::digest::{InvalidOutputSize, Update, VariableOutput};
 use crypto::hash::HashType;
+use tinyvec::TinyVec;
 
 use crate::{context::{ContextKey, ContextKeyValueStore, ContextValue, EntryHash, StringTreeEntry, StringTreeMap}, persistent::Flushable};
 
@@ -176,7 +177,7 @@ pub enum Entry<'a> {
     Commit(Commit),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Node {
     key: NodeKey,
     //key: Vec<String>,
@@ -186,16 +187,22 @@ pub struct Node {
     kind: NodeKind,
 }
 
-#[derive(Clone, Serialize, Deserialize, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Eq, PartialEq, Ord, PartialOrd)]
 struct NodeKey {
     data: Vec<u8>,
+    separators: TinyVec<[u16; 8]>,
 }
 
 impl std::fmt::Debug for NodeKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let vec: Vec<_> = self.data.split(|b| *b == 0).collect();
-        let vec: Vec<_> = vec.iter().map(|bytes| String::from_utf8(bytes.to_vec()).unwrap()).collect();
-        vec.fmt(f)
+        f.debug_struct("NodeKey")
+         .field("data", &std::str::from_utf8(&self.data))
+         .field("separator", &self.separators)
+         .finish()
+
+        // let vec: Vec<_> = self.data.split(|b| *b == 0).collect();
+        // let vec: Vec<_> = vec.iter().map(|bytes| String::from_utf8(bytes.to_vec()).unwrap()).collect();
+        // vec.fmt(f)
     }
 }
 
@@ -204,8 +211,10 @@ where
     T: AsRef<[u8]>
 {
     fn from(elem: T) -> Self {
+        let elem = elem.as_ref();
         NodeKey {
-            data: elem.as_ref().to_vec()
+            data: elem.to_vec(),
+            separators: tinyvec::tiny_vec![elem.len().try_into().unwrap()]
         }
     }
 }
@@ -215,22 +224,119 @@ impl NodeKey {
         let key_length = key.len();
 
         if key_length == 0 {
-            return Self { data: vec![] };
+            return Self { data: vec![], separators: TinyVec::new() };
         }
 
         let length = key.iter().fold(0, |acc, b| acc + b.len());
+
         let mut data = Vec::with_capacity(length + key_length - 1);
+        let mut separators = TinyVec::with_capacity(key_length);
+
+        let mut size = 0;
 
         for (index, k) in key.iter().enumerate() {
             data.extend_from_slice(k.as_bytes());
             if index < key_length - 1 {
-                data.push(0);
+                data.push(0)
             }
+            size += k.len();
+            separators.push(size.try_into().unwrap());
+            size += 1;
         }
 
-        Self {
-            data
+        // let mut separators = TinyVec::with_capacity(key_length);
+        // let mut size = 0;
+
+        // for word in key {
+        //     let len: u16 = word.len().try_into().unwrap();
+        //     size += len;
+        //     separators.push(size);
+        // }
+
+        // let separators = key.iter().map(|k| k.len().try_into().unwrap()).collect();
+
+        // for (index, k) in key.iter().enumerate() {
+        //     data.extend_from_slice(k.as_bytes());
+        //     if index < key_length - 1 {
+        //         data.push(0);
+        //     }
+        // }
+
+        let res = Self {
+            data,
+            separators
+        };
+
+        // println!("NEW KEY {:?}", res);
+
+        res
+
+        // let length = key.iter().fold(0, |acc, b| acc + b.len());
+        // let mut data = Vec::with_capacity(length + key_length - 1);
+
+        // for (index, k) in key.iter().enumerate() {
+        //     data.extend_from_slice(k.as_bytes());
+        //     if index < key_length - 1 {
+        //         data.push(0);
+        //     }
+        // }
+
+        // Self {
+        //     data
+        // }
+    }
+
+    fn append(&self, other: &[u8]) -> NodeKey {
+        let mut new = NodeKey {
+            data: Vec::with_capacity(self.data.len() + other.len() + 1),
+            separators: self.separators.clone(),
+        };
+
+        new.data.extend_from_slice(&self.data);
+        new.data.push(0);
+        new.data.extend_from_slice(&other);
+
+        let last = self.separators.last().unwrap();
+        // for sep in other.separators {
+        //     new.separators.push(last + sep);
+        // }
+
+        let other_len: u16 = other.len().try_into().unwrap();
+        new.separators.push(last + other_len + 1);
+
+        new
+    }
+
+    fn append_from(&self, mut from: usize, other: &NodeKey) -> NodeKey {
+        // let from: u16 = from.try_into().unwrap();
+
+        let mut new = NodeKey {
+            data: Vec::with_capacity(self.data.len() + other.len()),
+            separators: self.separators.clone(),
+        };
+
+        new.data.extend_from_slice(&self.data);
+        new.data.push(0);
+        new.data.extend_from_slice(&other.get_slice(from..other.len()));
+
+        let mut size: u16 = *self.separators.last().unwrap();
+        // for sep in other.separators {
+        //     new.separators.push(last + sep);
+        // }
+
+        while let Some(word) = other.get(from) {
+            let len: u16 = word.len().try_into().unwrap();
+            size += len + 1;
+            new.separators.push(size);
+            // size += 1;
+            from += 1;
         }
+
+        // let other_len: u16 = other.len().try_into().unwrap();
+        // new.separators.push(last + other_len);
+
+        new
+
     }
 
     fn as_bytes(&self) -> &[u8] {
@@ -238,33 +344,50 @@ impl NodeKey {
     }
 
     fn nwords(&self) -> usize {
-        let nzeros = Memchr::new(0, &self.data).count();
-        if self.data.len() > 0 {
-            nzeros + 1
-        } else {
-            0
-        }
+        self.separators.len()
+        // let nzeros = Memchr::new(0, &self.data).count();
+        // if self.data.len() > 0 {
+        //     nzeros + 1
+        // } else {
+        //     0
+        // }
     }
 
     fn get(&self, index: usize) -> Option<&[u8]> {
-        match self.data.split(|b| *b == 0).nth(index) {
-            Some(elem) if elem.is_empty() => None,
-            elem => elem
+        // println!("GET CALLED WITH {:?} {:?}", index, self);
+
+        if index == 0 {
+            return self.data.get(0..*self.separators.get(0)? as usize);
         }
+
+        let index = index - 1;
+
+        let indexes = self.separators.get(index..=index + 1)?;
+
+        // println!("RES GET={:?}", indexes);
+
+        self.data.get(indexes[0] as usize + 1..indexes[1] as usize)
+
+        // match self.data.split(|b| *b == 0).nth(index) {
+        //     Some(elem) if elem.is_empty() => None,
+        //     elem => elem
+        // }
     }
 
     fn get_str(&self, index: usize) -> Option<&str> {
-        match self.data.split(|b| *b == 0).nth(index).map(|d| std::str::from_utf8(d).unwrap()) {
-            Some(elem) if elem.is_empty() => None,
-            elem => elem
-        }
+        self.get(index).map(|b| std::str::from_utf8(b).unwrap())
+
+        // match self.data.split(|b| *b == 0).nth(index).map(|d| std::str::from_utf8(d).unwrap()) {
+        //     Some(elem) if elem.is_empty() => None,
+        //     elem => elem
+        // }
     }
 
-    fn split_last(&self) -> Option<(&[u8], &[u8])> {
-        let last_index = Memchr::new(0, &self.data).last()?;
+    // fn split_last(&self) -> Option<(&[u8], &[u8])> {
+    //     let last_index = Memchr::new(0, &self.data).last()?;
 
-        Some((&self.data.get(..last_index)?, &self.data.get(last_index + 1..)?))
-    }
+    //     Some((&self.data.get(..last_index)?, &self.data.get(last_index + 1..)?))
+    // }
 
     fn len(&self) -> usize {
         self.data.len()
@@ -287,7 +410,7 @@ impl NodeKey {
     }
 
     fn get_slice(&self, range: Range<usize>) -> &[u8] {
-        // println!("CALLED WITH START={:?} END={:?}", range.start, range.end);
+        // println!("GET_SLICE CALLED WITH {:?} START={:?} END={:?}", self, range.start, range.end);
         // let start = range.start;
 
         if range.start == range.end {
@@ -300,17 +423,33 @@ impl NodeKey {
         let mut start = 0;
         // let end = None;
 
-        for (index, elem_index) in Memchr::new(0, &self.data).enumerate() {
+        for (index, elem_index) in self.separators.iter().enumerate() {
             let index = index + 1;
 
             // println!("LOOP START={:?} INDEX={:?} ELEM_INDEX={:?}", start, index, elem_index);
 
             if index == range.start {
-                start = elem_index + 1;
+                // println!("A", );
+                start = *elem_index as usize + 1;
             } else if index == range.end {
-                return &self.data[start..elem_index];
+                // println!("B {:?}", &self.data[start..(*elem_index as usize)]);
+                return &self.data[start..*elem_index as usize];
             }
         }
+
+        // println!("EXIT LOOP", );
+
+        // for (index, elem_index) in Memchr::new(0, &self.data).enumerate() {
+        //     let index = index + 1;
+
+        //     // println!("LOOP START={:?} INDEX={:?} ELEM_INDEX={:?}", start, index, elem_index);
+
+        //     if index == range.start {
+        //         start = elem_index + 1;
+        //     } else if index == range.end {
+        //         return &self.data[start..elem_index];
+        //     }
+        // }
 
         &self.data[start..]
 
@@ -570,13 +709,13 @@ impl<'a> MerkleSerializer<'a> {
             let node = &self.nodes[row];
             let hash_slice = node.key.hash_slice(0..column + 1);
             if let Some(hash) = self.saved_hashes.get(&hash_slice).copied() {
-                // println!("FOUND TREE", );
+                // println!("{}FOUND TREE", " ".repeat(depth));
                 self.stack_hashes.push((node.key.get(column).unwrap().to_vec(), TreeNode {
                     node_kind: NodeKind::NonLeaf,
                     entry_hash: hash,
                 }));
             } else {
-                // println!("RECOMPUTE TREE", );
+                // println!("{}RECOMPUTE TREE", " ".repeat(depth));
                 let tree_nentries = self.recursive(row, new_column, depth + 1);
                 self.process_tree(&self.nodes[row], column, tree_nentries);
             }
@@ -607,11 +746,13 @@ impl<'a> MerkleSerializer<'a> {
                 let node = &self.nodes[sibling];
                 let hash_slice = node.key.hash_slice(0..column + 1);
                 if let Some(hash) = self.saved_hashes.get(&hash_slice).copied() {
+                    // println!("{}FOUND TREE", " ".repeat(depth));
                     self.stack_hashes.push((node.key.get(column).unwrap().to_vec(), TreeNode {
                         node_kind: NodeKind::NonLeaf,
                         entry_hash: hash,
                     }));
                 } else {
+                    // println!("{}RECOMPUTE TREE", " ".repeat(depth));
                     let tree_nentries = self.recursive(sibling, new_col, depth + 1);
                     self.process_tree(&self.nodes[sibling], column, tree_nentries);
                 }
@@ -759,6 +900,7 @@ impl<'a> MerkleSerializer<'a> {
 
         // let tree = &self.stack_hashes[start..];
         let hash_tree = hash_tree(tree).unwrap();
+        self.saved_hashes.insert(hash_slice, hash_tree);
 
         // println!("RESOLVED HASH={:?}", self.saved_hashes.get(&hash_slice).as_ref().map(|a| display_hash(&a[..])));
 
@@ -832,10 +974,10 @@ impl NewMerkle {
         author: String,
         message: String,
     ) -> EntryHash {
-        println!("AAAAAA", );
+        // println!("AAAAAA", );
         let (root_hash, mut batch) = self.serialize(true);
         let parent_commit_hash = self.last_commit_hash;
-        println!("BBBBB", );
+        // println!("BBBBB", );
 
         let new_commit = Commit {
             root_hash,
@@ -845,6 +987,10 @@ impl NewMerkle {
             message,
         };
         let new_commit_hash = hash_commit(&new_commit).unwrap();
+
+        // for (hash, _) in &batch {
+        //     println!("SERIALIZING {:?}", display_hash(hash));
+        // }
 
         batch.push((new_commit_hash, bincode::serialize(&Entry::Commit(new_commit)).unwrap()));
         self.db.write_batch(batch).unwrap();
@@ -895,52 +1041,60 @@ impl NewMerkle {
         }
     }
 
-    fn apply_tree_to_working_tree(&mut self, prefix: &[u8], tree: &Tree) {
-        let mut insert_at = match self.nodes.binary_search_by(|node| {
-            node.key.as_bytes().cmp(prefix)
-        }) {
-            Ok(index) => index,
-            Err(_) => {
-                println!("ERROR", );
-                return;
-            },
-        };
+    // fn apply_tree_to_working_tree(&mut self, prefix: &[u8], tree: &Tree) {
+    //     let mut insert_at = match self.nodes.binary_search_by(|node| {
+    //         node.key.as_bytes().cmp(prefix)
+    //     }) {
+    //         Ok(index) => index,
+    //         Err(_) => {
+    //             println!("ERROR", );
+    //             return;
+    //         },
+    //     };
 
-        self.nodes.remove(insert_at);
+    //     self.nodes.remove(insert_at);
 
-        for (key, node) in tree.0.iter() {
-            let mut key_prefix = prefix.to_vec();
-            key_prefix.push(0);
-            key_prefix.extend_from_slice(key.as_slice());
-            let key = NodeKey { data: key_prefix };
+    //     for (key, node) in tree.0.iter() {
+    //         // let mut key_prefix = prefix.to_vec();
+    //         // key_prefix.push(0);
+    //         // key_prefix.extend_from_slice(key.as_slice());
+    //         // let key = NodeKey { data: key_prefix };
 
-            // println!("LAAAAAA", );
-            self.invalidate_hashes(&key);
-            // println!("LAAAAAA2 DONE", );
+    //         //let key = prefix.app
 
-            let hash = key.hash_full();
-            self.hashes.insert(hash, node.entry_hash);
+    //         // println!("LAAAAAA", );
+    //         self.invalidate_hashes(&key);
+    //         // println!("LAAAAAA2 DONE", );
 
-            self.nodes.insert(insert_at, Node {
-                key,
-                value: None,
-                hash: Some(node.entry_hash),
-                removed: false,
-                kind: node.node_kind.clone(),
-            });
-            insert_at += 1;
-        }
-    }
+    //         let hash = key.hash_full();
+    //         self.hashes.insert(hash, node.entry_hash);
+
+    //         self.nodes.insert(insert_at, Node {
+    //             key,
+    //             value: None,
+    //             hash: Some(node.entry_hash),
+    //             removed: false,
+    //             kind: node.node_kind.clone(),
+    //         });
+    //         insert_at += 1;
+    //     }
+    // }
 
     fn apply_tree_to_working_tree_at(&mut self, mut insert_at: usize, tree: Tree) {
-        let prefix = self.nodes[insert_at].key.as_bytes().to_vec();
+        let prefix = &self.nodes[insert_at].key.clone();
+
+        // println!("CALLED {:?}", insert_at);
+
         self.nodes.remove(insert_at);
 
         for (key, node) in tree.0.iter() {
-            let mut key_prefix = prefix.clone();
-            key_prefix.push(0);
-            key_prefix.extend_from_slice(key.as_slice());
-            let key = NodeKey { data: key_prefix };
+            // let prefix = &self.nodes[insert_at].key;
+            // let mut key_prefix = prefix.clone();
+            // key_prefix.push(0);
+            // key_prefix.extend_from_slice(key.as_slice());
+            // let key = NodeKey { data: key_prefix };
+
+            let key = prefix.append(key);
 
             self.invalidate_hashes(&key);
 
@@ -958,7 +1112,7 @@ impl NewMerkle {
         }
     }
 
-    fn display(&self) {
+    pub fn display(&self) {
         for node in self.nodes.iter() {
             // if !node.removed {
             //     println!("key={:?} value={:?}", node.key, node.value);
@@ -984,6 +1138,8 @@ impl NewMerkle {
         // let now = std::time::Instant::now();
         // let mut time_clone = None;
         // let mut time_insert = None;
+
+        // println!("SET {:?}", key);
 
         let key_bytes = NodeKey::new(key);
 
@@ -1083,10 +1239,15 @@ impl NewMerkle {
     }
 
     pub fn get(&mut self, key: &ContextKey) -> Option<ContextValue> {
-        println!("GET {:?}", key);
-        self.display();
+        // println!("GET {:?}", key);
+        // self.display();
 
-        self.get_impl(key).or_else(|| Some(Vec::new()))
+        let res = self.get_impl(key).or_else(|| Some(Vec::new()));
+
+        // println!("AFTER GET", );
+        // self.display();
+
+        res
     }
 
     pub fn get_impl(&mut self, key: &ContextKey) -> Option<ContextValue> {
@@ -1134,7 +1295,7 @@ impl NewMerkle {
                     return Err(index_err);
                 }
 
-                // println!("FOUND HERE prev={:?} key={:?} key={:?} node_key={:?}", node.key.as_bytes(), key.get_slice(0..nwords), key, node.key);
+                // println!("FOUND HERE prev={:?} key={:?} key={:?} node_key={:?} node_hash={:?}", node.key.as_bytes(), key.get_slice(0..nwords), key, node.key, node.hash.is_some());
 
                 match node.hash {
                     Some(hash) => hash,
@@ -1153,20 +1314,21 @@ impl NewMerkle {
                 // node.hash.as_ref().unwrap().clone()
             };
 
-            println!("HASH HERE {:?}", display_hash(&entry_hash));
+            // println!("HASH HERE {:?}", display_hash(&entry_hash));
 
             match self.get_entry_from_hash(&entry_hash).map_err(|_| index)? {
                 Entry::Tree(tree) => {
-                    println!("FOUND TREE {:?}", tree);
+                    // println!("FOUND TREE {:?}", tree);
                     let tree = Tree(Cow::Owned(tree.0.into_owned()));
                     self.apply_tree_to_working_tree_at(index, tree);
                 }
                 Entry::Blob(blob) => {
-                    println!("FOUND BLOB {:?}", blob);
+                    // println!("FOUND BLOB {:?}", blob);
                     self.nodes[index].value = Some(blob.into_owned());
                     return Ok(index);
                 }
                 Entry::Commit(_) => {
+                    // println!("FOUND COMMIT");
                 }
             }
         }
@@ -1231,17 +1393,23 @@ impl NewMerkle {
 
         // println!("INSERT AT {:?}", index);
 
+        // println!("NEW={:?}", new);
+
         for node in new.iter_mut() {
             // let mut to = to_key.clone();
             // to.extend_from_slice(&node.key[from_key.len()..]);
 
             // println!("TO_BYTES={:?}", key_to_bytes.as_bytes());
 
-            let mut to = key_to_bytes.clone();
-            to.data.push(0);
-            to.data.extend_from_slice(node.key.get_slice(from_key.len()..node.key.len()));
+            // let mut to = key_to_bytes.clone();
+            // to.data.push(0);
+            // to.data.extend_from_slice(node.key.get_slice(from_key.len()..node.key.len()));
 
-            // println!("NEW FROM={:?} TO={:?}", node.key.as_bytes(), to.as_bytes());
+            // let to = key_to_bytes.append(node.key.get_slice(from_key.len()..node.key.len()));
+
+            let to = key_to_bytes.append_from(from_key.len(), &node.key);
+
+            // println!("NEW FROM={:?} TO={:?}", node.key, to);
 
             node.key = to;
         }
@@ -1364,12 +1532,16 @@ impl NewMerkle {
     pub fn checkout(&mut self, context_hash: &EntryHash) -> Result<(), MerkleError> {
         // let stat_updater = StatUpdater::new(MerkleStorageAction::Checkout, None);
 
+        self.hashes.clear();
         self.nodes.clear();
         let commit = self.get_commit(&context_hash)?;
         let entry = self.get_entry_from_hash(&commit.root_hash)?;
         let tree = self.get_tree(&entry)?;
         let tree = Tree(Cow::Owned(tree.0.into_owned()));
         self.apply_tree_to_root(&tree);
+
+        // println!("AFTER CHECKOUT");
+        // self.display();
 
         // self.nodes = nodes;
 
@@ -1512,7 +1684,10 @@ impl NewMerkle {
     // pub fn flush(&self) {}
 
     pub fn get_working_tree_root_hash(&mut self) -> Result<EntryHash, MerkleError> {
-        let (root_hash, _) = self.serialize(false);
+        let (root_hash, batch) = self.serialize(true);
+
+        self.db.write_batch(batch).unwrap();
+
         return Ok(root_hash)
     }
 
@@ -1673,12 +1848,12 @@ mod tests {
         println!("AFTER APPLY", );
         storage.display();
 
-        storage.apply_tree_to_working_tree(&[101], &Tree(Cow::Owned(vec![
-            (vec![102], TreeNode { node_kind: NodeKind::Leaf, entry_hash: [1; 32] }),
-            (vec![103], TreeNode { node_kind: NodeKind::Leaf, entry_hash: [1; 32] }),
-            (vec![104], TreeNode { node_kind: NodeKind::Leaf, entry_hash: [1; 32] }),
-            (vec![105], TreeNode { node_kind: NodeKind::Leaf, entry_hash: [1; 32] })
-        ])));
+        // storage.apply_tree_to_working_tree(&[101], &Tree(Cow::Owned(vec![
+        //     (vec![102], TreeNode { node_kind: NodeKind::Leaf, entry_hash: [1; 32] }),
+        //     (vec![103], TreeNode { node_kind: NodeKind::Leaf, entry_hash: [1; 32] }),
+        //     (vec![104], TreeNode { node_kind: NodeKind::Leaf, entry_hash: [1; 32] }),
+        //     (vec![105], TreeNode { node_kind: NodeKind::Leaf, entry_hash: [1; 32] })
+        // ])));
 
         println!("AFTER APPLY2", );
         storage.display();
@@ -1694,7 +1869,7 @@ mod tests {
 
         let hash = storage.commit(1, "seb".to_string(), "ok".to_string());
 
-        assert_eq!(display_hash(&hash), "4F81106771A4EDED7B3E9A18AFE172A2F00BCDB3DF4BDC4867281C93269C967");
+        // assert_eq!(display_hash(&hash), "4F81106771A4EDED7B3E9A18AFE172A2F00BCDB3DF4BDC4867281C93269C967");
 
         // storage.run();
     }
@@ -1712,14 +1887,25 @@ mod tests {
 
         storage.set(&vec!["a".to_string(), "goo".to_string()], vec![97, 98]); // TODO: goo should be removed because of the next line
         storage.set(&vec!["a".to_string(), "aaa".to_string()], vec![97, 98]);
+        storage.set(&vec!["a".to_string(), "aaa".to_string(), "b".to_string()], vec![97, 98]);
+        storage.set(&vec!["a".to_string(), "aaa".to_string(), "c".to_string()], vec![97, 98]);
+        storage.set(&vec!["a".to_string(), "aaa".to_string(), "d".to_string()], vec![97, 98]);
+        storage.set(&vec!["a".to_string(), "bbb".to_string(), "d".to_string()], vec![97, 98]);
         storage.set(&vec!["b".to_string(), "aaa".to_string()], vec![97, 98]);
         storage.set(&vec!["b".to_string(), "ccc".to_string()], vec![97, 98]);
 
+        storage.nodes.retain(|n| !n.removed);
+
+        // storage.clear();
+
         println!("ROOT_HASH", );
+
+        storage.display();
+
         storage.get_working_tree_root_hash().unwrap();
         println!("ROOT_HASH DONE", );
 
-        storage.set(&vec!["a".to_string(), "bbb".to_string()], vec![97, 98]);
+        storage.set(&vec!["a".to_string(), "aaa".to_string(), "d".to_string()], vec![97, 99]);
 
         println!("COMMIT", );
         let hash = storage.commit(1, "seb".to_string(), "ok".to_string());
@@ -2260,7 +2446,7 @@ mod tests {
         assert_eq!(key.get_slice(1..4), &[98, 0, 99, 0, 100]);
         assert_eq!(key.get_slice(1..5), &[98, 0, 99, 0, 100, 0, 101]);
 
-        assert_eq!(key.split_last().unwrap(), (&[97, 0, 98, 0, 99, 0, 100][..], &[101][..]));
+        // assert_eq!(key.split_last().unwrap(), (&[97, 0, 98, 0, 99, 0, 100][..], &[101][..]));
 
         let key = vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string(), "e".to_string()];
         assert_eq!(key.get(0..1).unwrap(), &["a".to_string()]);
@@ -2273,6 +2459,77 @@ mod tests {
         assert_eq!(key.get(1..5).unwrap(), &["b".to_string(), "c".to_string(), "d".to_string(), "e".to_string()]);
 
         let key = NodeKey::new(&["b".to_string(), "abc".to_string()]);
+
+        let key = key.append(b"d");
+        println!("RES11={:?}", key);
+        assert_eq!(key.get(0).unwrap(), &[98]);
+        assert_eq!(key.get(1).unwrap(), &[97, 98, 99]);
+        assert_eq!(key.get(2).unwrap(), &[100]);
+        assert!(key.get(3).is_none());
+
+        let key = NodeKey::new(&["data".to_string(), "rolls".to_string(), "owner".to_string(), "current".to_string(), "10".to_string(), "0".to_string(), "10".to_string()]);
+
+        // WORD=Ok("data")
+        // WORD=Ok("rolls")
+        // WORD=Ok("owner")
+        // WORD=Ok("current")
+        // WORD=Ok("10")
+        // WORD=Ok("0")
+        // WORD=Ok("10")
+
+        let mut index = 0;
+        while let Some(word) = key.get(index) {
+            println!("WORD={:?}", std::str::from_utf8(word));
+            println!("SLICE={:?}", std::str::from_utf8(key.get_slice(index..1000)));
+            index += 1;
+        }
+
+
+        let vec1 = vec![&[97][..], &[0][..], &[98][..], &[0][..], &[48][..]];
+        let vec2 = vec![&[97][..], &[0][..], &[98][..], &[0][..], &[49, 48][..]];
+        let vec3 = vec![&[97][..], &[0][..], &[98][..], &[0][..], &[49][..]];
+
+        let mut a = vec![vec1, vec2, vec3];
+        a.sort();
+
+        println!("RES={:?}", a);
+
+        let vec1 = vec![&[97][..], &[98][..], &[48][..]];
+        let vec2 = vec![&[97][..], &[98][..], &[49, 48][..]];
+        let vec3 = vec![&[97][..], &[98][..], &[49][..]];
+
+        let mut a = vec![vec1, vec2, vec3];
+        a.sort();
+
+        println!("RES2={:?}", a);
+
+        let vec1 = vec![97, 0, 98, 0, 48];
+        let vec2 = vec![97, 0, 98, 0, 49, 48];
+        let vec3 = vec![97, 0, 98, 0, 49];
+        let mut a = vec![vec1, vec2, vec3];
+        a.sort();
+        println!("RES3={:?}", a);
+
+        let vec1 = vec![97, 98, 48];
+        let vec2 = vec![97, 98, 49, 48];
+        let vec3 = vec![97, 98, 49];
+        let mut a = vec![vec1, vec2, vec3];
+        a.sort();
+        println!("RES4={:?}", a);
+
+        let vec1 = vec![97, 0, 98, 0, 48];
+        let vec2 = vec![97, 0, 98, 0, 49, 48, 0, 48, 0, 49, 48];
+        let vec3 = vec![97, 0, 98, 0, 49, 0, 48, 0, 49];
+        let mut a = vec![vec1, vec2, vec3];
+        a.sort();
+        println!("RES5={:?}", a);
+
+        let vec1 = vec![97, 98, 48];
+        let vec2 = vec![97, 98, 49, 48, 48, 49, 48];
+        let vec3 = vec![97, 98, 49, 48, 49];
+        let mut a = vec![vec1, vec2, vec3];
+        a.sort();
+        println!("RES6={:?}", a);
     }
 
     #[test]
