@@ -1,4 +1,4 @@
-use std::{borrow::Cow, cmp::Ordering, collections::BTreeMap, convert::TryInto, ops::{Index, IndexMut, Range}};
+use std::{borrow::Cow, cmp::Ordering, collections::{BTreeMap, HashMap, hash_map::DefaultHasher}, convert::TryInto, hash::Hasher, ops::{Index, IndexMut, Range}};
 
 use blake2::VarBlake2b;
 use blake2::digest::{InvalidOutputSize, Update, VariableOutput};
@@ -270,12 +270,28 @@ impl NodeKey {
         self.data.len()
     }
 
-    fn get_slice(&self, range: Range<usize>) -> Option<&[u8]> {
+    fn hash_slice(&self, range: Range<usize>) -> u64 {
+        let slice = self.get_slice(range);
+
+        self.hash(slice)
+    }
+
+    fn hash(&self, slice: &[u8]) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        hasher.write(slice);
+        hasher.finish()
+    }
+
+    fn hash_full(&self) -> u64 {
+        self.hash(self.data.as_slice())
+    }
+
+    fn get_slice(&self, range: Range<usize>) -> &[u8] {
         // println!("CALLED WITH START={:?} END={:?}", range.start, range.end);
         // let start = range.start;
 
         if range.start == range.end {
-            return Some(&[]);
+            return &[];
         }
 
         // let index = 0;
@@ -292,11 +308,11 @@ impl NodeKey {
             if index == range.start {
                 start = elem_index + 1;
             } else if index == range.end {
-                return Some(&self.data[start..elem_index])
+                return &self.data[start..elem_index];
             }
         }
 
-        Some(&self.data[start..])
+        &self.data[start..]
 
         // for b in &self.data {
         //     if *b == 0 {
@@ -442,6 +458,7 @@ pub struct NewMerkle {
     nodes: Nodes,
     /// key value storage backend
     db: Box<ContextKeyValueStore>,
+    hashes: HashMap<u64, EntryHash>,
     /// Last commit hash
     last_commit_hash: Option<EntryHash>,
 }
@@ -449,7 +466,9 @@ pub struct NewMerkle {
 struct MerkleSerializer<'a> {
     nodes: &'a Nodes,
     last_sibling: usize,
-    hashes: Vec<(Vec<u8>, TreeNode)>,
+    serialize: bool,
+    saved_hashes: HashMap<u64, EntryHash>,
+    stack_hashes: Vec<(Vec<u8>, TreeNode)>,
     serialized: Vec<(EntryHash, ContextValue)>,
 }
 
@@ -502,9 +521,11 @@ impl<'a> MerkleSerializer<'a> {
 
         // println!("{}CURRENT PATH={:?} FILE={:?} FULL={:?}", " ".repeat(depth), current_path, current_file, &current.key);
 
+        // let mut row = row + 1;
 
-        loop {
-            let row = row + 1;
+        // loop {
+
+        for row in row + 1.. {
 
             let sibling = self.nodes.get(row)?;
             let sibling_path = sibling.key.get_slice(0..column);
@@ -531,6 +552,8 @@ impl<'a> MerkleSerializer<'a> {
             }
             // row += 1;
         }
+
+        None
     }
 
     fn recursive(&mut self, row: usize, column: usize, depth: usize) -> usize {
@@ -539,11 +562,27 @@ impl<'a> MerkleSerializer<'a> {
         let mut row = row;
         let mut nentries = 1;
 
+        // TODO: Skip when we already have the hash of the tree
+
         if let Some(new_column) = self.next_child(row, column) {
             // println!("{}TREE1={}", " ".repeat(depth), self.nodes[row].key.get_str(column).unwrap());
 
-            let tree_nentries = self.recursive(row, new_column, depth + 1);
-            self.process_tree(&self.nodes[row], column, tree_nentries);
+            let node = &self.nodes[row];
+            let hash_slice = node.key.hash_slice(0..column + 1);
+            if let Some(hash) = self.saved_hashes.get(&hash_slice).copied() {
+                // println!("FOUND TREE", );
+                self.stack_hashes.push((node.key.get(column).unwrap().to_vec(), TreeNode {
+                    node_kind: NodeKind::NonLeaf,
+                    entry_hash: hash,
+                }));
+            } else {
+                // println!("RECOMPUTE TREE", );
+                let tree_nentries = self.recursive(row, new_column, depth + 1);
+                self.process_tree(&self.nodes[row], column, tree_nentries);
+            }
+
+            // let tree_nentries = self.recursive(row, new_column, depth + 1);
+            // self.process_tree(&self.nodes[row], column, tree_nentries);
         } else {
             if self.nodes.get(row).is_none() {
                 return 0;
@@ -554,6 +593,8 @@ impl<'a> MerkleSerializer<'a> {
             // println!("{}LEAF1 {:?} HASH={:?}", " ".repeat(depth), self.nodes[row].key.get_str(column), display_hash(&hash));
         }
 
+        // println!("GO TO SIBLING", );
+
         while let Some(sibling) = self.next_sibling(row.max(self.last_sibling), column, depth) {
             // println!("{}FOUND SIBLING row={} col={} current_row={} {:?}", " ".repeat(depth), sibling, column, row, self.nodes[sibling].key.get_str(column));
             self.last_sibling = sibling;
@@ -563,8 +604,20 @@ impl<'a> MerkleSerializer<'a> {
             if let Some(new_col) = self.next_child(sibling, column) {
                 // println!("{}TREE2={}", " ".repeat(depth), self.nodes[sibling].key.get_str(column).unwrap());
 
-                let tree_nentries = self.recursive(sibling, new_col, depth + 1);
-                self.process_tree(&self.nodes[sibling], column, tree_nentries);
+                let node = &self.nodes[sibling];
+                let hash_slice = node.key.hash_slice(0..column + 1);
+                if let Some(hash) = self.saved_hashes.get(&hash_slice).copied() {
+                    self.stack_hashes.push((node.key.get(column).unwrap().to_vec(), TreeNode {
+                        node_kind: NodeKind::NonLeaf,
+                        entry_hash: hash,
+                    }));
+                } else {
+                    let tree_nentries = self.recursive(sibling, new_col, depth + 1);
+                    self.process_tree(&self.nodes[sibling], column, tree_nentries);
+                }
+
+                // let tree_nentries = self.recursive(sibling, new_col, depth + 1);
+                // self.process_tree(&self.nodes[sibling], column, tree_nentries);
             } else {
                 let hash = self.process_leaf(&self.nodes[sibling], column);
 
@@ -573,21 +626,25 @@ impl<'a> MerkleSerializer<'a> {
             row = sibling;
         }
 
+        // println!("DONE WITH THIS", );
+
         nentries
     }
 
-    fn start_recursive(mut self) -> (EntryHash, Vec<(EntryHash, ContextValue)>) {
+    fn start_recursive(mut self) -> (EntryHash, Vec<(EntryHash, ContextValue)>, HashMap<u64, EntryHash>) {
         self.recursive(0, 0, 0);
 
         // println!("REMAINING={:}", self.hashes.len());
 
         // let tree = Tree(hashes);
-        let hash_tree = hash_tree(&self.hashes).unwrap();
+        let hash_tree = hash_tree(&self.stack_hashes).unwrap();
         // println!("ROOT_HASH={:?}", display_hash(&hash_tree));
 
-        self.serialized.push((hash_tree, bincode::serialize(&Entry::Tree(Tree(Cow::Borrowed(&self.hashes)))).unwrap()));
+        if self.serialize {
+            self.serialized.push((hash_tree, bincode::serialize(&Entry::Tree(Tree(Cow::Borrowed(&self.stack_hashes)))).unwrap()));
+        }
 
-        (hash_tree, self.serialized)
+        (hash_tree, self.serialized, self.saved_hashes)
 
         // let mut row = 0;
 
@@ -598,49 +655,141 @@ impl<'a> MerkleSerializer<'a> {
         // }
     }
 
-    fn new(nodes: &Nodes) -> MerkleSerializer {
+    fn new(nodes: &Nodes, saved_hashes: HashMap<u64, EntryHash>, serialize: bool) -> MerkleSerializer {
         MerkleSerializer {
             nodes,
+            saved_hashes,
+            serialize,
             last_sibling: 0,
-            hashes: vec![],
+            stack_hashes: vec![],
             serialized: vec![],
         }
     }
+
+    // fn process_leaf(
+    //     &mut self,
+    //     node: &Node,
+    //     column: usize,
+    // ) -> EntryHash {
+    //     let entry_hash = match node.hash {
+    //         Some(hash) => hash,
+    //         None => {
+    //             let entry_hash = hash_blob(&node.value.as_ref().unwrap()).unwrap();
+    //             self.serialized.push((entry_hash, bincode::serialize(&Entry::Blob(Cow::Borrowed(node.value.as_ref().unwrap()))).unwrap()));
+    //             entry_hash
+    //         }
+    //     };
+
+    //     self.stack_hashes.push((node.key.get(column).unwrap().to_vec(), TreeNode { entry_hash, node_kind: node.kind.clone() }));
+
+    //     entry_hash
+    // }
 
     fn process_leaf(
         &mut self,
         node: &Node,
         column: usize,
     ) -> EntryHash {
-        let entry_hash = match node.hash {
-            Some(hash) => hash,
+        //println!("NODE KEY={:?} SLICE={:?} COL={:?}", node.key, node.key.get_slice(0..column + 1), column);
+
+        let hash_slice = node.key.hash_slice(0..column + 1);
+
+        let hash_leaf = match node.hash.or_else(|| self.saved_hashes.get(&hash_slice).copied()) {
+            Some(hash) => {
+                // println!("FOUND HASH LEAF {:?}", display_hash(&hash));
+                hash
+            },
             None => {
-                let entry_hash = hash_blob(&node.value.as_ref().unwrap()).unwrap();
-                self.serialized.push((entry_hash, bincode::serialize(&Entry::Blob(Cow::Borrowed(node.value.as_ref().unwrap()))).unwrap()));
-                entry_hash
+                let hash = hash_blob(&node.value.as_ref().unwrap()).unwrap();
+
+                // println!("RECOMPUTE LEAF {:?} {:?}", node.key, display_hash(&hash));
+
+                self.saved_hashes.insert(hash_slice, hash);
+                hash
             }
         };
 
-        self.hashes.push((node.key.get(column).unwrap().to_vec(), TreeNode { entry_hash, node_kind: node.kind.clone() }));
+        if self.serialize {
+            if let Some(value) = node.value.as_ref() {
+                self.serialized.push((hash_leaf, bincode::serialize(&Entry::Blob(Cow::Borrowed(value))).unwrap()));
+            } else {
+                // println!("MISSING HERE {:?}", node.key);
+            }
+        }
 
-        entry_hash
+        // self.serialized.push((hash_leaf, bincode::serialize(&Entry::Blob(Cow::Borrowed(node.value.as_ref().unwrap()))).unwrap()));
+        self.stack_hashes.push((node.key.get(column).unwrap().to_vec(), TreeNode { entry_hash: hash_leaf, node_kind: node.kind.clone() }));
+
+        hash_leaf
     }
 
     fn process_tree(&mut self, node: &Node, column: usize, tree_entries: usize) {
-        let start = self.hashes.len() - tree_entries;
+        let start = self.stack_hashes.len() - tree_entries;
+        let hash_slice = node.key.hash_slice(0..column + 1);
+        let tree = &self.stack_hashes[start..];
 
-        let tree = &self.hashes[start..];
+        // println!("TREE {:?}", node.key);
+        // println!("GOT HASH={:?}", node.hash.as_ref().map(|a| display_hash(a)));
+        // println!("COMPUTED HASH={:?}", display_hash(&hash_tree(tree).unwrap()));
+
+        // let hash_tree = match self.saved_hashes.get(&hash_slice).copied() {
+        //     Some(hash) => {
+        //         // println!("FOUND HASH TREE {:?}", display_hash(&hash));
+        //         hash
+        //     },
+        //     None => {
+        //         // println!("RECOMPUTE TREE {:?}", node.key.get_slice(0..column + 1));
+        //         let hash = hash_tree(tree).unwrap();
+        //         self.saved_hashes.insert(hash_slice, hash);
+        //         hash
+        //     }
+        // };
+
+        // let hash_tree = match node.hash.or_else(|| self.saved_hashes.get(&hash_slice).copied()) {
+        //     Some(hash) => {
+        //         // println!("FOUND HASH TREE {:?}", display_hash(&hash));
+        //         hash
+        //     },
+        //     None => {
+        //         let hash = hash_tree(tree).unwrap();
+        //         self.saved_hashes.insert(hash_slice, hash);
+        //         hash
+        //     }
+        // };
+
+        // let tree = &self.stack_hashes[start..];
         let hash_tree = hash_tree(tree).unwrap();
+
+        // println!("RESOLVED HASH={:?}", self.saved_hashes.get(&hash_slice).as_ref().map(|a| display_hash(&a[..])));
+
         // println!("{}FULL_HASH_TREE={:?}", " ".repeat(depth), display_hash(&hash_tree));
 
-        self.serialized.push((hash_tree, bincode::serialize(&Entry::Tree(Tree(Cow::Borrowed(tree)))).unwrap()));
+        if self.serialize {
+            self.serialized.push((hash_tree, bincode::serialize(&Entry::Tree(Tree(Cow::Borrowed(tree)))).unwrap()));
+        }
 
-        self.hashes.truncate(start);
-        self.hashes.push((node.key.get(column).unwrap().to_vec(), TreeNode {
+        self.stack_hashes.truncate(start);
+        self.stack_hashes.push((node.key.get(column).unwrap().to_vec(), TreeNode {
             node_kind: NodeKind::NonLeaf,
             entry_hash: hash_tree,
         }));
     }
+
+    // fn process_tree(&mut self, node: &Node, column: usize, tree_entries: usize) {
+    //     let start = self.stack_hashes.len() - tree_entries;
+
+    //     let tree = &self.stack_hashes[start..];
+    //     let hash_tree = hash_tree(tree).unwrap();
+    //     // println!("{}FULL_HASH_TREE={:?}", " ".repeat(depth), display_hash(&hash_tree));
+
+    //     self.serialized.push((hash_tree, bincode::serialize(&Entry::Tree(Tree(Cow::Borrowed(tree)))).unwrap()));
+
+    //     self.stack_hashes.truncate(start);
+    //     self.stack_hashes.push((node.key.get(column).unwrap().to_vec(), TreeNode {
+    //         node_kind: NodeKind::NonLeaf,
+    //         entry_hash: hash_tree,
+    //     }));
+    // }
 }
 
 impl NewMerkle {
@@ -649,6 +798,7 @@ impl NewMerkle {
             db,
             nodes: Nodes::new(),
             last_commit_hash: None,
+            hashes: HashMap::new(),
             // last_sibling: 0,
             // root: NodeKey(0),
         }
@@ -663,9 +813,17 @@ impl NewMerkle {
 // key=["c", "moo"] value=[3, 4]
 // key=["c", "zoo"] value=[1, 2]
 
-    fn serialize(&self) -> (EntryHash, Vec<(EntryHash, ContextValue)>) {
-        MerkleSerializer::new(&self.nodes)
-            .start_recursive()
+    fn serialize(&mut self, serialize: bool) -> (EntryHash, Vec<(EntryHash, ContextValue)>) {
+        let saved_hashes = std::mem::replace(&mut self.hashes, HashMap::new());
+
+        // (hash_tree, self.serialized, self.saved_hashes)
+
+        let (hash_tree, serialized, saved_hashes) = MerkleSerializer::new(&self.nodes, saved_hashes, serialize)
+            .start_recursive();
+
+        self.hashes = saved_hashes;
+
+        (hash_tree, serialized)
     }
 
     pub fn commit(
@@ -674,8 +832,10 @@ impl NewMerkle {
         author: String,
         message: String,
     ) -> EntryHash {
-        let (root_hash, mut batch) = self.serialize();
+        println!("AAAAAA", );
+        let (root_hash, mut batch) = self.serialize(true);
         let parent_commit_hash = self.last_commit_hash;
+        println!("BBBBB", );
 
         let new_commit = Commit {
             root_hash,
@@ -715,6 +875,15 @@ impl NewMerkle {
         };
 
         for (key, node) in tree.0.iter() {
+            let key = NodeKey::from(key);
+
+            // println!("LAAAAAA", );
+            self.invalidate_hashes(&key);
+            // println!("LAAAAAA DONE", );
+
+            let hash = key.hash_full();
+            self.hashes.insert(hash, node.entry_hash);
+
             self.nodes.insert(index, Node {
                 key: NodeKey::from(key),
                 value: None,
@@ -745,6 +914,13 @@ impl NewMerkle {
             key_prefix.extend_from_slice(key.as_slice());
             let key = NodeKey { data: key_prefix };
 
+            // println!("LAAAAAA", );
+            self.invalidate_hashes(&key);
+            // println!("LAAAAAA2 DONE", );
+
+            let hash = key.hash_full();
+            self.hashes.insert(hash, node.entry_hash);
+
             self.nodes.insert(insert_at, Node {
                 key,
                 value: None,
@@ -765,6 +941,11 @@ impl NewMerkle {
             key_prefix.push(0);
             key_prefix.extend_from_slice(key.as_slice());
             let key = NodeKey { data: key_prefix };
+
+            self.invalidate_hashes(&key);
+
+            let hash = key.hash_full();
+            self.hashes.insert(hash, node.entry_hash);
 
             self.nodes.insert(insert_at, Node {
                 key,
@@ -789,6 +970,16 @@ impl NewMerkle {
         }
     }
 
+    fn invalidate_hashes(&mut self, key: &NodeKey) {
+        for index in 0..key.nwords() {
+            //println!("REMOVING HASH FOR {:?}", key.get_slice(0..index + 1).split(|b| *b == 0).map(|s| std::str::from_utf8(s)).collect::<Vec<_>>());
+            let hash = key.hash_slice(0..index + 1);
+            // let slice = key.get_slice(0..index + 1);
+            // let hash = key.hash_full();
+            self.hashes.remove(&hash);
+        }
+    }
+
     pub fn set(&mut self, key: &ContextKey, value: ContextValue) {
         // let now = std::time::Instant::now();
         // let mut time_clone = None;
@@ -798,7 +989,7 @@ impl NewMerkle {
 
         let res = self.find_path(&key_bytes);
 
-        println!("RES={:?}", res);
+        // println!("RES={:?}", res);
 
         // let time_bytes = now.elapsed();
 
@@ -810,10 +1001,13 @@ impl NewMerkle {
 
         // let search = now.elapsed() - time_bytes;
 
+        self.invalidate_hashes(&key_bytes);
+
         let mut index = match res {
             Ok(index_found) => {
                 let node = &mut self.nodes[index_found];
                 node.value = Some(value);
+
                 node.hash = None;
                 index_found
             }
@@ -847,7 +1041,7 @@ impl NewMerkle {
 
             // let len = node_bytes.len();
             // if len < key_len && node_bytes == &key[..len] {
-            if len < key_len && node_bytes == key_bytes.get_slice(0..len).unwrap() {
+            if len < key_len && node_bytes == key_bytes.get_slice(0..len) {
                 node.removed = true;
             } else {
                 break;
@@ -867,7 +1061,7 @@ impl NewMerkle {
                     return;
                 }
             };
-            let node_bytes = node.key.get_slice(0..key_len).unwrap();
+            let node_bytes = node.key.get_slice(0..key_len);
             let len = node.key.nwords();
             // let len = node.key.len();
             if len > key_len && node_bytes == key_bytes.as_bytes() {
@@ -889,6 +1083,9 @@ impl NewMerkle {
     }
 
     pub fn get(&mut self, key: &ContextKey) -> Option<ContextValue> {
+        println!("GET {:?}", key);
+        self.display();
+
         self.get_impl(key).or_else(|| Some(Vec::new()))
     }
 
@@ -933,21 +1130,39 @@ impl NewMerkle {
                 }
 
                 let nwords = node.key.nwords();
-                if node.key.as_bytes() != key.get_slice(0..nwords).unwrap() {
+                if node.key.as_bytes() != key.get_slice(0..nwords) {
                     return Err(index_err);
                 }
 
-                // println!("FOUND HERE prev={:?} key={:?}", node.key.as_bytes(), key.get_slice(0..nwords)?);
+                // println!("FOUND HERE prev={:?} key={:?} key={:?} node_key={:?}", node.key.as_bytes(), key.get_slice(0..nwords), key, node.key);
 
-                node.hash.as_ref().unwrap().clone()
+                match node.hash {
+                    Some(hash) => hash,
+                    None => {
+                        let hash = node.key.hash_full();
+                        // let hash = key.hash_full();
+                        self.hashes.get(&hash).copied().unwrap()
+                    }
+                }
+
+                // match self.hashes.get(&hash).copied() {
+                //     Some(hash) => hash,
+                //     None => return Err(index_err)
+                // }
+
+                // node.hash.as_ref().unwrap().clone()
             };
+
+            println!("HASH HERE {:?}", display_hash(&entry_hash));
 
             match self.get_entry_from_hash(&entry_hash).map_err(|_| index)? {
                 Entry::Tree(tree) => {
+                    println!("FOUND TREE {:?}", tree);
                     let tree = Tree(Cow::Owned(tree.0.into_owned()));
                     self.apply_tree_to_working_tree_at(index, tree);
                 }
                 Entry::Blob(blob) => {
+                    println!("FOUND BLOB {:?}", blob);
                     self.nodes[index].value = Some(blob.into_owned());
                     return Ok(index);
                 }
@@ -965,6 +1180,8 @@ impl NewMerkle {
         let key_from_bytes = NodeKey::new(from_key);
         let key_to_bytes = NodeKey::new(to_key);
         // self.serialize();
+
+        self.invalidate_hashes(&key_to_bytes);
 
         let _ = self.find_path(&key_to_bytes);
         let res = self.find_path(&key_from_bytes);
@@ -1022,7 +1239,7 @@ impl NewMerkle {
 
             let mut to = key_to_bytes.clone();
             to.data.push(0);
-            to.data.extend_from_slice(node.key.get_slice(from_key.len()..node.key.len()).unwrap());
+            to.data.extend_from_slice(node.key.get_slice(from_key.len()..node.key.len()));
 
             // println!("NEW FROM={:?} TO={:?}", node.key.as_bytes(), to.as_bytes());
 
@@ -1067,7 +1284,7 @@ impl NewMerkle {
 
         let res = self.nodes.binary_search_by(|node| {
             if node.key.nwords() > key.len() {
-                node.key.get_slice(0..key.len()).unwrap().cmp(key_bytes.as_bytes())
+                node.key.get_slice(0..key.len()).cmp(key_bytes.as_bytes())
             } else {
                 node.key.cmp(&key_bytes)
             }
@@ -1088,6 +1305,10 @@ impl NewMerkle {
 
     pub fn delete(&mut self, key: &ContextKey) {
         let key_bytes = NodeKey::new(key);
+
+        // println!("DELETE {:?}", key);
+
+        self.invalidate_hashes(&key_bytes);
 
         // let index = self.nodes.binary_search_by(|node| {
         //     // if node.key.len() > key.len() {
@@ -1290,8 +1511,8 @@ impl NewMerkle {
 
     // pub fn flush(&self) {}
 
-    pub fn get_working_tree_root_hash(&self) -> Result<EntryHash, MerkleError> {
-        let (root_hash, _) = self.serialize();
+    pub fn get_working_tree_root_hash(&mut self) -> Result<EntryHash, MerkleError> {
+        let (root_hash, _) = self.serialize(false);
         return Ok(root_hash)
     }
 
@@ -1405,9 +1626,15 @@ mod tests {
         // storage.start_recursive();
         // storage.serialize();
 
+        let hash = storage.get_working_tree_root_hash().unwrap();
+        println!("HASH1={:?}", display_hash(&hash));
         let hash = storage.commit(1, "seb".to_string(), "ok".to_string());
 
         assert_eq!(display_hash(&hash), "64DA7B104C91B59BBC84F6971F4E92CA1ABE7265803FF37CD62F653CFE5E1748");
+
+        println!("LAAAAAAAAABC", );
+        let hash = storage.get_working_tree_root_hash().unwrap();
+        println!("HASH2={:?}", display_hash(&hash));
 
         // storage.run();
     }
@@ -1468,6 +1695,36 @@ mod tests {
         let hash = storage.commit(1, "seb".to_string(), "ok".to_string());
 
         assert_eq!(display_hash(&hash), "4F81106771A4EDED7B3E9A18AFE172A2F00BCDB3DF4BDC4867281C93269C967");
+
+        // storage.run();
+    }
+
+    // #[test]
+    // fn test_new_impl() {
+    fn test_recompute(kv_store_factory: &TestContextKvStoreFactoryInstance) {
+        println!("START", );
+
+        let mut storage = NewMerkle::new(
+            kv_store_factory
+                .create("test_new_impl")
+                .unwrap(),
+        );
+
+        storage.set(&vec!["a".to_string(), "goo".to_string()], vec![97, 98]); // TODO: goo should be removed because of the next line
+        storage.set(&vec!["a".to_string(), "aaa".to_string()], vec![97, 98]);
+        storage.set(&vec!["b".to_string(), "aaa".to_string()], vec![97, 98]);
+        storage.set(&vec!["b".to_string(), "ccc".to_string()], vec![97, 98]);
+
+        println!("ROOT_HASH", );
+        storage.get_working_tree_root_hash().unwrap();
+        println!("ROOT_HASH DONE", );
+
+        storage.set(&vec!["a".to_string(), "bbb".to_string()], vec![97, 98]);
+
+        println!("COMMIT", );
+        let hash = storage.commit(1, "seb".to_string(), "ok".to_string());
+
+        // assert_eq!(display_hash(&hash), "4F81106771A4EDED7B3E9A18AFE172A2F00BCDB3DF4BDC4867281C93269C967");
 
         // storage.run();
     }
@@ -1897,6 +2154,10 @@ mod tests {
                     super::test_my_copy($kv_store_factory)
                 }
                 #[test]
+                fn test_recompute() {
+                    super::test_recompute($kv_store_factory)
+                }
+                #[test]
                 fn test_multiple_commit_hash() {
                     super::test_multiple_commit_hash($kv_store_factory)
                 }
@@ -1990,14 +2251,14 @@ mod tests {
         assert!(key.get(0).is_none());
 
         let key = NodeKey::new(&["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string(), "e".to_string()]);
-        assert_eq!(key.get_slice(0..1).unwrap(), &[97]);
-        assert_eq!(key.get_slice(0..2).unwrap(), &[97, 0, 98]);
-        assert_eq!(key.get_slice(0..3).unwrap(), &[97, 0, 98, 0, 99]);
-        assert_eq!(key.get_slice(1..3).unwrap(), &[98, 0, 99]);
-        assert_eq!(key.get_slice(2..3).unwrap(), &[99]);
-        assert_eq!(key.get_slice(0..5).unwrap(), &[97, 0, 98, 0, 99, 0, 100, 0, 101]);
-        assert_eq!(key.get_slice(1..4).unwrap(), &[98, 0, 99, 0, 100]);
-        assert_eq!(key.get_slice(1..5).unwrap(), &[98, 0, 99, 0, 100, 0, 101]);
+        assert_eq!(key.get_slice(0..1), &[97]);
+        assert_eq!(key.get_slice(0..2), &[97, 0, 98]);
+        assert_eq!(key.get_slice(0..3), &[97, 0, 98, 0, 99]);
+        assert_eq!(key.get_slice(1..3), &[98, 0, 99]);
+        assert_eq!(key.get_slice(2..3), &[99]);
+        assert_eq!(key.get_slice(0..5), &[97, 0, 98, 0, 99, 0, 100, 0, 101]);
+        assert_eq!(key.get_slice(1..4), &[98, 0, 99, 0, 100]);
+        assert_eq!(key.get_slice(1..5), &[98, 0, 99, 0, 100, 0, 101]);
 
         assert_eq!(key.split_last().unwrap(), (&[97, 0, 98, 0, 99, 0, 100][..], &[101][..]));
 
@@ -2012,5 +2273,19 @@ mod tests {
         assert_eq!(key.get(1..5).unwrap(), &["b".to_string(), "c".to_string(), "d".to_string(), "e".to_string()]);
 
         let key = NodeKey::new(&["b".to_string(), "abc".to_string()]);
+    }
+
+    #[test]
+    fn test_hash() {
+        let mut hasher = DefaultHasher::new();
+        hasher.write(b"abc");
+        let res = hasher.finish();
+
+        println!("RES={:?}", res);
+
+        let mut hasher = DefaultHasher::new();
+        hasher.write(b"abc");
+        let res = hasher.finish();
+        println!("RES={:?}", res);
     }
 }
