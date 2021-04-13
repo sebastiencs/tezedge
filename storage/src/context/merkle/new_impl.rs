@@ -9,7 +9,7 @@ use crate::{context::{ContextKey, ContextKeyValueStore, ContextValue, EntryHash,
 
 use super::{hash::{ENTRY_HASH_LEN, HashingError}, merkle_storage::MerkleError, merkle_storage_stats::{MerklePerfStats, MerkleStoragePerfReport, MerkleStorageStatistics}};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer, ser::{SerializeSeq, SerializeTuple, SerializeTupleStruct}};
 use memchr::Memchr;
 
 // struct NodeKey (usize);
@@ -79,7 +79,7 @@ fn encode_irmin_node_kind(kind: &NodeKind) -> [u8; 8] {
 // where:
 // - CHILD NODE - <NODE TYPE><length of string (1 byte)><string/path bytes><length of hash (8bytes)><hash bytes>
 // - NODE TYPE - leaf node(0xff0000000000000000) or internal node (0x0000000000000000)
-fn hash_short_inode(tree: &[(Vec<u8>, TreeNode)]) -> Result<EntryHash, HashingError> {
+fn hash_short_inode(tree: &[((usize, usize), TreeNode)], nodes: &Nodes) -> Result<EntryHash, HashingError> {
     let mut hasher = VarBlake2b::new(ENTRY_HASH_LEN)?;
 
     // Node list:
@@ -96,12 +96,16 @@ fn hash_short_inode(tree: &[(Vec<u8>, TreeNode)]) -> Result<EntryHash, HashingEr
     // +-------+--------------+-------------+-------+--------+
     // | kind  |  \len(name)  |    name     |  \32  |  hash  |
 
-    for (k, v) in tree {
+    for ((row, col), v) in tree {
         // println!("KEY='{:?}'", k);
         hasher.update(encode_irmin_node_kind(&v.node_kind));
+
+        let key = nodes[*row].key.get(*col).unwrap();
+        //seq.serialize_element(&(key, tree_node))?;
+
         // Key length is written in LEB128 encoding
-        leb128::write::unsigned(&mut hasher, k.len() as u64)?;
-        hasher.update(k.as_slice());
+        leb128::write::unsigned(&mut hasher, key.len() as u64)?;
+        hasher.update(key);
         hasher.update(&(ENTRY_HASH_LEN as u64).to_be_bytes());
         hasher.update(&v.entry_hash);
     }
@@ -110,8 +114,8 @@ fn hash_short_inode(tree: &[(Vec<u8>, TreeNode)]) -> Result<EntryHash, HashingEr
 }
 
 //fn hash_tree(tree: &Tree) -> Result<EntryHash, HashingError> {
-fn hash_tree(tree: &[(Vec<u8>, TreeNode)]) -> Result<EntryHash, HashingError> {
-    hash_short_inode(tree)
+fn hash_tree(tree: &[((usize, usize), TreeNode)], nodes: &Nodes) -> Result<EntryHash, HashingError> {
+    hash_short_inode(tree, nodes)
 }
 
 // // Calculates hash of tree
@@ -146,12 +150,125 @@ pub struct TreeNode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub struct Tree<'a> (Cow<'a, [(Vec<u8>, TreeNode)]>);
+// pub struct Tree<'a> (Cow<'a, [(Vec<u8>, TreeNode)]>);
+pub struct Tree (Vec<(Vec<u8>, TreeNode)>);
 
-impl<'a> Tree<'a> {
+// pub type Tree = Vec<(Vec<u8>, TreeNode)>;
+
+struct TreeSerializer<'a> {
+    nodes: &'a Nodes,
+    hashes: &'a [((usize, usize), TreeNode)]
+}
+
+impl<'a> Serialize for TreeSerializer<'a>
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        struct EntryFakeSerializer<'a>(&'a TreeSerializer<'a>);
+
+        impl<'a> Serialize for EntryFakeSerializer<'a>
+        {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: Serializer,
+            {
+                struct TreeFakeSerializer<'a>(&'a TreeSerializer<'a>);
+
+                impl<'a> Serialize for TreeFakeSerializer<'a>
+                {
+                    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+                    where
+                        S: Serializer,
+                    {
+                        let mut seq = serializer.serialize_seq(Some(self.0.hashes.len()))?;
+
+                        for ((row, col), tree_node) in self.0.hashes.iter() {
+                            let key = self.0.nodes[*row].key.get(*col).unwrap();
+                            seq.serialize_element(&(key, tree_node))?;
+                        }
+
+                        seq.end()
+                    }
+                }
+
+                let mut tuple = serializer.serialize_tuple_struct("Tree", 1)?;
+                tuple.serialize_field(&TreeFakeSerializer(&self.0))?;
+                tuple.end()
+            }
+        }
+        serializer.serialize_newtype_variant("Entry", 0, "Tree", &EntryFakeSerializer(self))
+    }
+}
+
+// impl<'a> Serialize for TreeSerializer<'a>
+// {
+//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+//     where
+//         S: Serializer,
+//     {
+//         struct EntryFakeSerializer<'a>(&'a TreeSerializer<'a>);
+
+//         impl<'a> Serialize for EntryFakeSerializer<'a>
+//         {
+//             fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+//             where
+//                 S: Serializer,
+//             {
+//                 let mut seq = serializer.serialize_seq(Some(self.0.hashes.len()))?;
+
+//                 for ((row, col), tree_node) in self.0.hashes.iter() {
+//                     let key = self.0.nodes[*row].key.get(*col).unwrap();
+//                     seq.serialize_element(&(key, tree_node))?;
+//                 }
+
+//                 seq.end()
+//             }
+//         }
+//         serializer.serialize_newtype_variant("Entry", 0, "Tree", &EntryFakeSerializer(self))
+//     }
+// }
+
+// impl<'a> Serialize for TreeSerializer<'a>
+// {
+//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+//     where
+//         S: Serializer,
+//     {
+//         let mut seq = serializer.serialize_seq(Some(self.hashes.len()))?;
+
+//         for ((row, col), tree_node) in self.hashes.iter() {
+//             let key = self.nodes[*row].key.get(*col).unwrap();
+//             seq.serialize_element(&(key, tree_node))?;
+//         }
+
+//         seq.end()
+//     }
+// }
+
+
+//pub struct Tree<'a> (Cow<'a, [(Cow<'a, [u8]>, TreeNode)]>);
+
+// impl<'a> Tree<'a> {
+//     fn get(&self, key: &str) -> Option<&TreeNode> {
+//         match self.0.binary_search_by(|node| {
+//             // (*node.0).cmp(key.as_bytes())
+//             (&node.0).as_slice().cmp(key.as_bytes())
+//         }) {
+//             Ok(index) => Some(&self.0[index].1),
+//             _ => {
+//                 None
+//             }
+//         }
+//     }
+// }
+
+impl Tree {
     fn get(&self, key: &str) -> Option<&TreeNode> {
         match self.0.binary_search_by(|node| {
-            node.0.as_slice().cmp(key.as_bytes())
+            // (*node.0).cmp(key.as_bytes())
+            (&node.0).as_slice().cmp(key.as_bytes())
         }) {
             Ok(index) => Some(&self.0[index].1),
             _ => {
@@ -172,7 +289,7 @@ pub struct Commit {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub enum Entry<'a> {
-    Tree(Tree<'a>),
+    Tree(Tree),
     Blob(Cow<'a, ContextValue>),
     Commit(Commit),
 }
@@ -420,22 +537,38 @@ impl NodeKey {
         // let index = 0;
         // let index_start = 0;
 
-        let mut start = 0;
+        // let mut start = 0;
         // let end = None;
 
-        for (index, elem_index) in self.separators.iter().enumerate() {
-            let index = index + 1;
-
-            // println!("LOOP START={:?} INDEX={:?} ELEM_INDEX={:?}", start, index, elem_index);
-
-            if index == range.start {
-                // println!("A", );
-                start = *elem_index as usize + 1;
-            } else if index == range.end {
-                // println!("B {:?}", &self.data[start..(*elem_index as usize)]);
-                return &self.data[start..*elem_index as usize];
+        let start = if range.start == 0 {
+            0
+        } else {
+            match self.separators.get(range.start - 1).copied() {
+                Some(start) => start + 1,
+                None => 0
             }
-        }
+        } as usize;
+
+        let end = match self.separators.get(range.end - 1).copied() {
+            Some(end) => end as usize,
+            None => self.data.len()
+        };
+
+        &self.data[start..end]
+
+        // for (index, elem_index) in self.separators.iter().enumerate() {
+        //     let index = index + 1;
+
+        //     // println!("LOOP START={:?} INDEX={:?} ELEM_INDEX={:?}", start, index, elem_index);
+
+        //     if index == range.start {
+        //         // println!("A", );
+        //         start = *elem_index as usize + 1;
+        //     } else if index == range.end {
+        //         // println!("B {:?}", &self.data[start..(*elem_index as usize)]);
+        //         return &self.data[start..*elem_index as usize];
+        //     }
+        // }
 
         // println!("EXIT LOOP", );
 
@@ -451,7 +584,7 @@ impl NodeKey {
         //     }
         // }
 
-        &self.data[start..]
+        // &self.data[start..]
 
         // for b in &self.data {
         //     if *b == 0 {
@@ -607,7 +740,7 @@ struct MerkleSerializer<'a> {
     last_sibling: usize,
     serialize: bool,
     saved_hashes: HashMap<u64, EntryHash>,
-    stack_hashes: Vec<(Vec<u8>, TreeNode)>,
+    stack_hashes: Vec<((usize, usize), TreeNode)>,
     serialized: Vec<(EntryHash, ContextValue)>,
 }
 
@@ -710,14 +843,15 @@ impl<'a> MerkleSerializer<'a> {
             let hash_slice = node.key.hash_slice(0..column + 1);
             if let Some(hash) = self.saved_hashes.get(&hash_slice).copied() {
                 // println!("{}FOUND TREE", " ".repeat(depth));
-                self.stack_hashes.push((node.key.get(column).unwrap().to_vec(), TreeNode {
+                //self.stack_hashes.push((node.key.get(column).unwrap().to_vec(), TreeNode {
+                self.stack_hashes.push(((row, column), TreeNode {
                     node_kind: NodeKind::NonLeaf,
                     entry_hash: hash,
                 }));
             } else {
                 // println!("{}RECOMPUTE TREE", " ".repeat(depth));
                 let tree_nentries = self.recursive(row, new_column, depth + 1);
-                self.process_tree(&self.nodes[row], column, tree_nentries);
+                self.process_tree(node, row, column, tree_nentries);
             }
 
             // let tree_nentries = self.recursive(row, new_column, depth + 1);
@@ -727,7 +861,7 @@ impl<'a> MerkleSerializer<'a> {
                 return 0;
             }
 
-            let hash = self.process_leaf(&self.nodes[row], column);
+            let hash = self.process_leaf(&self.nodes[row], row, column);
 
             // println!("{}LEAF1 {:?} HASH={:?}", " ".repeat(depth), self.nodes[row].key.get_str(column), display_hash(&hash));
         }
@@ -736,7 +870,7 @@ impl<'a> MerkleSerializer<'a> {
 
         while let Some(sibling) = self.next_sibling(row.max(self.last_sibling), column, depth) {
             // println!("{}FOUND SIBLING row={} col={} current_row={} {:?}", " ".repeat(depth), sibling, column, row, self.nodes[sibling].key.get_str(column));
-            self.last_sibling = sibling;
+            self.last_sibling = sibling.max(self.last_sibling);
 
             nentries += 1;
 
@@ -744,23 +878,25 @@ impl<'a> MerkleSerializer<'a> {
                 // println!("{}TREE2={}", " ".repeat(depth), self.nodes[sibling].key.get_str(column).unwrap());
 
                 let node = &self.nodes[sibling];
-                let hash_slice = node.key.hash_slice(0..column + 1);
-                if let Some(hash) = self.saved_hashes.get(&hash_slice).copied() {
+                let hash_path = node.key.hash_slice(0..column + 1);
+
+                if let Some(hash) = self.saved_hashes.get(&hash_path).copied() {
                     // println!("{}FOUND TREE", " ".repeat(depth));
-                    self.stack_hashes.push((node.key.get(column).unwrap().to_vec(), TreeNode {
+                    // self.stack_hashes.push((node.key.get(column).unwrap().to_vec(), TreeNode {
+                    self.stack_hashes.push(((sibling, column), TreeNode {
                         node_kind: NodeKind::NonLeaf,
                         entry_hash: hash,
                     }));
                 } else {
                     // println!("{}RECOMPUTE TREE", " ".repeat(depth));
                     let tree_nentries = self.recursive(sibling, new_col, depth + 1);
-                    self.process_tree(&self.nodes[sibling], column, tree_nentries);
+                    self.process_tree(node, sibling, column, tree_nentries);
                 }
 
                 // let tree_nentries = self.recursive(sibling, new_col, depth + 1);
                 // self.process_tree(&self.nodes[sibling], column, tree_nentries);
             } else {
-                let hash = self.process_leaf(&self.nodes[sibling], column);
+                let hash = self.process_leaf(&self.nodes[sibling], sibling, column);
 
                 // println!("{}LEAF2 {:?} HASH={:?}", " ".repeat(depth), self.nodes[sibling].key.get_str(column), display_hash(&hash));
             }
@@ -778,11 +914,15 @@ impl<'a> MerkleSerializer<'a> {
         // println!("REMAINING={:}", self.hashes.len());
 
         // let tree = Tree(hashes);
-        let hash_tree = hash_tree(&self.stack_hashes).unwrap();
+        let hash_tree = hash_tree(&self.stack_hashes, &self.nodes).unwrap();
         // println!("ROOT_HASH={:?}", display_hash(&hash_tree));
 
         if self.serialize {
-            self.serialized.push((hash_tree, bincode::serialize(&Entry::Tree(Tree(Cow::Borrowed(&self.stack_hashes)))).unwrap()));
+            self.serialized.push((hash_tree, bincode::serialize(&TreeSerializer {
+                nodes: &self.nodes,
+                hashes: &self.stack_hashes,
+            }).unwrap()));
+            // self.serialized.push((hash_tree, bincode::serialize(&Entry::Tree(Tree(Cow::Borrowed(&self.stack_hashes)))).unwrap()));
         }
 
         (hash_tree, self.serialized, self.saved_hashes)
@@ -829,6 +969,7 @@ impl<'a> MerkleSerializer<'a> {
     fn process_leaf(
         &mut self,
         node: &Node,
+        row: usize,
         column: usize,
     ) -> EntryHash {
         //println!("NODE KEY={:?} SLICE={:?} COL={:?}", node.key, node.key.get_slice(0..column + 1), column);
@@ -859,12 +1000,13 @@ impl<'a> MerkleSerializer<'a> {
         }
 
         // self.serialized.push((hash_leaf, bincode::serialize(&Entry::Blob(Cow::Borrowed(node.value.as_ref().unwrap()))).unwrap()));
-        self.stack_hashes.push((node.key.get(column).unwrap().to_vec(), TreeNode { entry_hash: hash_leaf, node_kind: node.kind.clone() }));
+        //self.stack_hashes.push((node.key.get(column).unwrap().to_vec(), TreeNode { entry_hash: hash_leaf, node_kind: node.kind.clone() }));
+        self.stack_hashes.push(((row, column), TreeNode { entry_hash: hash_leaf, node_kind: node.kind.clone() }));
 
         hash_leaf
     }
 
-    fn process_tree(&mut self, node: &Node, column: usize, tree_entries: usize) {
+    fn process_tree(&mut self, node: &Node, row: usize, column: usize, tree_entries: usize) {
         let start = self.stack_hashes.len() - tree_entries;
         let hash_slice = node.key.hash_slice(0..column + 1);
         let tree = &self.stack_hashes[start..];
@@ -899,7 +1041,7 @@ impl<'a> MerkleSerializer<'a> {
         // };
 
         // let tree = &self.stack_hashes[start..];
-        let hash_tree = hash_tree(tree).unwrap();
+        let hash_tree = hash_tree(tree, &self.nodes).unwrap();
         self.saved_hashes.insert(hash_slice, hash_tree);
 
         // println!("RESOLVED HASH={:?}", self.saved_hashes.get(&hash_slice).as_ref().map(|a| display_hash(&a[..])));
@@ -907,11 +1049,19 @@ impl<'a> MerkleSerializer<'a> {
         // println!("{}FULL_HASH_TREE={:?}", " ".repeat(depth), display_hash(&hash_tree));
 
         if self.serialize {
-            self.serialized.push((hash_tree, bincode::serialize(&Entry::Tree(Tree(Cow::Borrowed(tree)))).unwrap()));
+
+            self.serialized.push((hash_tree, bincode::serialize(&TreeSerializer {
+                nodes: &self.nodes,
+                hashes: tree,
+            }).unwrap()));
+
+
+            // self.serialized.push((hash_tree, bincode::serialize(&Entry::Tree(Tree(Cow::Borrowed(tree)))).unwrap()));
         }
 
         self.stack_hashes.truncate(start);
-        self.stack_hashes.push((node.key.get(column).unwrap().to_vec(), TreeNode {
+        // self.stack_hashes.push((node.key.get(column).unwrap().to_vec(), TreeNode {
+        self.stack_hashes.push(((row, column), TreeNode {
             node_kind: NodeKind::NonLeaf,
             entry_hash: hash_tree,
         }));
@@ -1268,7 +1418,7 @@ impl NewMerkle {
                 node.key.cmp(&key)
             });
 
-            let (index, index_err) = match res {
+            let (index, index_insert) = match res {
                 Ok(index) => {
                     if self.nodes[index].value.is_some() {
                         return Ok(index)
@@ -1283,35 +1433,21 @@ impl NewMerkle {
             let entry_hash = {
                 let node = match self.nodes.get(index) {
                     Some(node) => node,
-                    None => return Err(index_err),
+                    None => return Err(index_insert),
                 };
 
                 if node.value.is_some() {
-                    return Err(index_err);
+                    return Err(index_insert);
                 }
 
                 let nwords = node.key.nwords();
                 if node.key.as_bytes() != key.get_slice(0..nwords) {
-                    return Err(index_err);
+                    return Err(index_insert);
                 }
 
                 // println!("FOUND HERE prev={:?} key={:?} key={:?} node_key={:?} node_hash={:?}", node.key.as_bytes(), key.get_slice(0..nwords), key, node.key, node.hash.is_some());
 
-                match node.hash {
-                    Some(hash) => hash,
-                    None => {
-                        let hash = node.key.hash_full();
-                        // let hash = key.hash_full();
-                        self.hashes.get(&hash).copied().unwrap()
-                    }
-                }
-
-                // match self.hashes.get(&hash).copied() {
-                //     Some(hash) => hash,
-                //     None => return Err(index_err)
-                // }
-
-                // node.hash.as_ref().unwrap().clone()
+                node.hash.as_ref().unwrap().clone()
             };
 
             // println!("HASH HERE {:?}", display_hash(&entry_hash));
@@ -1319,7 +1455,7 @@ impl NewMerkle {
             match self.get_entry_from_hash(&entry_hash).map_err(|_| index)? {
                 Entry::Tree(tree) => {
                     // println!("FOUND TREE {:?}", tree);
-                    let tree = Tree(Cow::Owned(tree.0.into_owned()));
+                    //let tree = Tree(tree.0.into_owned());
                     self.apply_tree_to_working_tree_at(index, tree);
                 }
                 Entry::Blob(blob) => {
@@ -1536,8 +1672,8 @@ impl NewMerkle {
         self.nodes.clear();
         let commit = self.get_commit(&context_hash)?;
         let entry = self.get_entry_from_hash(&commit.root_hash)?;
-        let tree = self.get_tree(&entry)?;
-        let tree = Tree(Cow::Owned(tree.0.into_owned()));
+        let tree = self.get_tree(entry)?;
+        //let tree = Tree(Cow::Owned(tree.0.into_owned()));
         self.apply_tree_to_root(&tree);
 
         // println!("AFTER CHECKOUT");
@@ -1580,9 +1716,10 @@ impl NewMerkle {
         }
     }
 
-    fn get_tree<'e>(&self, entry: &'e Entry) -> Result<Tree<'e>, MerkleError> {
+    fn get_tree(&self, entry: Entry) -> Result<Tree, MerkleError> {
         match entry {
-            Entry::Tree(tree) => Ok(Tree(Cow::Borrowed(&tree.0))),
+            Entry::Tree(tree) => Ok(tree),
+            // Entry::Tree(tree) => Ok(Tree(Cow::Borrowed(&tree.0))),
             Entry::Blob(_) => Err(MerkleError::FoundUnexpectedStructure {
                 sought: "tree".to_string(),
                 found: "blob".to_string(),
@@ -1594,12 +1731,12 @@ impl NewMerkle {
         }
     }
 
-    fn get_from_tree(&self, root: &Tree, key: &ContextKey) -> Result<ContextValue, MerkleError> {
+    fn get_from_tree(&self, root: Tree, key: &ContextKey) -> Result<ContextValue, MerkleError> {
         let file = key.last().ok_or(MerkleError::KeyEmpty)?;
         let path = &key[..key.len() - 1];
 
         // find tree by path
-        let node = self.find_tree(&root, &path)?;
+        let node = self.find_tree(root, &path)?;
 
         // get file node from tree
         let node = match node.get(file) {
@@ -1632,12 +1769,14 @@ impl NewMerkle {
     ///
     /// * `root` - reference to a tree in which we search
     /// * `key` - sought path
-    fn find_tree(&self, root: &Tree, key: &[String]) -> Result<Tree, MerkleError> {
+    fn find_tree<'a>(&'a self, root: Tree, key: &[String]) -> Result<Tree, MerkleError> {
         let first = match key.first() {
             Some(first) => first,
             None => {
                 // terminate recursion if end of path was reached
-                return Ok(Tree(Cow::Owned(root.0.to_vec())));
+                return Ok(root);
+                //return Ok(Tree(Cow::Owned(root.0.to_vec())));
+                //return Ok(Tree(Cow::Owned(root.0.into_owned().iter().map(|(k, v)| (Cow::Owned(k.into_owned()), v.clone())).collect())));
             }
         };
 
@@ -1645,14 +1784,15 @@ impl NewMerkle {
         let child_node = match root.get(first) {
             Some(hash) => hash,
             None => {
-                return Ok(Tree(Cow::Owned(vec![])));
+                return Ok(Tree(vec![]));
+//                return Ok(Tree(Cow::Owned(vec![])));
             }
         };
 
         // get entry by hash (from working tree or DB)
         match self.get_entry_from_hash(&child_node.entry_hash)? {
-            Entry::Tree(tree) => self.find_tree(&tree, &key[1..]),
-            Entry::Blob(_) => Ok(Tree(Cow::Owned(vec![]))),
+            Entry::Tree(tree) => self.find_tree(tree, &key[1..]),
+            Entry::Blob(_) => Ok(Tree(vec![])),
             Entry::Commit { .. } => Err(MerkleError::FoundUnexpectedStructure {
                 sought: "Tree/Blob".to_string(),
                 found: "commit".to_string(),
@@ -1670,7 +1810,7 @@ impl NewMerkle {
 
         let commit = self.get_commit(commit_hash)?;
         let entry = self.get_entry_from_hash(&commit.root_hash)?;
-        let rv = self.get_from_tree(&self.get_tree(&entry)?, key);
+        let rv = self.get_from_tree(self.get_tree(entry)?, key);
 
         // stat_updater.update_execution_stats(&mut self.stats);
         rv
@@ -1840,10 +1980,20 @@ mod tests {
         println!("BEFORE APPLY", );
         storage.display();
 
-        storage.apply_tree_to_root(&Tree(Cow::Owned(vec![
+        storage.apply_tree_to_root(&Tree(vec![
             (vec![101], TreeNode { node_kind: NodeKind::Leaf, entry_hash: [1; 32] }),
             (vec![102], TreeNode { node_kind: NodeKind::Leaf, entry_hash: [1; 32] })
-        ])));
+        ]));
+
+        // storage.apply_tree_to_root(&Tree(Cow::Owned(vec![
+        //     (vec![101], TreeNode { node_kind: NodeKind::Leaf, entry_hash: [1; 32] }),
+        //     (vec![102], TreeNode { node_kind: NodeKind::Leaf, entry_hash: [1; 32] })
+        // ])));
+
+        // storage.apply_tree_to_root(&Tree(Cow::Owned(vec![
+        //     (Cow::Owned(vec![101]), TreeNode { node_kind: NodeKind::Leaf, entry_hash: [1; 32] }),
+        //     (Cow::Owned(vec![102]), TreeNode { node_kind: NodeKind::Leaf, entry_hash: [1; 32] })
+        // ])));
 
         println!("AFTER APPLY", );
         storage.display();
@@ -2336,6 +2486,10 @@ mod tests {
                     super::test_commit_hash($kv_store_factory)
                 }
                 #[test]
+                fn test_ser() {
+                    super::test_ser($kv_store_factory)
+                }
+                #[test]
                 fn test_my_copy() {
                     super::test_my_copy($kv_store_factory)
                 }
@@ -2544,5 +2698,45 @@ mod tests {
         hasher.write(b"abc");
         let res = hasher.finish();
         println!("RES={:?}", res);
+    }
+
+    // #[test]
+    fn test_ser(kv_store_factory: &TestContextKvStoreFactoryInstance) {
+        println!("START", );
+
+        let mut storage = NewMerkle::new(
+            kv_store_factory
+                .create("test_new_impl")
+                .unwrap(),
+        );
+
+        let a_foo: &ContextKey = &vec!["a".to_string(), "foo".to_string()];
+        let c_foo: &ContextKey = &vec!["c".to_string(), "foo".to_string()];
+
+        storage.set(&vec!["c".to_string(), "zoo".to_string()], vec![1, 2]);
+        storage.set(&vec!["a".to_string(), "goo".to_string()], vec![97, 98]); // TODO: goo should be removed because of the next line
+
+        // let nodes = Nodes::new();
+        // nodes.insert(0, Node {
+        //     key: NodeKey::new(&["a".to_string()]),
+        //     value: None,
+        //     hash: None,
+        //     removed: False,
+        //     kind: NodeKind,
+        // });
+
+        let res = bincode::serialize(&TreeSerializer {
+            nodes: &storage.nodes,
+            hashes: &[
+                ((0, 0), TreeNode { node_kind: NodeKind::Leaf, entry_hash: [1; 32] }),
+                ((1, 0), TreeNode { node_kind: NodeKind::Leaf, entry_hash: [1; 32] })
+            ],
+        }).unwrap();
+
+        println!("RES={:?}", res);
+
+        let res: Entry = bincode::deserialize(&res).unwrap();
+
+        println!("RES={:#?}", res);
     }
 }
