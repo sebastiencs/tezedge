@@ -731,6 +731,8 @@ pub struct NewMerkle {
     /// key value storage backend
     db: Box<ContextKeyValueStore>,
     hashes: HashMap<u64, EntryHash>,
+    stack_hashes: Vec<((usize, usize), TreeNode)>,
+    // stack_hashes: HashMap<u64, EntryHash>,
     /// Last commit hash
     last_commit_hash: Option<EntryHash>,
 }
@@ -908,7 +910,7 @@ impl<'a> MerkleSerializer<'a> {
         nentries
     }
 
-    fn start_recursive(mut self) -> (EntryHash, Vec<(EntryHash, ContextValue)>, HashMap<u64, EntryHash>) {
+    fn start_recursive(mut self) -> (EntryHash, Vec<(EntryHash, ContextValue)>, HashMap<u64, EntryHash>, Vec<((usize, usize), TreeNode)>) {
         self.recursive(0, 0, 0);
 
         // println!("REMAINING={:}", self.hashes.len());
@@ -925,7 +927,9 @@ impl<'a> MerkleSerializer<'a> {
             // self.serialized.push((hash_tree, bincode::serialize(&Entry::Tree(Tree(Cow::Borrowed(&self.stack_hashes)))).unwrap()));
         }
 
-        (hash_tree, self.serialized, self.saved_hashes)
+        self.stack_hashes.truncate(0);
+
+        (hash_tree, self.serialized, self.saved_hashes, self.stack_hashes)
 
         // let mut row = 0;
 
@@ -936,13 +940,18 @@ impl<'a> MerkleSerializer<'a> {
         // }
     }
 
-    fn new(nodes: &Nodes, saved_hashes: HashMap<u64, EntryHash>, serialize: bool) -> MerkleSerializer {
+    fn new(
+        nodes: &Nodes,
+        saved_hashes: HashMap<u64, EntryHash>,
+        stack_hashes: Vec<((usize, usize), TreeNode)>,
+        serialize: bool
+    ) -> MerkleSerializer {
         MerkleSerializer {
             nodes,
             saved_hashes,
             serialize,
+            stack_hashes,
             last_sibling: 0,
-            stack_hashes: vec![],
             serialized: vec![],
         }
     }
@@ -1091,6 +1100,7 @@ impl NewMerkle {
             nodes: Nodes::new(),
             last_commit_hash: None,
             hashes: HashMap::new(),
+            stack_hashes: Vec::new(),
             // last_sibling: 0,
             // root: NodeKey(0),
         }
@@ -1107,13 +1117,15 @@ impl NewMerkle {
 
     fn serialize(&mut self, serialize: bool) -> (EntryHash, Vec<(EntryHash, ContextValue)>) {
         let saved_hashes = std::mem::replace(&mut self.hashes, HashMap::new());
+        let stacked_hashes = std::mem::replace(&mut self.stack_hashes, Vec::new());
 
         // (hash_tree, self.serialized, self.saved_hashes)
 
-        let (hash_tree, serialized, saved_hashes) = MerkleSerializer::new(&self.nodes, saved_hashes, serialize)
+        let (hash_tree, serialized, saved_hashes, stack_hashes) = MerkleSerializer::new(&self.nodes, saved_hashes, stacked_hashes, serialize)
             .start_recursive();
 
         self.hashes = saved_hashes;
+        self.stack_hashes = stack_hashes;
 
         (hash_tree, serialized)
     }
@@ -1668,8 +1680,11 @@ impl NewMerkle {
     pub fn checkout(&mut self, context_hash: &EntryHash) -> Result<(), MerkleError> {
         // let stat_updater = StatUpdater::new(MerkleStorageAction::Checkout, None);
 
-        self.hashes.clear();
-        self.nodes.clear();
+        self.hashes = HashMap::new();
+        self.nodes = Nodes::new();
+        self.stack_hashes = Vec::new();
+        // self.hashes.clear();
+        // self.nodes.clear();
         let commit = self.get_commit(&context_hash)?;
         let entry = self.get_entry_from_hash(&commit.root_hash)?;
         let tree = self.get_tree(entry)?;
