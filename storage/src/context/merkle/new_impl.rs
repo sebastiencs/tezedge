@@ -336,6 +336,14 @@ where
     }
 }
 
+impl Index<usize> for NodeKey {
+    type Output = [u8];
+
+    fn index(&self, index: usize) -> &Self::Output {
+        self.get(index).unwrap()
+    }
+}
+
 impl NodeKey {
     fn new(key: &[String]) -> Self {
         let key_length = key.len();
@@ -740,9 +748,8 @@ pub struct NewMerkle {
 struct MerkleSerializer<'a> {
     nodes: &'a Nodes,
     last_sibling: usize,
-    serialize: bool,
-    saved_hashes: HashMap<u64, EntryHash>,
-    stack_hashes: Vec<((usize, usize), TreeNode)>,
+    saved_hashes: &'a mut HashMap<u64, EntryHash>,
+    stack_hashes: &'a mut Vec<((usize, usize), TreeNode)>,
     serialized: Vec<(EntryHash, ContextValue)>,
 }
 
@@ -910,7 +917,7 @@ impl<'a> MerkleSerializer<'a> {
         nentries
     }
 
-    fn start_recursive(mut self) -> (EntryHash, Vec<(EntryHash, ContextValue)>, HashMap<u64, EntryHash>, Vec<((usize, usize), TreeNode)>) {
+    fn start_recursive(mut self) -> (EntryHash, Vec<(EntryHash, ContextValue)>) {
         self.recursive(0, 0, 0);
 
         // println!("REMAINING={:}", self.hashes.len());
@@ -919,17 +926,15 @@ impl<'a> MerkleSerializer<'a> {
         let hash_tree = hash_tree(&self.stack_hashes, &self.nodes).unwrap();
         // println!("ROOT_HASH={:?}", display_hash(&hash_tree));
 
-        if self.serialize {
-            self.serialized.push((hash_tree, bincode::serialize(&TreeSerializer {
-                nodes: &self.nodes,
-                hashes: &self.stack_hashes,
-            }).unwrap()));
-            // self.serialized.push((hash_tree, bincode::serialize(&Entry::Tree(Tree(Cow::Borrowed(&self.stack_hashes)))).unwrap()));
-        }
+        self.serialized.push((hash_tree, bincode::serialize(&TreeSerializer {
+            nodes: &self.nodes,
+            hashes: &self.stack_hashes,
+        }).unwrap()));
+        // self.serialized.push((hash_tree, bincode::serialize(&Entry::Tree(Tree(Cow::Borrowed(&self.stack_hashes)))).unwrap()));
 
         self.stack_hashes.truncate(0);
 
-        (hash_tree, self.serialized, self.saved_hashes, self.stack_hashes)
+        (hash_tree, self.serialized)
 
         // let mut row = 0;
 
@@ -941,15 +946,13 @@ impl<'a> MerkleSerializer<'a> {
     }
 
     fn new(
-        nodes: &Nodes,
-        saved_hashes: HashMap<u64, EntryHash>,
-        stack_hashes: Vec<((usize, usize), TreeNode)>,
-        serialize: bool
-    ) -> MerkleSerializer {
+        nodes: &'a Nodes,
+        saved_hashes: &'a mut HashMap<u64, EntryHash>,
+        stack_hashes: &'a mut Vec<((usize, usize), TreeNode)>,
+    ) -> MerkleSerializer<'a> {
         MerkleSerializer {
             nodes,
             saved_hashes,
-            serialize,
             stack_hashes,
             last_sibling: 0,
             serialized: vec![],
@@ -1000,12 +1003,10 @@ impl<'a> MerkleSerializer<'a> {
             }
         };
 
-        if self.serialize {
-            if let Some(value) = node.value.as_ref() {
-                self.serialized.push((hash_leaf, bincode::serialize(&Entry::Blob(Cow::Borrowed(value))).unwrap()));
-            } else {
-                // println!("MISSING HERE {:?}", node.key);
-            }
+        if let Some(value) = node.value.as_ref() {
+            self.serialized.push((hash_leaf, bincode::serialize(&Entry::Blob(Cow::Borrowed(value))).unwrap()));
+        } else {
+            // println!("MISSING HERE {:?}", node.key);
         }
 
         // self.serialized.push((hash_leaf, bincode::serialize(&Entry::Blob(Cow::Borrowed(node.value.as_ref().unwrap()))).unwrap()));
@@ -1057,16 +1058,13 @@ impl<'a> MerkleSerializer<'a> {
 
         // println!("{}FULL_HASH_TREE={:?}", " ".repeat(depth), display_hash(&hash_tree));
 
-        if self.serialize {
-
-            self.serialized.push((hash_tree, bincode::serialize(&TreeSerializer {
-                nodes: &self.nodes,
-                hashes: tree,
-            }).unwrap()));
+        self.serialized.push((hash_tree, bincode::serialize(&TreeSerializer {
+            nodes: &self.nodes,
+            hashes: tree,
+        }).unwrap()));
 
 
-            // self.serialized.push((hash_tree, bincode::serialize(&Entry::Tree(Tree(Cow::Borrowed(tree)))).unwrap()));
-        }
+        // self.serialized.push((hash_tree, bincode::serialize(&Entry::Tree(Tree(Cow::Borrowed(tree)))).unwrap()));
 
         self.stack_hashes.truncate(start);
         // self.stack_hashes.push((node.key.get(column).unwrap().to_vec(), TreeNode {
@@ -1115,19 +1113,14 @@ impl NewMerkle {
 // key=["c", "moo"] value=[3, 4]
 // key=["c", "zoo"] value=[1, 2]
 
-    fn serialize(&mut self, serialize: bool) -> (EntryHash, Vec<(EntryHash, ContextValue)>) {
-        let saved_hashes = std::mem::replace(&mut self.hashes, HashMap::new());
-        let stacked_hashes = std::mem::replace(&mut self.stack_hashes, Vec::new());
+    fn serialize(&mut self) -> (EntryHash, Vec<(EntryHash, ContextValue)>) {
+        let serializer = MerkleSerializer::new(
+            &self.nodes,
+            &mut self.hashes,
+            &mut self.stack_hashes,
+        );
 
-        // (hash_tree, self.serialized, self.saved_hashes)
-
-        let (hash_tree, serialized, saved_hashes, stack_hashes) = MerkleSerializer::new(&self.nodes, saved_hashes, stacked_hashes, serialize)
-            .start_recursive();
-
-        self.hashes = saved_hashes;
-        self.stack_hashes = stack_hashes;
-
-        (hash_tree, serialized)
+        serializer.start_recursive()
     }
 
     pub fn commit(
@@ -1137,7 +1130,7 @@ impl NewMerkle {
         message: String,
     ) -> EntryHash {
         // println!("AAAAAA", );
-        let (root_hash, mut batch) = self.serialize(true);
+        let (root_hash, mut batch) = self.serialize();
         let parent_commit_hash = self.last_commit_hash;
         // println!("BBBBB", );
 
@@ -1839,7 +1832,7 @@ impl NewMerkle {
     // pub fn flush(&self) {}
 
     pub fn get_working_tree_root_hash(&mut self) -> Result<EntryHash, MerkleError> {
-        let (root_hash, batch) = self.serialize(true);
+        let (root_hash, batch) = self.serialize();
 
         self.db.write_batch(batch).unwrap();
 
