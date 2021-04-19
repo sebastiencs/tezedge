@@ -1,6 +1,5 @@
 // Copyright (c) SimpleStaking and Tezedge Contributors
 // SPDX-License-Identifier: MIT
-#![forbid(unsafe_code)]
 #![feature(const_fn)]
 #![feature(allocator_api)]
 

@@ -211,7 +211,7 @@ fn hash_short_inode(tree: &Tree) -> Result<EntryHash, HashingError> {
     // +-------+--------------+-------------+-------+--------+
     // | kind  |  \len(name)  |    name     |  \32  |  hash  |
 
-    for (k, v) in tree {
+    for (k, v) in &tree.0 {
         hasher.update(encode_irmin_node_kind(&v.node_kind));
         // Key length is written in LEB128 encoding
         leb128::write::unsigned(&mut hasher, k.len() as u64)?;
@@ -296,6 +296,7 @@ mod tests {
     use flate2::read::GzDecoder;
 
     use crypto::hash::{ContextHash, HashTrait};
+    use im::OrdMap;
 
     use crate::context::merkle::{Node, NodeKind, Tree};
 
@@ -404,7 +405,7 @@ mod tests {
         // - NODE TYPE - leaf node(0xff00000000000000) or internal node (0x0000000000000000)
 
         let expected_tree_hash = "d49a53323107f2ae40b01eaa4e9bec4d02801daf60bab82dc2529e40d40fa917";
-        let mut dummy_tree = Tree::new();
+        let mut dummy_tree = Tree(OrdMap::new());
         let node = Node {
             node_kind: NodeKind::Leaf,
             entry_hash: RefCell::new(Some(hash_blob(&vec![1]).unwrap())),
@@ -506,7 +507,7 @@ mod tests {
 
         for test_case in test_cases {
             let bindings_count = test_case.bindings.len();
-            let mut tree = Tree::new();
+            let mut tree = Tree(OrdMap::new());
 
             for binding in test_case.bindings {
                 let node_kind = match binding.kind.as_str() {
@@ -522,7 +523,7 @@ mod tests {
                     entry_hash,
                     entry: RefCell::new(None),
                 };
-                tree = tree.update(Arc::new(binding.name), Arc::new(node));
+                tree = Tree(tree.update(Arc::new(binding.name), Arc::new(node)));
             }
 
             let expected_hash = ContextHash::from_base58_check(&test_case.hash).unwrap();

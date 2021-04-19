@@ -1,7 +1,8 @@
 // Copyright (c) SimpleStaking and Tezedge Contributors
 // SPDX-License-Identifier: MIT
 
-use std::{cell::RefCell, sync::Arc};
+use std::{cell::RefCell, ops::DerefMut, sync::Arc};
+use std::ops::Deref;
 
 use serde::{Deserialize, Serialize};
 
@@ -17,7 +18,24 @@ pub mod merkle_storage_stats;
 // Tree must be an ordered structure for consistent hash in hash_tree.
 // The entry names *must* be in lexicographical order, as required by the hashing algorithm.
 // Currently immutable OrdMap is used to allow cloning trees without too much overhead.
-pub type Tree = im::OrdMap<Arc<String>, Arc<Node>>;
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+pub struct Tree(im::OrdMap<Arc<String>, Arc<Node>>);
+
+unsafe impl Send for Tree {}
+
+impl Deref for Tree {
+    type Target = im::OrdMap<Arc<String>, Arc<Node>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for Tree {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 pub enum NodeKind {

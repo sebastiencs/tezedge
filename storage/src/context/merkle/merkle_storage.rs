@@ -45,10 +45,11 @@
 //! ``
 //!
 //! Reference: https://git-scm.com/book/en/v2/Git-Internals-Git-Objects
-use std::{array::TryFromSliceError, sync::Arc};
+use std::{array::TryFromSliceError, sync::{Arc, Mutex}};
 use std::{cell::RefCell, collections::HashMap};
 
 use failure::{Error, Fail};
+use im::OrdMap;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -94,11 +95,11 @@ enum Action {
 
 pub struct MerkleStorage {
     /// Current working tree (currently checked out context)
-    working_tree: (Tree, TreeId),
+    working_tree: Mutex<(Tree, TreeId)>,
     /// key value storage backend
     db: Box<ContextKeyValueStore>,
     /// all different versions of the working tree
-    trees: HashMap<TreeId, Tree>,
+    trees: Mutex<HashMap<TreeId, Tree>>,
     /// Last commit hash
     last_commit_hash: Option<EntryHash>,
     /// storage latency statistics
@@ -216,7 +217,7 @@ pub enum CheckEntryHashError {
 
 impl MerkleStorage {
     pub fn new(db: Box<ContextKeyValueStore>) -> Self {
-        let tree = Tree::new();
+        let tree = Tree(OrdMap::new());
         let tree_id = 0;
         let mut trees_map: HashMap<TreeId, Tree> = HashMap::new();
 
@@ -224,8 +225,8 @@ impl MerkleStorage {
 
         MerkleStorage {
             db,
-            trees: trees_map,
-            working_tree: (tree, tree_id),
+            trees: Mutex::new(trees_map),
+            working_tree: Mutex::new((tree, tree_id)),
             last_commit_hash: None,
             stats: MerkleStorageStatistics::default(),
         }
@@ -235,7 +236,8 @@ impl MerkleStorage {
     pub fn get(&mut self, key: &ContextKey) -> Result<ContextValue, MerkleError> {
         let stat_updater = StatUpdater::new(MerkleStorageAction::Get, Some(key));
 
-        let root = self.get_working_tree_root_ref();
+        let working_tree = self.working_tree.lock().unwrap();
+        let root = &working_tree.0;
         let rv = self.get_from_tree(root, key).or_else(|_| Ok(Vec::new()));
 
         stat_updater.update_execution_stats(&mut self.stats);
@@ -246,7 +248,8 @@ impl MerkleStorage {
     pub fn mem(&mut self, key: &ContextKey) -> Result<bool, MerkleError> {
         let stat_updater = StatUpdater::new(MerkleStorageAction::Mem, Some(key));
 
-        let root = self.get_working_tree_root_ref();
+        let working_tree = self.working_tree.lock().unwrap();
+        let root = &working_tree.0;
         let rv = self.value_exists(root, key);
 
         stat_updater.update_execution_stats(&mut self.stats);
@@ -257,7 +260,8 @@ impl MerkleStorage {
     pub fn dirmem(&mut self, key: &ContextKey) -> Result<bool, MerkleError> {
         let stat_updater = StatUpdater::new(MerkleStorageAction::DirMem, Some(key));
 
-        let root = self.get_working_tree_root_ref();
+        let working_tree = self.working_tree.lock().unwrap();
+        let root = &working_tree.0;
         let rv = self.directory_exists(root, key);
 
         stat_updater.update_execution_stats(&mut self.stats);
@@ -269,7 +273,9 @@ impl MerkleStorage {
         &mut self,
         prefix: &ContextKey,
     ) -> Result<Option<Vec<(ContextKey, ContextValue)>>, MerkleError> {
-        self._get_key_values_by_prefix(self.get_working_tree_root_ref(), prefix)
+        let working_tree = self.working_tree.lock().unwrap();
+        let root = &working_tree.0;
+        self._get_key_values_by_prefix(root, prefix)
     }
 
     /// Get value from historical context identified by commit hash.
@@ -494,7 +500,7 @@ impl MerkleStorage {
         let entry = self.get_entry_from_hash(&commit.root_hash)?;
         let tree = self.get_tree(&entry)?.clone();
 
-        self.trees = HashMap::new();
+        self.trees = Mutex::new(HashMap::new());
         self.set_working_tree_root(tree, 0);
         self.last_commit_hash = Some(context_hash.clone());
 
@@ -527,7 +533,8 @@ impl MerkleStorage {
 
         // persist working tree entries to db
         let mut batch: Vec<(EntryHash, ContextValue)> = Vec::new();
-        self.get_entries_recursively(&entry, Some(&self.working_tree.0), &mut batch)?;
+        let working_tree = self.working_tree.lock().unwrap();
+        self.get_entries_recursively(&entry, Some(&working_tree.0), &mut batch)?;
         // write all entries at once (depends on backend)
         self.db.write_batch(batch)?;
 
@@ -540,8 +547,9 @@ impl MerkleStorage {
 
     /// Set key/val to the working tree.
     fn set_working_tree_root(&mut self, tree: Tree, tree_id: TreeId) {
-        self.working_tree = (tree.clone(), tree_id);
-        self.trees.insert(tree_id, tree);
+        self.working_tree = Mutex::new((tree.clone(), tree_id));
+        let mut trees = self.trees.lock().unwrap();
+        trees.insert(tree_id, tree);
     }
 
     /// Set key/val to the working tree.
@@ -609,9 +617,12 @@ impl MerkleStorage {
     }
 
     fn _copy(&mut self, from_key: &ContextKey, to_key: &ContextKey) -> Result<Entry, MerkleError> {
-        let root = &self.working_tree.0;
+        let source_tree = {
+            let working_tree = self.working_tree.lock().unwrap();
+            let root = &working_tree.0;
 
-        let source_tree = self.find_tree(root, &from_key)?;
+            self.find_tree(root, &from_key)?
+        };
         Ok(self.compute_new_root_with_change(
             &to_key,
             Some(self.get_non_leaf(Entry::Tree(source_tree))),
@@ -650,15 +661,18 @@ impl MerkleStorage {
                     // that means that we just removed whole tree
                     // so set merkle storage root to empty dir and place
                     // it in working tree
-                    return Ok(Entry::Tree(Tree::new()));
+                    return Ok(Entry::Tree(Tree(OrdMap::new())));
                 }
             },
         };
 
-        let root = &self.working_tree.0;
-
         let path = &key[..key.len() - 1];
-        let mut tree = self.find_tree(root, path)?;
+
+        let mut tree = {
+            let working_tree = self.working_tree.lock().unwrap();
+            let root = &working_tree.0;
+            self.find_tree(root, path)?
+        };
 
         match new_node {
             None => tree.remove(last),
@@ -692,14 +706,14 @@ impl MerkleStorage {
         let child_node = match root.get(first) {
             Some(hash) => hash,
             None => {
-                return Ok(Tree::new());
+                return Ok(Tree(OrdMap::new()));
             }
         };
 
         // get entry by hash (from working tree or DB)
         match self.get_entry(&child_node)? {
             Entry::Tree(tree) => self.find_tree(&tree, &key[1..]),
-            Entry::Blob(_) => Ok(Tree::new()),
+            Entry::Blob(_) => Ok(Tree(OrdMap::new())),
             Entry::Commit { .. } => Err(MerkleError::FoundUnexpectedStructure {
                 sought: "Tree/Blob".to_string(),
                 found: "commit".to_string(),
@@ -709,28 +723,33 @@ impl MerkleStorage {
 
     /// Get current working tree. If it's empty, init genesis  and return genesis root.
     fn get_working_tree_root(&self) -> Tree {
-        self.working_tree.0.clone()
-    }
-
-    fn get_working_tree_root_ref(&self) -> &Tree {
-        &self.working_tree.0
+        let working_tree = self.working_tree.lock().unwrap();
+        working_tree.0.clone()
     }
 
     pub fn get_working_tree_root_hash(&self) -> Result<EntryHash, MerkleError> {
         // TOOD: unnecessery recalculation, should be one when set_working_tree_root
-        hash_tree(&self.working_tree.0).map_err(MerkleError::from)
+        let working_tree = self.working_tree.lock().unwrap();
+        let root = &working_tree.0;
+        hash_tree(root).map_err(MerkleError::from)
     }
 
     pub fn working_tree_checkout(&mut self, tree_id: TreeId) -> Result<(), MerkleError> {
-        if tree_id == self.working_tree.1 {
-            return Ok(());
+        {
+            let working_tree = self.working_tree.lock().unwrap();
+            if tree_id == working_tree.1 {
+                return Ok(());
+            }
         }
 
-        let tree = self
-            .trees
-            .get(&tree_id)
-            .ok_or(MerkleError::TreeNotFoundInWorkingTree { tree_id })?
-            .clone();
+        let tree = {
+            let trees = self.trees.lock().unwrap();
+            trees
+                .get(&tree_id)
+                .ok_or(MerkleError::TreeNotFoundInWorkingTree { tree_id })?
+                .clone()
+        };
+
         self.set_working_tree_root(tree, tree_id);
         Ok(())
     }
