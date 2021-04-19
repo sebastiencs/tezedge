@@ -50,9 +50,7 @@ pub(crate) mod bootstrap_constants {
     pub(crate) const MAX_BOOTSTRAP_BRANCHES_PER_PEER: usize = 2;
 
     /// We tries to apply downloaded blocks in batch to speedup and save resources
-    pub(crate) const MAX_BLOCK_APPLY_BATCH: usize = 1000;
-    /// We controll frequecncy of holding lock too long, just in case peers is stucked, this is the maximum deadline
-    pub(crate) const BLOCK_APPLY_LOCK_MAX_HOLD_TIMEOUT: Duration = Duration::from_secs(60 * 20);
+    pub(crate) const MAX_BLOCK_APPLY_BATCH: usize = 100;
 
     /// Constants for peer's queue
     pub(crate) const LIMITS: DataQueuesLimits = DataQueuesLimits {
@@ -104,7 +102,6 @@ impl BlockchainState {
                 BlockMetaStorage::new(&persistent_storage),
                 OperationsMetaStorage::new(&persistent_storage),
                 block_applier,
-                bootstrap_constants::BLOCK_APPLY_LOCK_MAX_HOLD_TIMEOUT,
             )),
             block_storage: BlockStorage::new(persistent_storage),
             block_meta_storage: BlockMetaStorage::new(persistent_storage),

@@ -40,7 +40,7 @@ use crate::shell_channel::{ShellChannelMsg, ShellChannelRef};
 use crate::state::BlockApplyBatch;
 use crate::stats::apply_block_stats::BlockValidationTimer;
 use crate::subscription::subscribe_to_shell_shutdown;
-use crate::utils::{dispatch_condvar_result, CondvarResult};
+use crate::utils::{dispatch_condvar_result, AtomicTryLockGuard, CondvarResult};
 
 type SharedJoinHandle = Arc<Mutex<Option<JoinHandle<Result<(), Error>>>>>;
 
@@ -52,6 +52,9 @@ pub struct ApplyBlock {
     bootstrapper: Option<PeerBranchBootstrapperRef>,
     /// Callback can be used to wait for apply block result
     result_callback: Option<CondvarResult<(), failure::Error>>,
+
+    /// Simple lock guard, for easy synchronization
+    permit: Option<Arc<AtomicTryLockGuard>>,
 }
 
 impl ApplyBlock {
@@ -60,12 +63,14 @@ impl ApplyBlock {
         batch: BlockApplyBatch,
         result_callback: Option<CondvarResult<(), failure::Error>>,
         bootstrapper: Option<PeerBranchBootstrapperRef>,
+        permit: Option<AtomicTryLockGuard>,
     ) -> Self {
         Self {
             chain_id,
             batch,
             result_callback,
             bootstrapper,
+            permit: permit.map(Arc::new),
         }
     }
 }
@@ -435,6 +440,7 @@ fn feed_chain_to_protocol(
                         bootstrapper,
                         chain_id,
                         result_callback,
+                        permit,
                     } = request;
 
                     let mut last_applied: Option<Arc<BlockHash>> = None;
@@ -453,6 +459,7 @@ fn feed_chain_to_protocol(
                             block_meta_storage,
                             context,
                             protocol_controller,
+                            init_storage_data.one_context,
                             &log,
                         ) {
                             Ok(result) => {
@@ -518,6 +525,11 @@ fn feed_chain_to_protocol(
                         }
                     }
 
+                    // allow others as soon as possible
+                    if let Some(permit) = permit {
+                        drop(permit);
+                    }
+
                     // notify condvar
                     if let Some(condvar_result) = condvar_result {
                         // notify condvar
@@ -559,6 +571,7 @@ fn _apply_block(
     block_meta_storage: &BlockMetaStorage,
     context: &Box<dyn ContextApi>,
     protocol_controller: &ProtocolController,
+    one_context: bool,
     log: &Logger,
 ) -> Result<Option<ProcessValidatedBlock>, FeedChainError> {
     // collect all required data for apply
@@ -607,7 +620,7 @@ fn _apply_block(
 
     // we need to check and wait for context_hash to be 100% sure, that everything is ok
     let context_wait_timer = Instant::now();
-    wait_for_context(context, &apply_block_result.context_hash)?;
+    wait_for_context(context, &apply_block_result.context_hash, one_context)?;
     let context_wait_elapsed = context_wait_timer.elapsed();
     if context_wait_elapsed.gt(&CONTEXT_WAIT_DURATION_LONG_TO_LOG) {
         info!(log, "Block was applied with long context processing";
@@ -734,7 +747,11 @@ pub(crate) fn initialize_protocol_context(
             )?;
 
             let context_wait_timer = Instant::now();
-            wait_for_context(context, &genesis_context_hash)?;
+            wait_for_context(
+                context,
+                &genesis_context_hash,
+                init_storage_data.one_context,
+            )?;
             let context_wait_elapsed = context_wait_timer.elapsed();
 
             // call get additional/json data for genesis (this must be second call, because this triggers context.checkout)
@@ -792,7 +809,11 @@ const BLOCK_APPLY_DURATION_LONG_TO_LOG: Duration = Duration::from_secs(30);
 pub fn wait_for_context(
     context: &Box<dyn ContextApi>,
     context_hash: &ContextHash,
+    one_context: bool,
 ) -> Result<(), FeedChainError> {
+    if one_context {
+        return Ok(());
+    }
     let (timeout, delay): (Duration, Duration) = CONTEXT_WAIT_DURATION;
     let start = SystemTime::now();
 
