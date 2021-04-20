@@ -10,9 +10,11 @@ use failure::Error;
 use crypto::hash::{BlockHash, ContextHash, FromBytesError};
 
 use crate::context::actions::context_action_storage::ContextAction;
-use crate::context::actions::{get_new_tree_hash, get_tree_id};
+use crate::context::actions::{get_new_tree_hash, get_tree_id, get_new_tree_id, get_operation_hash};
 use crate::context::merkle::hash::EntryHash;
-use crate::context::merkle::merkle_storage::{MerkleError, MerkleStorage};
+use crate::context::merkle::new_impl::{NewMerkle as MerkleStorage, display_hash};
+use crate::context::merkle::merkle_storage::MerkleError;
+//use crate::context::merkle::merkle_storage::{MerkleError, MerkleStorage};
 use crate::context::merkle::merkle_storage_stats::MerkleStoragePerfReport;
 use crate::context::{ContextApi, ContextError, ContextKey, ContextValue, StringTreeEntry, TreeId};
 use crate::{BlockStorage, BlockStorageReader, StorageError};
@@ -24,9 +26,32 @@ impl ContextApi for TezedgeContext {
         new_tree_id: TreeId,
         key: &ContextKey,
         value: ContextValue,
+        set_tree: bool,
     ) -> Result<(), ContextError> {
         let mut merkle = self.merkle.write()?;
-        merkle.set(new_tree_id, key, value)?;
+
+        // let mut debug = false;
+
+        // let key_str: Vec<_> = key.iter().map(|s| s.as_str()).collect();
+        // if key_str == ["data", "rolls", "owner", "current", "10", "0", "10"] {
+        //     debug = true;
+        // }
+
+        // let now = std::time::Instant::now();
+
+        // if debug {
+        //     println!("BEFORE", );
+        //     merkle.display();
+        // }
+
+        merkle.set(new_tree_id, key, value, set_tree);
+
+        // if debug {
+        //     println!("AFTER", );
+        //     merkle.display();
+        // }
+
+        // println!("SET elapsed={:?}", now.elapsed());
 
         Ok(())
     }
@@ -50,7 +75,7 @@ impl ContextApi for TezedgeContext {
         let mut merkle = self.merkle.write()?;
 
         let date: u64 = date.try_into()?;
-        let commit_hash = merkle.commit(date, author, message)?;
+        let commit_hash = merkle.commit(date, author, message);
         let commit_hash = ContextHash::try_from(&commit_hash[..])?;
 
         self.associate_block_and_context_hash(block_hash, &commit_hash, parent_context_hash)?;
@@ -63,9 +88,10 @@ impl ContextApi for TezedgeContext {
         _context_hash: &Option<ContextHash>,
         new_tree_id: TreeId,
         key_prefix_to_delete: &ContextKey,
+        set_tree: bool,
     ) -> Result<(), ContextError> {
         let mut merkle = self.merkle.write()?;
-        merkle.delete(new_tree_id, key_prefix_to_delete)?;
+        merkle.delete(new_tree_id, key_prefix_to_delete, set_tree);
         Ok(())
     }
 
@@ -74,9 +100,29 @@ impl ContextApi for TezedgeContext {
         _context_hash: &Option<ContextHash>,
         new_tree_id: TreeId,
         key_prefix_to_remove: &ContextKey,
+        set_tree: bool,
     ) -> Result<(), ContextError> {
         let mut merkle = self.merkle.write()?;
-        merkle.delete(new_tree_id, key_prefix_to_remove)?;
+
+        // let mut debug = false;
+
+        // let key_str: Vec<_> = key_prefix_to_remove.iter().map(|s| s.as_str()).collect();
+        // let debug = key_str == ["data", "commitments", "18", "60", "a2", "3d", "26", "9a07d999340898ab75687a4db8ca3e"];
+
+        // println!("DELETE {:?} DEBUG={:?}", key_prefix_to_remove, debug);
+
+        // if debug {
+        //     println!("\nBEFORE");
+        //     merkle.display();
+        // }
+
+        merkle.delete(new_tree_id, key_prefix_to_remove, set_tree);
+
+        // if debug {
+        //     println!("\nAFTER");
+        //     merkle.display();
+        // }
+
         Ok(())
     }
 
@@ -88,25 +134,40 @@ impl ContextApi for TezedgeContext {
         to_key: &ContextKey,
     ) -> Result<(), ContextError> {
         let mut merkle = self.merkle.write()?;
-        merkle.copy(new_tree_id, from_key, to_key)?;
+        merkle.copy(new_tree_id, from_key, to_key);
         Ok(())
     }
 
     fn get_key(&self, key: &ContextKey) -> Result<ContextValue, ContextError> {
         let mut merkle = self.merkle.write()?;
-        let val = merkle.get(key)?;
+
+        // let key_str: Vec<_> = key.iter().map(|s| s.as_str()).collect();
+        // let debug = key_str == ["data", "votes", "listings", "ed25519", "0d", "00", "12", "f9", "09", "6055776e235778d83587751ef2ecc3"];
+
+        // if debug {
+        //     println!("GET");
+        //     merkle.display();
+        // }
+
+        let val = merkle.get(key).unwrap();
         Ok(val)
     }
 
     fn mem(&self, key: &ContextKey) -> Result<bool, ContextError> {
         let mut merkle = self.merkle.write()?;
-        let val = merkle.mem(key)?;
+
+        // let now = std::time::Instant::now();
+
+        let val = merkle.mem(key);
+
+        // println!("MEM elapsed={:?}", now.elapsed());
+
         Ok(val)
     }
 
     fn dirmem(&self, key: &ContextKey) -> Result<bool, ContextError> {
         let mut merkle = self.merkle.write()?;
-        let val = merkle.dirmem(key)?;
+        let val = merkle.dirmem(key);
         Ok(val)
     }
 
@@ -135,10 +196,11 @@ impl ContextApi for TezedgeContext {
         prefix: &ContextKey,
     ) -> Result<Option<Vec<(ContextKey, ContextValue)>>, ContextError> {
         let context_hash_arr: EntryHash = context_hash.as_ref().as_slice().try_into()?;
-        let mut merkle = self.merkle.write()?;
-        merkle
-            .get_key_values_by_prefix(&context_hash_arr, prefix)
-            .map_err(ContextError::from)
+        todo!()
+        // let mut merkle = self.merkle.write()?;
+        // merkle
+        //     .get_key_values_by_prefix(&context_hash_arr, prefix)
+        //     .map_err(ContextError::from)
     }
 
     fn get_context_tree_by_prefix(
@@ -147,11 +209,13 @@ impl ContextApi for TezedgeContext {
         prefix: &ContextKey,
         depth: Option<usize>,
     ) -> Result<StringTreeEntry, ContextError> {
-        let context_hash_arr: EntryHash = context_hash.as_ref().as_slice().try_into()?;
-        let mut merkle = self.merkle.write()?;
-        merkle
-            .get_context_tree_by_prefix(&context_hash_arr, prefix, depth)
-            .map_err(ContextError::from)
+        todo!()
+        // let context_hash_arr: EntryHash = context_hash.as_ref().as_slice().try_into()?;
+
+        // let mut merkle = self.merkle.write()?;
+        // merkle
+        //     .get_context_tree_by_prefix(&context_hash_arr, prefix, depth)
+        //     .map_err(ContextError::from)
     }
 
     fn get_last_commit_hash(&self) -> Result<Option<Vec<u8>>, ContextError> {
@@ -160,8 +224,9 @@ impl ContextApi for TezedgeContext {
     }
 
     fn get_merkle_stats(&self) -> Result<MerkleStoragePerfReport, ContextError> {
-        let merkle = self.merkle.read()?;
-        Ok(merkle.get_merkle_stats()?)
+        todo!()
+        // let merkle = self.merkle.read()?;
+        // Ok(merkle.get_merkle_stats()?)
     }
 
     fn is_committed(&self, context_hash: &ContextHash) -> Result<bool, ContextError> {
@@ -181,34 +246,94 @@ impl ContextApi for TezedgeContext {
     }
 
     fn get_merkle_root(&mut self) -> Result<EntryHash, ContextError> {
-        let merkle = self.merkle.read()?;
+        let mut merkle = self.merkle.write()?;
         merkle
             .get_working_tree_root_hash()
             .map_err(ContextError::from)
     }
 
     fn block_applied(&self) -> Result<(), ContextError> {
-        let mut merkle = self.merkle.write()?;
-        Ok(merkle.block_applied()?)
+        todo!()
+        // let mut merkle = self.merkle.write()?;
+        // Ok(merkle.block_applied()?)
     }
 
     fn cycle_started(&self) -> Result<(), ContextError> {
-        let mut merkle = self.merkle.write()?;
-        Ok(merkle.start_new_cycle()?)
+        todo!()
+        // let mut merkle = self.merkle.write()?;
+        // Ok(merkle.start_new_cycle()?)
     }
 
     fn get_memory_usage(&self) -> Result<usize, ContextError> {
-        let merkle = self.merkle.write()?;
-        Ok(merkle.get_memory_usage()?)
+        todo!()
+        // let merkle = self.merkle.write()?;
+        // Ok(merkle.get_memory_usage()?)
     }
 
     fn perform_context_action(&mut self, action: ContextAction) -> Result<(), Error> {
-        let new_tree_id = get_tree_id(&action);
+        let new_tree_id = get_new_tree_id(&action);
+        let tree_id = get_tree_id(&action);
         let new_tree_hash = get_new_tree_hash(&action)?;
+        let operation_hash = get_operation_hash(&action);
 
-        if let Some(tree_id) = new_tree_id {
+        // if let Some(hash) = get_operation_hash(&action) {
+        //     println!("OPERATION_HASH={:?}", display_hash(&hash));
+        // } else {
+        //     println!("OPERATION_HASH=None");
+        // }
+
+        // println!("TREE_ID={:?}", new_tree_id);
+
+        let mut clear_first = false;
+
+        if operation_hash.is_some() && operation_hash != self.current_operation_hash {
+            // println!(
+            //     "CHANGE OPERATION TREE_ID={:?} LAST_TREE_ID={:?} OP_HASH={:?} CURRENT={:?}",
+            //     new_tree_id,
+            //     self.last_new_tree_id,
+            //     operation_hash.as_ref().map(|h| display_hash(h)),
+            //     self.current_operation_hash.as_ref().map(|h| display_hash(h))
+            // );
+
+            // if self.current_operation_hash.is_some() && self.last_new_tree_id.is_some() {
+                // println!("SSAAAAAAVE", );
+                // self.save_tree(self.last_new_tree_id.unwrap_or(0)).unwrap();
+            // }
+
+            self.operation_index += 1;
+
+            // println!("CLEAR", );
+            // self.clear_tree(self.operation_index);
+
+            // self.clear_tree(self.operation_index);
+
+            clear_first = true;
+
+            self.current_operation_hash = operation_hash.clone();
+        }
+
+        if let Some(id) = new_tree_id {
+            self.last_new_tree_id.replace(id);
+        };
+
+        // println!(
+        //     "OPERATION_HASH={:?} NEW_TREE_ID={:?} TREE_ID={:?} CURRENT_OP={:?}",
+        //     operation_hash.as_ref().map(|h| display_hash(h)),
+        //     new_tree_id,
+        //     tree_id,
+        //     self.current_operation_hash.as_ref().map(|h| display_hash(h))
+        // );
+
+        if let Some(tree_id) = tree_id {
+            // println!("TREE_ID={:?}", tree_id);
             self.set_merkle_root(tree_id)?;
         }
+
+        if clear_first {
+            self.clear_first();
+        }
+
+        let operations_started = self.current_operation_hash.is_some();
 
         match action {
             ContextAction::Get { key, .. } => {
@@ -227,8 +352,9 @@ impl ContextApi for TezedgeContext {
                 context_hash,
                 ..
             } => {
+                // println!("SET TREE_ID={:?}", new_tree_id);
                 let context_hash = try_from_untyped_option(context_hash)?;
-                self.set(&context_hash, new_tree_id, &key, value)?;
+                self.set(&context_hash, new_tree_id, &key, value, operations_started)?;
             }
             ContextAction::Copy {
                 to_key: key,
@@ -247,7 +373,7 @@ impl ContextApi for TezedgeContext {
                 ..
             } => {
                 let context_hash = try_from_untyped_option(context_hash)?;
-                self.delete_to_diff(&context_hash, new_tree_id, &key)?;
+                self.delete_to_diff(&context_hash, new_tree_id, &key, operations_started)?;
             }
             ContextAction::RemoveRecursively {
                 key,
@@ -256,7 +382,7 @@ impl ContextApi for TezedgeContext {
                 ..
             } => {
                 let context_hash = try_from_untyped_option(context_hash)?;
-                self.remove_recursively_to_diff(&context_hash, new_tree_id, &key)?;
+                self.remove_recursively_to_diff(&context_hash, new_tree_id, &key, operations_started)?;
             }
             ContextAction::Commit {
                 parent_context_hash,
@@ -270,8 +396,17 @@ impl ContextApi for TezedgeContext {
                 let parent_context_hash = try_from_untyped_option(parent_context_hash)?;
                 // TODO: not necessery clone, remove here when disconnect from block_storage
                 let block_hash = BlockHash::try_from(block_hash)?;
+
+                // let root_hash = self.get_merkle_root();
+
                 let hash = self.commit(&block_hash, &parent_context_hash, author, message, date)?;
                 let new_context_hash = ContextHash::try_from(new_context_hash)?;
+
+                self.current_operation_hash = None;
+                self.last_new_tree_id = None;
+
+                // println!("OUR ROOT={:?} THEIR={:?}", root_hash, tree_hash);
+
                 assert_eq!(
                     &hash,
                     &new_context_hash,
@@ -293,16 +428,34 @@ impl ContextApi for TezedgeContext {
             ContextAction::Shutdown => (), // Ignored
         };
 
-        if let Some(post_hash) = new_tree_hash {
-            assert_eq!(
-                self.get_merkle_root()?,
-                post_hash,
-                "Invalid tree_hash context: {:?}, post_hash: {:?}, tree_id: {:? }",
-                self.get_merkle_root()?,
-                post_hash,
-                new_tree_id,
-            );
-        }
+        // if let (Some(op_hash), Some(current_op_hash)) = (operation_hash.as_ref(), self.current_operation_hash.as_ref()) {
+        //     if op_hash != current_op_hash {
+
+        //         self.current_operation_hash.replace(op_hash);
+        //     }
+        // };
+
+        // if operation_hash.is_some() && self.current_operation_hash.is_some() && operation_hash != self.current_operation_hash {
+        //     println!("SAVE TREE_ID={:?} AS CURRENT OP HASH={:?}", new_tree_id, operation_hash.as_ref().map(|h| display_hash(h)));
+        //     self.save_tree(new_tree_id.unwrap()).unwrap();
+        //     self.current_operation_hash = operation_hash;
+        // }
+
+
+        // println!("CHECKING={:?}", new_tree_hash.is_some());
+
+        // if let Some(post_hash) = new_tree_hash {
+        //     println!("CHECKING=true", );
+        //     let hash = self.get_merkle_root()?;
+        //     assert_eq!(
+        //         hash,
+        //         post_hash,
+        //         "Invalid tree_hash context: {:?}, post_hash: {:?}, tree_id: {:? }",
+        //         hash,
+        //         post_hash,
+        //         new_tree_id,
+        //     );
+        // }
 
         Ok(())
     }
@@ -320,6 +473,9 @@ where
 pub struct TezedgeContext {
     block_storage: Option<BlockStorage>,
     merkle: Arc<RwLock<MerkleStorage>>,
+    current_operation_hash: Option<Vec<u8>>,
+    last_new_tree_id: Option<TreeId>,
+    operation_index: usize,
 }
 
 impl TezedgeContext {
@@ -327,7 +483,31 @@ impl TezedgeContext {
         TezedgeContext {
             block_storage,
             merkle,
+            current_operation_hash: None,
+            last_new_tree_id: None,
+            operation_index: 0,
         }
+    }
+
+    // fn save_tree(&mut self, tree_id: TreeId) -> Result<(), ContextError> {
+    //     let mut merkle = self.merkle.write()?;
+    //     merkle.save_tree(tree_id);
+
+    //     Ok(())
+    // }
+
+    // fn clear_tree(&mut self, operation_index: usize) -> Result<(), ContextError> {
+    //     let mut merkle = self.merkle.write()?;
+    //     merkle.nodes.clear_trees(operation_index);
+
+    //     Ok(())
+    // }
+
+    fn clear_first(&mut self) -> Result<(), ContextError> {
+        let mut merkle = self.merkle.write()?;
+        merkle.nodes.clear_first();
+
+        Ok(())
     }
 
     fn associate_block_and_context_hash(

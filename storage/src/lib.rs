@@ -1,6 +1,6 @@
 // Copyright (c) SimpleStaking and Tezedge Contributors
 // SPDX-License-Identifier: MIT
-#![forbid(unsafe_code)]
+// #![forbid(unsafe_code)]
 #![feature(const_fn)]
 #![feature(allocator_api)]
 
@@ -31,7 +31,8 @@ pub use crate::block_storage::{
     BlockStorage, BlockStorageReader,
 };
 pub use crate::chain_meta_storage::ChainMetaStorage;
-use crate::context::merkle::merkle_storage::MerkleStorage;
+use crate::context::merkle::new_impl::NewMerkle as MerkleStorage;
+//use crate::context::merkle::merkle_storage::MerkleStorage;
 pub use crate::mempool_storage::{MempoolStorage, MempoolStorageKV};
 pub use crate::operations_meta_storage::{OperationsMetaStorage, OperationsMetaStorageKV};
 pub use crate::operations_storage::{
@@ -405,7 +406,8 @@ pub mod initializer {
 
     use crypto::hash::ChainId;
 
-    use crate::context::merkle::merkle_storage::MerkleStorage;
+    use crate::context::merkle::new_impl::NewMerkle as MerkleStorage;
+    // use crate::context::merkle::merkle_storage::MerkleStorage;
     use crate::persistent::database::{open_kv, RocksDbKeyValueSchema};
     use crate::persistent::{DBError, DbConfiguration};
     use crate::{StorageError, SystemStorage};
@@ -721,7 +723,8 @@ pub mod tests_common {
     use crate::chain_meta_storage::ChainMetaStorage;
     use crate::context::actions::context_action_storage;
     use crate::context::kv_store::rocksdb_backend::RocksDBBackend;
-    use crate::context::merkle::merkle_storage::MerkleStorage;
+    use crate::context::merkle::new_impl::NewMerkle as MerkleStorage;
+    //use crate::context::merkle::merkle_storage::MerkleStorage;
     use crate::mempool_storage::MempoolStorage;
     use crate::persistent::database::{open_kv, RocksDbKeyValueSchema};
     use crate::persistent::sequence::Sequences;

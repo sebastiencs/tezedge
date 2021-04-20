@@ -429,13 +429,35 @@ fn main() -> Result<(), Error> {
 
     let actions_reader = ActionsFileReader::new(&actions_file_path)?;
 
-    for messages in actions_reader.take(params.blocks_limit.unwrap_or(blocks_count as usize)) {
+    for (block_index, messages) in actions_reader.take(params.blocks_limit.unwrap_or(blocks_count as usize)).enumerate() {
         counter += 1;
         let progress = counter as f64 / blocks_count as f64 * 100.0;
 
-        for action in messages.iter() {
+        //println!("COUNTER={}", counter);
+
+        // let mut last_tree_id = None;
+
+        for (index, action) in messages.iter().enumerate() {
+            // println!("ACTION_{}={}", index, match action {
+            //     ContextAction::Set { key, .. } => format!("Set {:?}", key),
+            //     ContextAction::Delete { .. } => "Delete".to_string(),
+            //     ContextAction::RemoveRecursively { .. } => "RemoveRecursively".to_string(),
+            //     ContextAction::Copy { .. } => "Copy".to_string(),
+            //     ContextAction::Checkout { .. } => "Checkout".to_string(),
+            //     ContextAction::Commit { .. } => "Commit".to_string(),
+            //     ContextAction::Mem { key, .. } => format!("Mem {:?}", key),
+            //     ContextAction::DirMem { .. } => "DirMem".to_string(),
+            //     ContextAction::Get { key, .. } => format!("Get {:?}", key),
+            //     ContextAction::Fold { .. } => "Fold".to_string(),
+            //     ContextAction::Shutdown { .. } => "Shutdown".to_string()
+            // });
+
             // evaluate context action to context
             context.perform_context_action(action.clone())?;
+
+            // println!("PERFORMED", );
+
+            // let mut current_tree_id = None;
 
             // verify state of the storage after action has been applied
             match action {
@@ -455,16 +477,37 @@ fn main() -> Result<(), Error> {
                     );
                 }
                 ContextAction::Get { key, value, .. } => {
-                    assert_eq!(value.clone(), context.get_key(key).unwrap());
+                    let our_value = context.get_key(key).unwrap();
+                    assert!(value == &our_value, "get not equal length={:?} our_length={:?}", value.len(), our_value.len());
+                    // assert_eq!(value, &our_value, "get not equal length={:?} our_length={:?}", value.len(), our_value.len());
+                    //assert_eq!(value.clone(), context.get_key(key).unwrap());
                 }
-                ContextAction::Mem { key, value, .. } => {
+                ContextAction::Mem { key, value, tree_id, .. } => {
+                    // current_tree_id.replace(tree_id);
                     assert_eq!(*value, context.mem(key).unwrap());
                 }
                 ContextAction::DirMem { key, value, .. } => {
                     assert_eq!(*value, context.dirmem(key).unwrap());
                 }
+                // ContextAction::Set { tree_id, .. } => {
+                //     current_tree_id.replace(tree_id);
+                //     //assert_eq!(*value, context.dirmem(key).unwrap());
+                // }
                 _ => {}
             };
+
+            // if let (Some(current), Some(last)) = (current_tree_id, last_tree_id) {
+            //     if current < last {
+            //         println!("LAST={:?} CURRENT={:?}", last, current);
+            //     }
+            //     // assert!(current >= last);
+            // };
+
+            // println!("CURRENT TREE_ID={:?}", current_tree_id);
+
+            // if let Some(c) = current_tree_id {
+            //     last_tree_id.replace(c);
+            // }
 
             // verify context hashes after each block
             if let Some(expected_hash) = get_new_tree_hash(&action)? {
@@ -472,6 +515,7 @@ fn main() -> Result<(), Error> {
             }
 
             if let ContextAction::Commit { block_hash, .. } = &action {
+                // println!("LAAAAA", );
                 debug!(
                     log,
                     "progress {:.7}% - cycle nr: {} block nr {} [{}] with {} messages processed - {} mb",
@@ -489,14 +533,24 @@ fn main() -> Result<(), Error> {
                         / 1024
                 );
 
-                context.block_applied().unwrap();
-                if counter > 0 && counter % params.blocks_per_cycle == 0 {
-                    context.cycle_started().unwrap();
-                    cycle_counter += 1;
-                }
+                // context.block_applied().unwrap();
+                // if counter > 0 && counter % params.blocks_per_cycle == 0 {
+                //     context.cycle_started().unwrap();
+                //     cycle_counter += 1;
+                // }
+
+                // println!("sleeping", );
+                // std::thread::sleep(std::time::Duration::from_secs(2));
+                // println!("slept", );
             }
         }
-        stat_writer.update(counter, merkle.clone());
+
+        if block_index == 10000 {
+            break;
+        }
+        // stat_writer.update(counter, merkle.clone());
+
+        // return Ok(());
     }
 
     info!(log, "Context was successfully evaluated");

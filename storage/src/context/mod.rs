@@ -57,6 +57,7 @@ pub trait ContextApi {
         new_tree_id: TreeId,
         key: &ContextKey,
         value: ContextValue,
+        set_tree: bool,
     ) -> Result<(), ContextError>;
     // checkout context for hash
     fn checkout(&self, context_hash: &ContextHash) -> Result<(), ContextError>;
@@ -75,12 +76,14 @@ pub trait ContextApi {
         context_hash: &Option<ContextHash>,
         new_tree_id: TreeId,
         key_prefix_to_delete: &ContextKey,
+        set_tree: bool,
     ) -> Result<(), ContextError>;
     fn remove_recursively_to_diff(
         &self,
         context_hash: &Option<ContextHash>,
         new_tree_id: TreeId,
         key_prefix_to_remove: &ContextKey,
+        set_tree: bool,
     ) -> Result<(), ContextError>;
     // copies subtree under 'from_key' to new subtree under 'to_key'
     fn copy_to_diff(

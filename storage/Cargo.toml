@@ -19,6 +19,7 @@ leb128 = "0.2"
 num_cpus = "1.13"
 rocksdb = {version = "0.15", features = ["snappy", "lz4", "zstd", "zlib"], default-features = false }
 serde = { version = "1.0", features = ["derive", "rc"] }
+slab = "0.4.2"
 slog = "2.7"
 sled = "0.34.6"
 snap = "1.0.4"
@@ -29,6 +30,9 @@ crypto = { path = "../crypto" }
 tezos_api = { path = "../tezos/api" }
 tezos_context = { path = "../tezos/context" }
 tezos_messages = { path = "../tezos/messages" }
+memchr = "2"
+tinyvec = { version = "1.2", features = ["alloc"] }
+zstd = "0.5"
 
 # Context actions replayer binary and his dependencies
 clap = "2.33"

@@ -235,6 +235,8 @@ impl MerkleStorage {
     pub fn get(&mut self, key: &ContextKey) -> Result<ContextValue, MerkleError> {
         let stat_updater = StatUpdater::new(MerkleStorageAction::Get, Some(key));
 
+        println!("GET '{:?}'", key);
+
         let root = self.get_working_tree_root_ref();
         let rv = self.get_from_tree(root, key).or_else(|_| Ok(Vec::new()));
 
@@ -246,6 +248,8 @@ impl MerkleStorage {
     pub fn mem(&mut self, key: &ContextKey) -> Result<bool, MerkleError> {
         let stat_updater = StatUpdater::new(MerkleStorageAction::Mem, Some(key));
 
+        println!("MEM '{:?}'", key);
+
         let root = self.get_working_tree_root_ref();
         let rv = self.value_exists(root, key);
 
@@ -256,6 +260,8 @@ impl MerkleStorage {
     /// Check if directory exists in current working tree
     pub fn dirmem(&mut self, key: &ContextKey) -> Result<bool, MerkleError> {
         let stat_updater = StatUpdater::new(MerkleStorageAction::DirMem, Some(key));
+
+        println!("DIRMEM '{:?}'", key);
 
         let root = self.get_working_tree_root_ref();
         let rv = self.directory_exists(root, key);
@@ -525,6 +531,8 @@ impl MerkleStorage {
         let new_commit_hash = hash_commit(&new_commit)?;
         let entry = Entry::Commit(new_commit);
 
+        self.display_tree(&self.working_tree.0, 0);
+
         // persist working tree entries to db
         let mut batch: Vec<(EntryHash, ContextValue)> = Vec::new();
         self.get_entries_recursively(&entry, Some(&self.working_tree.0), &mut batch)?;
@@ -536,6 +544,36 @@ impl MerkleStorage {
 
         stat_updater.update_execution_stats(&mut self.stats);
         rv
+    }
+
+    fn display_all_tree(&self) {
+        self.display_tree(&self.working_tree.0, 0);
+    }
+
+    fn display_tree(&self, tree: &Tree, depth: usize) -> Option<()> {
+        for (k, v) in tree {
+            match v.entry.borrow().as_ref() {
+                Some(Entry::Tree(tree)) => {
+                    println!("{}{}={}", " ".repeat(depth), k.as_str(), "Tree");
+                    // println!("{:width$}{}={}", " ", k.as_str(), "Tree", width = depth);
+                    self.display_tree(tree, depth + 1);
+                },
+                Some(Entry::Blob(b)) => {
+                    println!("{}{}={:?}", " ".repeat(depth), k.as_str(), b);
+                    // println!("{:width$}{}={}", " ", k.as_str(), "Blob", width = depth);
+                }
+                Some(Entry::Commit(_)) => {
+                    println!("{}{}={}", " ".repeat(depth), k.as_str(), "Commit");
+                    // println!("{:width$}{}={}", " ", k.as_str(), "Commit", width = depth);
+                }
+                None => {
+                    println!("{}{}={}", " ".repeat(depth), k.as_str(), "None");
+                }
+            }
+
+            // println!("{:width$}{}", " ", 1, width = depth);
+        }
+        None
     }
 
     /// Set key/val to the working tree.
@@ -552,6 +590,8 @@ impl MerkleStorage {
         value: ContextValue,
     ) -> Result<(), MerkleError> {
         let stat_updater = StatUpdater::new(MerkleStorageAction::Set, Some(key));
+
+        println!("SET '{:?}'", key);
 
         let entry = &self._set(key, value)?;
         let new_root = self.get_tree(entry)?.clone();
@@ -574,6 +614,8 @@ impl MerkleStorage {
     /// Delete an item from the working tree.
     pub fn delete(&mut self, new_tree_id: TreeId, key: &ContextKey) -> Result<(), MerkleError> {
         let stat_updater = StatUpdater::new(MerkleStorageAction::Delete, Some(key));
+
+        println!("DELETE '{:?}'", key);
 
         let entry = &self._delete(key)?;
         let new_root = self.get_tree(entry)?.clone();
@@ -599,6 +641,8 @@ impl MerkleStorage {
         to_key: &ContextKey,
     ) -> Result<(), MerkleError> {
         let stat_updater = StatUpdater::new(MerkleStorageAction::Copy, Some(from_key));
+
+        println!("COPY '{:?}' to '{:?}'", from_key, to_key);
 
         let entry = self._copy(from_key, to_key)?;
         let new_root = self.get_tree(&entry)?.clone();
@@ -752,6 +796,14 @@ impl MerkleStorage {
         Ok(self.db.new_cycle_started()?)
     }
 
+    fn display_hash(hash: &[u8]) -> String {
+        let mut s = String::new();
+        for h in hash {
+        s.push_str(&format!("{:X}", h));
+        }
+        s
+    }
+
     /// Builds vector of entries to be persisted to DB, recursively
     fn get_entries_recursively(
         &self,
@@ -761,6 +813,9 @@ impl MerkleStorage {
     ) -> Result<(), MerkleError> {
         // add entry to batch
         let hashed = hash_entry(entry)?;
+
+        println!("HASHED={:?}", Self::display_hash(&hashed));
+
         let serialized = bincode::serialize(entry)?;
 
         batch.push((hashed, serialized));
@@ -917,7 +972,7 @@ impl Flushable for MerkleStorage {
 /// Merkle storage predefined tests with abstraction for underlaying kv_store for context
 #[cfg(test)]
 mod tests {
-    use std::env;
+    use std::{collections::BTreeMap, env};
     use std::path::PathBuf;
 
     use assert_json_diff::assert_json_eq;
@@ -927,6 +982,141 @@ mod tests {
     use crate::context::ContextValue;
 
     use super::*;
+
+    fn display_hash(hash: &EntryHash) -> String {
+        let mut s = String::new();
+        for h in hash {
+        s.push_str(&format!("{:X}", h));
+        }
+        s
+    }
+
+    fn test_my(kv_store_factory: &TestContextKvStoreFactoryInstance) {
+        println!("START", );
+
+        let mut storage = MerkleStorage::new(
+            kv_store_factory
+                .create("test_my")
+                .unwrap(),
+        );
+
+        // let key = &vec!["a".to_string()];
+        // let value = vec![1u8];
+        // let empty_response: ContextValue = Vec::new();
+
+        // println!("BEFORE");
+        // storage.display_all_tree();
+
+        // storage.set(1, key, value.clone()).unwrap();
+
+        // println!("AFTER SET");
+        // storage.display_all_tree();
+
+        // storage.delete(2, key).unwrap();
+
+        // println!("AFTER DELETE");
+        // storage.display_all_tree();
+
+        // let a_foo: &ContextKey = &vec!["a".to_string(), "foo".to_string()];
+        // let c_foo: &ContextKey = &vec!["c".to_string(), "foo".to_string()];
+        // storage
+        //     .set(1, &vec!["a".to_string(), "foo".to_string()], vec![97, 98])
+        //     .unwrap();
+        // storage
+        //     .set(2, &vec!["c".to_string(), "zoo".to_string()], vec![1, 2])
+        //     .unwrap();
+        // storage
+        //     .set(3, &vec!["c".to_string(), "foo".to_string()], vec![97, 98])
+        //     .unwrap();
+        // storage
+        //     .delete(4, &vec!["c".to_string(), "zoo".to_string()])
+        //     .unwrap();
+        // // now c/ is the same tree as a/ - which means there are two references to single entry in working tree
+        // // modify the tree and check that the other one was kept intact
+        // storage
+        //     .set(5, &vec!["c".to_string(), "foo".to_string()], vec![3, 4])
+        //     .unwrap();
+
+        // storage.set(1, &vec!["c".to_string(), "zoo".to_string()], vec![1, 2]).unwrap();
+        // storage.set(1, &vec!["a".to_string()], vec![97, 98]).unwrap();
+        // storage.set(1, &vec!["a".to_string(), "goo".to_string()], vec![97, 98]).unwrap();
+        // storage.set(1, &vec!["a".to_string(), "aaa".to_string()], vec![97, 98]).unwrap();
+        // storage.set(1, &vec!["c".to_string(), "foo".to_string()], vec![97, 98]).unwrap();
+        // storage.set(1, &vec!["c".to_string(), "foo".to_string()], vec![3, 4]).unwrap();
+        // storage.set(1, &vec!["a".to_string(), "foo".to_string()], vec![97, 98]).unwrap();
+        // storage.set(1, &vec!["b".to_string(), "abc".to_string()], vec![97, 98]).unwrap();
+        // storage.set(1, &vec!["c".to_string(), "moo".to_string()], vec![3, 4]).unwrap();
+        // storage.set(1, &vec!["a".to_string(), "foo".to_string(), "baa".to_string()], vec![97, 98]).unwrap();
+        // storage.set(1, &vec!["a".to_string(), "foo".to_string(), "abc".to_string()], vec![97, 98]).unwrap();
+
+
+
+        storage.set(1, &vec!["c".to_string(), "zoo".to_string()], vec![1, 2]).unwrap();
+        storage.set(1, &vec!["a".to_string(), "goo".to_string()], vec![97, 98]).unwrap();
+        storage.set(1, &vec!["a".to_string()], vec![97, 98]).unwrap();
+        storage.set(1, &vec!["a".to_string(), "aaa".to_string()], vec![97, 98]).unwrap();
+        storage.set(1, &vec!["c".to_string(), "foo".to_string()], vec![97, 98]).unwrap();
+        storage.set(1, &vec!["c".to_string(), "foo".to_string()], vec![3, 4]).unwrap();
+        storage.set(1, &vec!["a".to_string(), "foo".to_string()], vec![97, 98]).unwrap();
+        storage.set(1, &vec!["b".to_string(), "abc".to_string()], vec![97, 98]).unwrap();
+        storage.set(1, &vec!["c".to_string(), "moo".to_string()], vec![3, 4]).unwrap();
+        storage.set(1, &vec!["a".to_string(), "foo".to_string(), "baa".to_string()], vec![97, 98]).unwrap();
+        storage.set(1, &vec!["a".to_string(), "foo".to_string(), "abc".to_string()], vec![97, 98]).unwrap();
+        storage.set(1, &vec!["b".to_string(), "o".to_string(), "f".to_string(), "e".to_string()], vec![97, 98]).unwrap();
+        storage.set(1, &vec!["b".to_string(), "o".to_string(), "f".to_string(), "e1".to_string()], vec![97, 98]).unwrap();
+        storage.set(1, &vec!["b".to_string(), "o".to_string(), "f".to_string(), "e2".to_string()], vec![97, 98]).unwrap();
+        storage.set(1, &vec!["b".to_string(), "o".to_string(), "f".to_string(), "e3".to_string()], vec![97, 98]).unwrap();
+        storage.set(1, &vec!["b".to_string(), "o".to_string(), "m".to_string(), "e4".to_string()], vec![97, 98]).unwrap();
+        storage.set(1, &vec!["b".to_string(), "o".to_string(), "m".to_string(), "e5".to_string()], vec![97, 98]).unwrap();
+        storage.set(1, &vec!["b".to_string(), "o".to_string(), "m".to_string(), "e5".to_string(), "aaaaa".to_string()], vec![97, 98]).unwrap();
+        storage.set(1, &vec!["b".to_string(), "o".to_string(), "m".to_string(), "e5".to_string(), "bbbbb".to_string()], vec![97, 98]).unwrap();
+        storage.set(1, &vec!["g".to_string(), "o".to_string(), "m".to_string(), "e5".to_string(), "bbbbb".to_string()], vec![97, 98]).unwrap();
+
+
+        println!("AFTER SETS");
+        storage.display_all_tree();
+
+        println!("END HASH={:?}", display_hash(&storage.get_working_tree_root_hash().unwrap()));
+
+        let res = storage.mem(&vec!["a".to_string()]);
+        println!("MEM a {:?}", res);
+        let res = storage.mem(&vec!["a".to_string(), "foo".to_string()]);
+        println!("MEM a foo {:?}", res);
+        let res = storage.mem(&vec!["a".to_string(), "foo".to_string(), "a".to_string()]);
+        println!("MEM a foo a {:?}", res);
+
+        storage.commit(1, "seb".to_string(), "ok".to_string()).unwrap();
+
+        // let mut b = BTreeMap::new();
+        // b.insert(vec!["b".to_string(), "a".to_string()], 1);
+        // b.insert(vec!["a".to_string(), "b".to_string()], 1);
+
+        // println!("TREE={:#?}", b);
+    }
+
+    fn test_my_fix(kv_store_factory: &TestContextKvStoreFactoryInstance) {
+        println!("START", );
+
+        let mut storage = MerkleStorage::new(
+            kv_store_factory
+                .create("test_my")
+                .unwrap(),
+        );
+
+        let a_foo: &ContextKey = &vec!["a".to_string(), "foo".to_string()];
+        let c_foo: &ContextKey = &vec!["c".to_string(), "foo".to_string()];
+
+        storage.set(1, &vec!["c".to_string(), "zoo".to_string()], vec![1, 2]).unwrap();
+        storage.set(1, &vec!["a".to_string(), "goo".to_string()], vec![97, 98]).unwrap(); // TODO: goo should be removed because of the next line
+
+        println!("BEFORE", );
+        storage.display_all_tree();
+
+        storage.set(1, &vec!["a".to_string()], vec![97, 98]).unwrap();
+
+        println!("AFTER", );
+        storage.display_all_tree();
+    }
 
     fn test_duplicate_entry_in_working_tree(kv_store_factory: &TestContextKvStoreFactoryInstance) {
         let mut storage = MerkleStorage::new(
@@ -1034,6 +1224,10 @@ mod tests {
                 vec![97],
             )
             .unwrap();
+
+        println!("BEFORE");
+        storage.display_all_tree();
+
         storage
             .copy(
                 2,
@@ -1041,6 +1235,10 @@ mod tests {
                 &vec!["data".to_string(), "b".to_string()],
             )
             .unwrap();
+
+        println!("AFTER");
+        storage.display_all_tree();
+
         storage
             .delete(
                 3,
@@ -1468,6 +1666,14 @@ mod tests {
                 #[test]
                 fn test_tree_hash() {
                     super::test_tree_hash($kv_store_factory)
+                }
+                #[test]
+                fn test_my() {
+                    super::test_my($kv_store_factory)
+                }
+                #[test]
+                fn test_my_fix() {
+                    super::test_my_fix($kv_store_factory)
                 }
                 #[test]
                 fn test_duplicate_entry_in_working_tree() {

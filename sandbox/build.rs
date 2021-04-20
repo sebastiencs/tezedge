@@ -35,6 +35,8 @@ fn get_remote_libs() -> Vec<RemoteLib> {
     let artifacts = current_release_distributions_artifacts();
     println!("Resolved known artifacts: {:?}", &artifacts);
 
+    println!("PLATFORM={:?}", platform);
+
     let postfix_for_platform = match platform.os_type {
         OSType::OSX => Some("macos"),
         OSType::Ubuntu => match platform.version.as_str() {

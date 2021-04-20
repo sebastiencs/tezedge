@@ -1,4 +1,5 @@
 use std::{borrow::Cow, cmp::Ordering, collections::{BTreeMap, HashMap, hash_map::DefaultHasher}, convert::TryInto, hash::Hasher, ops::{Index, IndexMut, Range}, rc::Rc};
+use std::collections::VecDeque;
 
 use blake2::VarBlake2b;
 use blake2::digest::{InvalidOutputSize, Update, VariableOutput};
@@ -628,10 +629,18 @@ impl NodeKey {
     }
 }
 
-struct Nodes {
+pub struct Nodes {
     keys: Vec<u32>,
     current_id: TreeId,
-    keys_history: HashMap<TreeId, Vec<u32>>,
+    current_operation_index: usize,
+
+    // The last versions of the tree
+    keys_history: VecDeque<(TreeId, Rc<Vec<u8>>, usize)>,
+
+    // The first 100 versions on the current operation
+    firsts: HashMap<TreeId, (TreeId, Rc<Vec<u8>>, usize)>,
+
+    // keys_history: HashMap<TreeId, (usize, Vec<u32>)>,
     nodes: slab::Slab<Node>,
 }
 
@@ -640,42 +649,145 @@ impl Nodes {
         Nodes {
             keys: vec![],
             current_id: 0,
-            keys_history: HashMap::new(),
+            current_operation_index: 0,
+            keys_history: VecDeque::new(),
+            firsts: HashMap::new(),
+            // keys_history: HashMap::new(),
             nodes: slab::Slab::new(),
         }
     }
 
+    // fn save_tree(&mut self, tree_id: TreeId) {
+    //     if tree_id != self.current_id {
+    //         // let length = self.keys.len() * 4;
+
+    //         // let slice = unsafe {
+    //         //     std::slice::from_raw_parts_mut(self.keys.as_mut_ptr() as *mut u8, length)
+    //         // };
+
+    //         // let after = zstd::block::compress(slice, 0).unwrap();
+    //         // println!("ORIGINAL_LEN={:?} COMPRESSED={:?}", length, after.len());
+
+    //         // println!("CLONING {:?} LEN={:?} CAP={:?}", tree_id, self.keys.len(), self.keys.capacity());
+    //         self.keys_history.insert(tree_id, self.keys.clone());
+    //         self.current_id = tree_id;
+    //     }
+    // }
+
+    // pub fn clear_trees(&mut self, operation_index: usize) {
+    //     if operation_index > 2 {
+    //         // let before = self.keys_history.len();
+    //         self.keys_history.clear();
+    //         // self.keys_history.retain(|_, (index, _)| {
+    //         //     // println!("INDEX={:?} CURRENT={:?} KEY={:?}", index, operation_index, k);
+    //         //     // *index + 3 < operation_index
+    //         //     *index > operation_index - 2
+    //         // });
+    //         let after = self.keys_history.len();
+    //         // println!("BEFORE={:?} AFTER={:?}", before, after);
+    //         if after == 0 {
+    //             self.keys_history = HashMap::new();
+    //         }
+    //     }
+    //     self.current_operation_index = operation_index;
+    //     self.current_id = 0;
+    // }
+
+    pub fn clear_first(&mut self) {
+        self.firsts.clear();
+    }
+
     fn set_tree_id(&mut self, tree_id: TreeId) {
+
+        return;
+
         if tree_id != self.current_id {
-            // let length = self.keys.len() * 4;
+            let length = self.keys.len() * 4;
 
-            // let slice = unsafe {
-            //     std::slice::from_raw_parts_mut(self.keys.as_mut_ptr() as *mut u8, length)
-            // };
+            // TODO: Found a way to improve backtracking
 
-            // let after = zstd::block::compress(slice, 0).unwrap();
+            let slice = unsafe {
+                std::slice::from_raw_parts_mut(self.keys.as_mut_ptr() as *mut u8, length)
+            };
+
+            let after = Rc::new(zstd::block::compress(slice, 9).unwrap());
+
+            // println!("SAVING TREE {:?}", tree_id);
+
             // println!("ORIGINAL_LEN={:?} COMPRESSED={:?}", length, after.len());
 
             // println!("CLONING {:?} LEN={:?} CAP={:?}", tree_id, self.keys.len(), self.keys.capacity());
-            self.keys_history.insert(tree_id, self.keys.clone());
+            // self.keys_history.insert(self.current_id, (self.current_operation_index, self.keys.clone()));
+            // self.current_id = tree_id;
+
+            if self.firsts.len() < 50 {
+                self.firsts.insert(tree_id, (tree_id, Rc::clone(&after), length));
+            }
+
+            if self.keys_history.len() > 1000 {
+                self.keys_history.pop_front();
+            }
+            self.keys_history.push_back((tree_id, after, length));
+            // self.keys_history.push_back((tree_id, self.keys.clone()));
             self.current_id = tree_id;
         }
     }
 
+    // fn set_tree_id(&mut self, tree_id: TreeId) {
+    //     if tree_id != self.current_id {
+    //         // let length = self.keys.len() * 4;
+
+    //         // let slice = unsafe {
+    //         //     std::slice::from_raw_parts_mut(self.keys.as_mut_ptr() as *mut u8, length)
+    //         // };
+
+    //         // let after = zstd::block::compress(slice, 0).unwrap();
+    //         // println!("ORIGINAL_LEN={:?} COMPRESSED={:?}", length, after.len());
+
+    //         // println!("CLONING {:?} LEN={:?} CAP={:?}", tree_id, self.keys.len(), self.keys.capacity());
+    //         self.keys_history.insert(tree_id, self.keys.clone());
+    //         self.current_id = tree_id;
+    //     }
+    // }
+
     fn backtrack_to(&mut self, tree_id: TreeId) -> Result<bool, MerkleError> {
         if tree_id == self.current_id {
+            // self.current_id = tree_id;
+            // println!("CURRENT_TREE IS GOOD", );
             return Ok(false);
         }
 
+        // self.keys_history.insert(self.current_id, (self.current_operation_index, self.keys.clone()));
+
+        // self.current_id = tree_id;
+
         println!("#######################     BACKTRACE_TO {:?} CURRENT={:?}", tree_id, self.current_id);
 
-        let keys = self
-            .keys_history
-            .get(&tree_id)
-            .ok_or(MerkleError::TreeNotFoundInWorkingTree { tree_id })?
-            .clone();
+        let keys = self.firsts.get(&tree_id).or_else(|| self.keys_history.iter().find(|item| {
+            item.0 == tree_id
+        })).ok_or(MerkleError::TreeNotFoundInWorkingTree { tree_id })?
+          .clone();
 
-        self.keys = keys;
+        // let keys = self.keys_history.iter().find(|item| {
+        //     item.0 == tree_id
+        // }).ok_or(MerkleError::TreeNotFoundInWorkingTree { tree_id })?
+        //   .clone();
+
+        let length = keys.2;
+
+        let mut keys = zstd::block::decompress(&keys.1, length).unwrap();
+
+        let keys: &[u32] = unsafe {
+            std::slice::from_raw_parts(keys.as_mut_ptr() as *mut u32, length / 4)
+        };
+
+        // let (_, keys) = self
+        //     .keys_history
+        //     .get(&tree_id)
+        //     .ok_or(MerkleError::TreeNotFoundInWorkingTree { tree_id })?
+        //     .clone();
+
+        self.keys = keys.to_vec();
         self.current_id = tree_id;
 
         Ok(true)
@@ -796,7 +908,7 @@ impl IndexMut<usize> for Nodes {
 }
 
 pub struct NewMerkle {
-    nodes: Nodes,
+    pub nodes: Nodes,
     /// key value storage backend
     db: Box<ContextKeyValueStore>,
     hashes: HashMap<u64, EntryHash>,
@@ -1360,12 +1472,20 @@ impl NewMerkle {
         }
     }
 
-    pub fn set(&mut self, new_tree_id: TreeId, key: &ContextKey, value: ContextValue) {
+    pub fn set(
+        &mut self,
+        new_tree_id: TreeId,
+        key: &ContextKey,
+        value: ContextValue,
+        set_tree: bool,
+    ) {
         // let now = std::time::Instant::now();
         // let mut time_clone = None;
         // let mut time_insert = None;
 
         // println!("SET {:?}", key);
+
+        // self.nodes.set_tree_id(new_tree_id);
 
         let key_bytes = NodeKey::new(key);
 
@@ -1467,7 +1587,13 @@ impl NewMerkle {
             // aaa += 1;
         }
 
-        self.nodes.set_tree_id(new_tree_id);
+        // self.nodes.current_id = new_tree_id;
+
+        if set_tree {
+            self.nodes.set_tree_id(new_tree_id);
+        } else {
+            self.nodes.current_id = new_tree_id;
+        }
 
         // self.nodes.retain(|n| {
         //     if !n.removed == false {
@@ -1583,6 +1709,8 @@ impl NewMerkle {
         from_key: &ContextKey,
         to_key: &ContextKey,
     ) {
+        // self.nodes.set_tree_id(new_tree_id);
+
         let key_from_bytes = NodeKey::new(from_key);
         let key_to_bytes = NodeKey::new(to_key);
         // self.serialize();
@@ -1622,7 +1750,7 @@ impl NewMerkle {
         let mut new = self.nodes.clone_range(start, index);
         // let mut new = self.nodes[start..=index].to_vec();
 
-        self.delete(new_tree_id, to_key);
+        self.delete(None, to_key, true);
 
         // println!("COPY FROM {} TO {}", start, index);
 
@@ -1730,9 +1858,14 @@ impl NewMerkle {
 
     pub fn delete(
         &mut self,
-        new_tree_id: TreeId,
-        key: &ContextKey
+        new_tree_id: impl Into<Option<TreeId>>,
+        key: &ContextKey,
+        set_tree: bool,
     ) {
+        let new_tree_id = new_tree_id.into();
+
+        // self.nodes.set_tree_id(new_tree_id);
+
         let key_bytes = NodeKey::new(key);
 
         // println!("DELETE KEY={:?} TREE={:?} CURRENT_TREE={:?}", key, new_tree_id, self.nodes.current_id);
@@ -1763,10 +1896,12 @@ impl NewMerkle {
                 // return
                 // index
 
-                if cmp_array(&self.nodes[index].key.as_bytes(), key_bytes.as_bytes()) {
+                if self.nodes.len() > index && cmp_array(&self.nodes[index].key.as_bytes(), key_bytes.as_bytes()) {
                     index
                 } else {
-                    self.nodes.set_tree_id(new_tree_id);
+                    if let Some(new_tree_id) = new_tree_id {
+                        self.nodes.set_tree_id(new_tree_id);
+                    };
                     return;
                 }
             }
@@ -1806,7 +1941,15 @@ impl NewMerkle {
 
         self.nodes.retain(|n| !n.removed);
 
-        self.nodes.set_tree_id(new_tree_id);
+        if let Some(new_tree_id) = new_tree_id {
+            // self.nodes.current_id = new_tree_id;
+            if set_tree {
+                self.nodes.set_tree_id(new_tree_id);
+            } else {
+                self.nodes.current_id = new_tree_id;
+            }
+        };
+
     }
 
     /// Flush the working tree and and move to work on a certain commit from history.
@@ -1991,8 +2134,26 @@ impl NewMerkle {
         })
     }
 
+    // pub fn save_tree(&mut self, tree_id: TreeId) {
+    //     self.nodes.save_tree(tree_id)
+    // }
+
     pub fn working_tree_checkout(&mut self, tree_id: TreeId) -> Result<(), MerkleError> {
-        let changed = self.nodes.backtrack_to(tree_id)?;
+        let changed = match self.nodes.backtrack_to(tree_id) {
+            Ok(res) => {
+                // println!("================================================== TREE FOUND {:?}", tree_id);
+                res
+            },
+            Err(e) => {
+
+                // let remain: Vec<_> = self.nodes.keys_history.iter().map(|(k, _, _)| k).collect();
+                let remain: Vec<_> = self.nodes.keys_history.iter().map(|(k, _, _)| k).collect();
+
+                println!("TREE ID NOT FOUND {:?} REMAIN_LENGTH={:?} REMAIN={:?}", tree_id, remain.len(), remain);
+
+                false
+            }
+        };
 
         if changed {
             self.hashes = HashMap::new();
@@ -2074,28 +2235,28 @@ mod tests {
         let a_foo: &ContextKey = &vec!["a".to_string(), "foo".to_string()];
         let c_foo: &ContextKey = &vec!["c".to_string(), "foo".to_string()];
 
-        storage.set(0, &vec!["c".to_string(), "zoo".to_string()], vec![1, 2]);
-        storage.set(0, &vec!["a".to_string(), "goo".to_string()], vec![97, 98]); // TODO: goo should be removed because of the next line
-        storage.set(0, &vec!["a".to_string()], vec![97, 98]);
-        storage.set(0, &vec!["a".to_string(), "aaa".to_string()], vec![97, 98]);
-        storage.set(0, &vec!["c".to_string(), "foo".to_string()], vec![97, 98]);
-        storage.set(0, &vec!["c".to_string(), "foo".to_string()], vec![3, 4]);
-        storage.set(0, &vec!["a".to_string(), "foo".to_string()], vec![97, 98]);
-        storage.set(0, &vec!["b".to_string(), "abc".to_string()], vec![97, 98]);
-        storage.set(0, &vec!["c".to_string(), "moo".to_string()], vec![3, 4]);
-        storage.set(0, &vec!["a".to_string(), "foo".to_string(), "baa".to_string()], vec![97, 98]);
-        storage.set(0, &vec!["a".to_string(), "foo".to_string(), "abc".to_string()], vec![97, 98]);
+        storage.set(0, &vec!["c".to_string(), "zoo".to_string()], vec![1, 2], false);
+        storage.set(0, &vec!["a".to_string(), "goo".to_string()], vec![97, 98], false); // TODO: goo should be removed because of the next line
+        storage.set(0, &vec!["a".to_string()], vec![97, 98], false);
+        storage.set(0, &vec!["a".to_string(), "aaa".to_string()], vec![97, 98], false);
+        storage.set(0, &vec!["c".to_string(), "foo".to_string()], vec![97, 98], false);
+        storage.set(0, &vec!["c".to_string(), "foo".to_string()], vec![3, 4], false);
+        storage.set(0, &vec!["a".to_string(), "foo".to_string()], vec![97, 98], false);
+        storage.set(0, &vec!["b".to_string(), "abc".to_string()], vec![97, 98], false);
+        storage.set(0, &vec!["c".to_string(), "moo".to_string()], vec![3, 4], false);
+        storage.set(0, &vec!["a".to_string(), "foo".to_string(), "baa".to_string()], vec![97, 98], false);
+        storage.set(0, &vec!["a".to_string(), "foo".to_string(), "abc".to_string()], vec![97, 98], false);
 
-        storage.set(0, &vec!["b".to_string(), "o".to_string(), "f".to_string(), "e".to_string()], vec![97, 98]);
-        storage.set(0, &vec!["b".to_string(), "o".to_string(), "f".to_string(), "e1".to_string()], vec![97, 98]);
-        storage.set(0, &vec!["b".to_string(), "o".to_string(), "f".to_string(), "e2".to_string()], vec![97, 98]);
-        storage.set(0, &vec!["b".to_string(), "o".to_string(), "f".to_string(), "e3".to_string()], vec![97, 98]);
-        storage.set(0, &vec!["b".to_string(), "o".to_string(), "m".to_string(), "e4".to_string()], vec![97, 98]);
-        storage.set(0, &vec!["b".to_string(), "o".to_string(), "m".to_string(), "e5".to_string()], vec![97, 98]);
-        storage.set(0, &vec!["b".to_string(), "o".to_string(), "m".to_string(), "e5".to_string(), "aaaaa".to_string()], vec![97, 98]);
-        storage.set(0, &vec!["b".to_string(), "o".to_string(), "m".to_string(), "e5".to_string(), "bbbbb".to_string()], vec![97, 98]);
+        storage.set(0, &vec!["b".to_string(), "o".to_string(), "f".to_string(), "e".to_string()], vec![97, 98], false);
+        storage.set(0, &vec!["b".to_string(), "o".to_string(), "f".to_string(), "e1".to_string()], vec![97, 98], false);
+        storage.set(0, &vec!["b".to_string(), "o".to_string(), "f".to_string(), "e2".to_string()], vec![97, 98], false);
+        storage.set(0, &vec!["b".to_string(), "o".to_string(), "f".to_string(), "e3".to_string()], vec![97, 98], false);
+        storage.set(0, &vec!["b".to_string(), "o".to_string(), "m".to_string(), "e4".to_string()], vec![97, 98], false);
+        storage.set(0, &vec!["b".to_string(), "o".to_string(), "m".to_string(), "e5".to_string()], vec![97, 98], false);
+        storage.set(0, &vec!["b".to_string(), "o".to_string(), "m".to_string(), "e5".to_string(), "aaaaa".to_string()], vec![97, 98], false);
+        storage.set(0, &vec!["b".to_string(), "o".to_string(), "m".to_string(), "e5".to_string(), "bbbbb".to_string()], vec![97, 98], false);
 
-        storage.set(0, &vec!["g".to_string(), "o".to_string(), "m".to_string(), "e5".to_string(), "bbbbb".to_string()], vec![97, 98]);
+        storage.set(0, &vec!["g".to_string(), "o".to_string(), "m".to_string(), "e5".to_string(), "bbbbb".to_string()], vec![97, 98], false);
 
         storage.display();
 
@@ -2155,13 +2316,13 @@ mod tests {
         let a_foo: &ContextKey = &vec!["a".to_string(), "foo".to_string()];
         let c_foo: &ContextKey = &vec!["c".to_string(), "foo".to_string()];
 
-        storage.set(0, &vec!["c".to_string(), "zoo".to_string()], vec![1, 2]);
-        storage.set(0, &vec!["a".to_string(), "goo".to_string()], vec![97, 98]); // TODO: goo should be removed because of the next line
-        storage.set(0, &vec!["a".to_string()], vec![97, 98]);
-        storage.set(0, &vec!["a".to_string(), "aaa".to_string()], vec![97, 98]);
-        storage.set(0, &vec!["b".to_string(), "o".to_string(), "m".to_string(), "e5".to_string(), "bbbbb".to_string()], vec![97, 98]);
+        storage.set(0, &vec!["c".to_string(), "zoo".to_string()], vec![1, 2], false);
+        storage.set(0, &vec!["a".to_string(), "goo".to_string()], vec![97, 98], false); // TODO: goo should be removed because of the next line
+        storage.set(0, &vec!["a".to_string()], vec![97, 98], false);
+        storage.set(0, &vec!["a".to_string(), "aaa".to_string()], vec![97, 98], false);
+        storage.set(0, &vec!["b".to_string(), "o".to_string(), "m".to_string(), "e5".to_string(), "bbbbb".to_string()], vec![97, 98], false);
 
-        storage.set(0, &vec!["g".to_string(), "o".to_string(), "m".to_string(), "e5".to_string(), "bbbbb".to_string()], vec![97, 98]);
+        storage.set(0, &vec!["g".to_string(), "o".to_string(), "m".to_string(), "e5".to_string(), "bbbbb".to_string()], vec![97, 98], false);
         storage.nodes.retain(|n| !n.removed);
 
         println!("BEFORE APPLY", );
@@ -2222,14 +2383,14 @@ mod tests {
                 .unwrap(),
         );
 
-        storage.set(0, &vec!["a".to_string(), "goo".to_string()], vec![97, 98]); // TODO: goo should be removed because of the next line
-        storage.set(0, &vec!["a".to_string(), "aaa".to_string()], vec![97, 98]);
-        storage.set(0, &vec!["a".to_string(), "aaa".to_string(), "b".to_string()], vec![97, 98]);
-        storage.set(0, &vec!["a".to_string(), "aaa".to_string(), "c".to_string()], vec![97, 98]);
-        storage.set(0, &vec!["a".to_string(), "aaa".to_string(), "d".to_string()], vec![97, 98]);
-        storage.set(0, &vec!["a".to_string(), "bbb".to_string(), "d".to_string()], vec![97, 98]);
-        storage.set(0, &vec!["b".to_string(), "aaa".to_string()], vec![97, 98]);
-        storage.set(0, &vec!["b".to_string(), "ccc".to_string()], vec![97, 98]);
+        storage.set(0, &vec!["a".to_string(), "goo".to_string()], vec![97, 98], false); // TODO: goo should be removed because of the next line
+        storage.set(0, &vec!["a".to_string(), "aaa".to_string()], vec![97, 98], false);
+        storage.set(0, &vec!["a".to_string(), "aaa".to_string(), "b".to_string()], vec![97, 98], false);
+        storage.set(0, &vec!["a".to_string(), "aaa".to_string(), "c".to_string()], vec![97, 98], false);
+        storage.set(0, &vec!["a".to_string(), "aaa".to_string(), "d".to_string()], vec![97, 98], false);
+        storage.set(0, &vec!["a".to_string(), "bbb".to_string(), "d".to_string()], vec![97, 98], false);
+        storage.set(0, &vec!["b".to_string(), "aaa".to_string()], vec![97, 98], false);
+        storage.set(0, &vec!["b".to_string(), "ccc".to_string()], vec![97, 98], false);
 
         storage.nodes.retain(|n| !n.removed);
 
@@ -2242,7 +2403,7 @@ mod tests {
         storage.get_working_tree_root_hash().unwrap();
         println!("ROOT_HASH DONE", );
 
-        storage.set(0, &vec!["a".to_string(), "aaa".to_string(), "d".to_string()], vec![97, 99]);
+        storage.set(0, &vec!["a".to_string(), "aaa".to_string(), "d".to_string()], vec![97, 99], false);
 
         println!("COMMIT", );
         let hash = storage.commit(1, "seb".to_string(), "ok".to_string());
@@ -2263,28 +2424,28 @@ mod tests {
         let a_foo: &ContextKey = &vec!["a".to_string(), "foo".to_string()];
         let c_foo: &ContextKey = &vec!["c".to_string(), "foo".to_string()];
 
-        storage.set(0, &vec!["c".to_string(), "zoo".to_string()], vec![1, 2]);
-        storage.set(0, &vec!["a".to_string(), "goo".to_string()], vec![97, 98]); // TODO: goo should be removed because of the next line
-        storage.set(0, &vec!["a".to_string()], vec![97, 98]);
-        storage.set(0, &vec!["a".to_string(), "aaa".to_string()], vec![97, 98]);
-        storage.set(0, &vec!["c".to_string(), "foo".to_string()], vec![97, 98]);
-        storage.set(0, &vec!["c".to_string(), "foo".to_string()], vec![3, 4]);
-        storage.set(0, &vec!["a".to_string(), "foo".to_string()], vec![97, 98]);
-        storage.set(0, &vec!["b".to_string(), "abc".to_string()], vec![97, 98]);
-        storage.set(0, &vec!["c".to_string(), "moo".to_string()], vec![3, 4]);
-        storage.set(0, &vec!["a".to_string(), "foo".to_string(), "baa".to_string()], vec![97, 98]);
-        storage.set(0, &vec!["a".to_string(), "foo".to_string(), "abc".to_string()], vec![97, 98]);
+        storage.set(0, &vec!["c".to_string(), "zoo".to_string()], vec![1, 2], false);
+        storage.set(0, &vec!["a".to_string(), "goo".to_string()], vec![97, 98], false); // TODO: goo should be removed because of the next line
+        storage.set(0, &vec!["a".to_string()], vec![97, 98], false);
+        storage.set(0, &vec!["a".to_string(), "aaa".to_string()], vec![97, 98], false);
+        storage.set(0, &vec!["c".to_string(), "foo".to_string()], vec![97, 98], false);
+        storage.set(0, &vec!["c".to_string(), "foo".to_string()], vec![3, 4], false);
+        storage.set(0, &vec!["a".to_string(), "foo".to_string()], vec![97, 98], false);
+        storage.set(0, &vec!["b".to_string(), "abc".to_string()], vec![97, 98], false);
+        storage.set(0, &vec!["c".to_string(), "moo".to_string()], vec![3, 4], false);
+        storage.set(0, &vec!["a".to_string(), "foo".to_string(), "baa".to_string()], vec![97, 98], false);
+        storage.set(0, &vec!["a".to_string(), "foo".to_string(), "abc".to_string()], vec![97, 98], false);
 
-        storage.set(0, &vec!["b".to_string(), "o".to_string(), "f".to_string(), "e".to_string()], vec![97, 98]);
-        storage.set(0, &vec!["b".to_string(), "o".to_string(), "f".to_string(), "e1".to_string()], vec![97, 98]);
-        storage.set(0, &vec!["b".to_string(), "o".to_string(), "f".to_string(), "e2".to_string()], vec![97, 98]);
-        storage.set(0, &vec!["b".to_string(), "o".to_string(), "f".to_string(), "e3".to_string()], vec![97, 98]);
-        storage.set(0, &vec!["b".to_string(), "o".to_string(), "m".to_string(), "e4".to_string()], vec![97, 98]);
-        storage.set(0, &vec!["b".to_string(), "o".to_string(), "m".to_string(), "e5".to_string()], vec![97, 98]);
-        storage.set(0, &vec!["b".to_string(), "o".to_string(), "m".to_string(), "e5".to_string(), "aaaaa".to_string()], vec![97, 98]);
-        storage.set(0, &vec!["b".to_string(), "o".to_string(), "m".to_string(), "e5".to_string(), "bbbbb".to_string()], vec![97, 98]);
+        storage.set(0, &vec!["b".to_string(), "o".to_string(), "f".to_string(), "e".to_string()], vec![97, 98], false);
+        storage.set(0, &vec!["b".to_string(), "o".to_string(), "f".to_string(), "e1".to_string()], vec![97, 98], false);
+        storage.set(0, &vec!["b".to_string(), "o".to_string(), "f".to_string(), "e2".to_string()], vec![97, 98], false);
+        storage.set(0, &vec!["b".to_string(), "o".to_string(), "f".to_string(), "e3".to_string()], vec![97, 98], false);
+        storage.set(0, &vec!["b".to_string(), "o".to_string(), "m".to_string(), "e4".to_string()], vec![97, 98], false);
+        storage.set(0, &vec!["b".to_string(), "o".to_string(), "m".to_string(), "e5".to_string()], vec![97, 98], false);
+        storage.set(0, &vec!["b".to_string(), "o".to_string(), "m".to_string(), "e5".to_string(), "aaaaa".to_string()], vec![97, 98], false);
+        storage.set(0, &vec!["b".to_string(), "o".to_string(), "m".to_string(), "e5".to_string(), "bbbbb".to_string()], vec![97, 98], false);
 
-        storage.set(0, &vec!["g".to_string(), "o".to_string(), "m".to_string(), "e5".to_string(), "bbbbb".to_string()], vec![97, 98]);
+        storage.set(0, &vec!["g".to_string(), "o".to_string(), "m".to_string(), "e5".to_string(), "bbbbb".to_string()], vec![97, 98], false);
 
         storage.nodes.retain(|n| !n.removed);
         // storage.commit(1, "a".to_string(), "b".to_string());
@@ -2308,13 +2469,13 @@ mod tests {
     //     let a_foo: &ContextKey = &vec!["a".to_string(), "foo".to_string()];
     //     let c_foo: &ContextKey = &vec!["c".to_string(), "foo".to_string()];
 
-    //     storage.set(0, &vec!["c".to_string(), "zoo".to_string()], vec![1, 2]);
-    //     storage.set(0, &vec!["a".to_string(), "goo".to_string()], vec![97, 98]); // TODO: goo should be removed because of the next line
+    //     storage.set(0, &vec!["c".to_string(), "zoo".to_string()], vec![1, 2], false);
+    //     storage.set(0, &vec!["a".to_string(), "goo".to_string()], vec![97, 98]); // TODO: goo should be removed because of the next li, falsene
 
     //     println!("BEFORE", );
     //     storage.display();
 
-    //     storage.set(0, &vec!["a".to_string()], vec![97, 98]);
+    //     storage.set(0, &vec!["a".to_string()], vec![97, 98], false);
 
     //     println!("AFTER", );
     //     storage.display();
@@ -2331,7 +2492,7 @@ mod tests {
     //     assert_eq!(storage.dirmem(&key_a), false);
     //     assert_eq!(storage.dirmem(&key_ab), false);
     //     assert_eq!(storage.dirmem(&key_abc), false);
-    //     storage.set(0, key_abc, vec![1u8, 2u8]);
+    //     storage.set(0, key_abc, vec![1u8, 2u8], false);
     //     assert_eq!(storage.dirmem(&key_a), true);
     //     assert_eq!(storage.dirmem(&key_ab), true);
     //     assert_eq!(storage.dirmem(&key_abc), false);
@@ -2361,17 +2522,17 @@ mod tests {
         let a_foo: &ContextKey = &vec!["a".to_string(), "foo".to_string()];
         let c_foo: &ContextKey = &vec!["c".to_string(), "foo".to_string()];
         storage
-            .set(0, &vec!["a".to_string(), "foo".to_string()], vec![97, 98]);
+            .set(0, &vec!["a".to_string(), "foo".to_string()], vec![97, 98], false);
         storage
-            .set(0, &vec!["c".to_string(), "zoo".to_string()], vec![1, 2]);
+            .set(0, &vec!["c".to_string(), "zoo".to_string()], vec![1, 2], false);
         storage
-            .set(0, &vec!["c".to_string(), "foo".to_string()], vec![97, 98]);
+            .set(0, &vec!["c".to_string(), "foo".to_string()], vec![97, 98], false);
         storage
-            .delete(0, &vec!["c".to_string(), "zoo".to_string()]);
+            .delete(0, &vec!["c".to_string(), "zoo".to_string()], false);
         // now c/ is the same tree as a/ - which means there are two references to single entry in working tree
         // modify the tree and check that the other one was kept intact
         storage
-            .set(0, &vec!["c".to_string(), "foo".to_string()], vec![3, 4]);
+            .set(0, &vec!["c".to_string(), "foo".to_string()], vec![3, 4], false);
         let commit = storage
             .commit(0, "Tezos".to_string(), "Genesis".to_string());
 
@@ -2387,21 +2548,24 @@ mod tests {
                 0,
                 &vec!["a".to_string(), "foo".to_string()],
                 vec![97, 98, 99],
+                false
             ); // abc
         storage
-            .set(0, &vec!["b".to_string(), "boo".to_string()], vec![97, 98]);
+            .set(0, &vec!["b".to_string(), "boo".to_string()], vec![97, 98], false);
         storage
             .set(
                 0,
                 &vec!["a".to_string(), "aaa".to_string()],
                 vec![97, 98, 99, 100],
+                false,
             );
-        storage.set(0, &vec!["x".to_string()], vec![97]);
+        storage.set(0, &vec!["x".to_string()], vec![97], false);
         storage
             .set(
                 0,
                 &vec!["one".to_string(), "two".to_string(), "three".to_string()],
                 vec![97],
+                false,
             );
         storage
             .commit(0, "Tezos".to_string(), "Genesis".to_string());
@@ -2414,13 +2578,13 @@ mod tests {
     fn test_commit_hash(kv_store_factory: &TestContextKvStoreFactoryInstance) {
         let mut storage = MerkleStorage::new(kv_store_factory.create("test_commit_hash").unwrap());
 
-        storage.set(0, &vec!["a".to_string()], vec![97, 98, 99]);
+        storage.set(0, &vec!["a".to_string()], vec![97, 98, 99], false);
 
         let commit = storage.commit(0, "Tezos".to_string(), "Genesis".to_string());
 
         assert_eq!([0xCF, 0x95, 0x18, 0x33], commit[0..4]);
 
-        storage.set(0, &vec!["data".to_string(), "x".to_string()], vec![97]);
+        storage.set(0, &vec!["data".to_string(), "x".to_string()], vec![97], false);
         let commit = storage.commit(0, "Tezos".to_string(), "".to_string());
 
         assert_eq!([0xCA, 0x7B, 0xC7, 0x02], commit[0..4]);
@@ -2441,6 +2605,7 @@ mod tests {
                 0,
                 &vec!["data".to_string(), "a".to_string(), "x".to_string()],
                 vec![97],
+                false,
             );
         println!("LAAAA");
         storage.display();
@@ -2456,6 +2621,7 @@ mod tests {
             .delete(
                 0,
                 &vec!["data".to_string(), "b".to_string(), "x".to_string()],
+                false,
             );
 
         storage.display();
@@ -2487,16 +2653,16 @@ mod tests {
         let res = storage.get(&vec!["a".to_string()]);
         assert_eq!(res.unwrap().is_empty(), true);
 
-        storage.set(0, key_abc, vec![1u8, 2u8]);
-        storage.set(0, key_abx, vec![3u8]);
+        storage.set(0, key_abc, vec![1u8, 2u8], false);
+        storage.set(0, key_abx, vec![3u8], false);
         assert_eq!(storage.get(&key_abc).unwrap(), vec![1u8, 2u8]);
         assert_eq!(storage.get(&key_abx).unwrap(), vec![3u8]);
         let commit1 = storage.commit(0, "".to_string(), "".to_string());
 
-        storage.set(0, key_az, vec![4u8]);
-        storage.set(0, key_abx, vec![5u8]);
-        storage.set(0, key_d, vec![6u8]);
-        storage.set(0, key_eab, vec![7u8]);
+        storage.set(0, key_az, vec![4u8], false);
+        storage.set(0, key_abx, vec![5u8], false);
+        storage.set(0, key_d, vec![6u8], false);
+        storage.set(0, key_eab, vec![7u8], false);
         assert_eq!(storage.get(key_az).unwrap(), vec![4u8]);
         assert_eq!(storage.get(key_abx).unwrap(), vec![5u8]);
         assert_eq!(storage.get(key_d).unwrap(), vec![6u8]);
@@ -2522,13 +2688,13 @@ mod tests {
 
         assert_eq!(storage.mem(&key_abc), false);
         assert_eq!(storage.mem(&key_abx), false);
-        storage.set(0, key_abc, vec![1u8, 2u8]);
+        storage.set(0, key_abc, vec![1u8, 2u8], false);
         assert_eq!(storage.mem(&key_abc), true);
         assert_eq!(storage.mem(&key_abx), false);
-        storage.set(0, key_abx, vec![3u8]);
+        storage.set(0, key_abx, vec![3u8], false);
         assert_eq!(storage.mem(&key_abc), true);
         assert_eq!(storage.mem(&key_abx), true);
-        storage.delete(0, key_abx);
+        storage.delete(0, key_abx, false);
         assert_eq!(storage.mem(&key_abc), true);
         assert_eq!(storage.mem(&key_abx), false);
     }
@@ -2543,11 +2709,11 @@ mod tests {
         assert_eq!(storage.dirmem(&key_a), false);
         assert_eq!(storage.dirmem(&key_ab), false);
         assert_eq!(storage.dirmem(&key_abc), false);
-        storage.set(0, key_abc, vec![1u8, 2u8]);
+        storage.set(0, key_abc, vec![1u8, 2u8], false);
         assert_eq!(storage.dirmem(&key_a), true);
         assert_eq!(storage.dirmem(&key_ab), true);
         assert_eq!(storage.dirmem(&key_abc), false);
-        storage.delete(0, key_abc);
+        storage.delete(0, key_abc, false);
         assert_eq!(storage.dirmem(&key_a), false);
         assert_eq!(storage.dirmem(&key_ab), false);
         assert_eq!(storage.dirmem(&key_abc), false);
@@ -2557,7 +2723,7 @@ mod tests {
         let mut storage = MerkleStorage::new(kv_store_factory.create("test_copy").unwrap());
 
         let key_abc: &ContextKey = &vec!["a".to_string(), "b".to_string(), "c".to_string()];
-        storage.set(0, key_abc, vec![1_u8]);
+        storage.set(0, key_abc, vec![1_u8], false);
 
         println!("BEFORE");
         storage.display();
@@ -2581,9 +2747,9 @@ mod tests {
 
         let key_abc: &ContextKey = &vec!["a".to_string(), "b".to_string(), "c".to_string()];
         let key_abx: &ContextKey = &vec!["a".to_string(), "b".to_string(), "x".to_string()];
-        storage.set(0, key_abc, vec![2_u8]);
-        storage.set(0, key_abx, vec![3_u8]);
-        storage.delete(0, key_abx);
+        storage.set(0, key_abc, vec![2_u8], false);
+        storage.set(0, key_abx, vec![3_u8], false);
+        storage.delete(0, key_abx, false);
         let commit1 = storage.commit(0, "".to_string(), "".to_string());
 
         assert!(storage.get_history(&commit1, &key_abx).is_err());
@@ -2597,9 +2763,9 @@ mod tests {
         );
 
         let key_abc: &ContextKey = &vec!["a".to_string(), "b".to_string(), "c".to_string()];
-        storage.set(0, key_abc, vec![2_u8]);
+        storage.set(0, key_abc, vec![2_u8], false);
         let commit1 = storage.commit(0, "".to_string(), "".to_string());
-        storage.delete(0, key_abc);
+        storage.delete(0, key_abc, false);
         let _commit2 = storage.commit(0, "".to_string(), "".to_string());
 
         assert_eq!(vec![2_u8], storage.get_history(&commit1, &key_abc).unwrap());
@@ -2614,11 +2780,11 @@ mod tests {
 
         let key_abc: &ContextKey = &vec!["a".to_string(), "b".to_string(), "c".to_string()];
         let key_abx: &ContextKey = &vec!["a".to_string(), "b".to_string(), "x".to_string()];
-        storage.set(0, key_abc, vec![2_u8]);
-        storage.set(0, key_abx, vec![3_u8]);
+        storage.set(0, key_abc, vec![2_u8], false);
+        storage.set(0, key_abx, vec![3_u8], false);
         storage.commit(0, "".to_string(), "".to_string());
 
-        storage.delete(0, key_abx);
+        storage.delete(0, key_abx, false);
         let commit2 = storage.commit(0, "".to_string(), "".to_string());
 
         assert!(storage.get_history(&commit2, &key_abx).is_err());
@@ -2630,16 +2796,16 @@ mod tests {
 
         let mut storage = MerkleStorage::new(kv_store_factory.create("test_checkout").unwrap());
 
-        storage.set(0, key_abc, vec![1u8]);
-        storage.set(0, key_abx, vec![2u8]);
+        storage.set(0, key_abc, vec![1u8], false);
+        storage.set(0, key_abx, vec![2u8], false);
 
         println!("BEFORE COMMIT1");
         storage.display();
 
         let commit1 = storage.commit(0, "".to_string(), "".to_string());
 
-        storage.set(0, key_abc, vec![3u8]);
-        storage.set(0, key_abx, vec![4u8]);
+        storage.set(0, key_abc, vec![3u8], false);
+        storage.set(0, key_abx, vec![4u8], false);
         let commit2 = storage.commit(0, "".to_string(), "".to_string());
 
         storage.checkout(&commit1).unwrap();
@@ -2649,7 +2815,7 @@ mod tests {
         assert_eq!(storage.get(&key_abc).unwrap(), vec![1u8]);
         assert_eq!(storage.get(&key_abx).unwrap(), vec![2u8]);
         // this set be wiped by checkout
-        storage.set(0, key_abc, vec![8u8]);
+        storage.set(0, key_abc, vec![8u8], false);
 
         storage.checkout(&commit2).unwrap();
         assert_eq!(storage.get(&key_abc).unwrap(), vec![3u8]);
@@ -2907,8 +3073,8 @@ mod tests {
         let a_foo: &ContextKey = &vec!["a".to_string(), "foo".to_string()];
         let c_foo: &ContextKey = &vec!["c".to_string(), "foo".to_string()];
 
-        storage.set(0, &vec!["c".to_string(), "zoo".to_string()], vec![1, 2]);
-        storage.set(0, &vec!["a".to_string(), "goo".to_string()], vec![97, 98]); // TODO: goo should be removed because of the next line
+        storage.set(0, &vec!["c".to_string(), "zoo".to_string()], vec![1, 2], false);
+        storage.set(0, &vec!["a".to_string(), "goo".to_string()], vec![97, 98], false); // TODO: goo should be removed because of the next line
 
         // let nodes = Nodes::new();
         // nodes.insert(0, Node {

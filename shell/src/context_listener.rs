@@ -188,6 +188,21 @@ fn listen_protocol_events(
                 break;
             }
             Ok(action) => {
+
+                // println!("ACTION_RECEIVED={:?}", match action {
+                //     ContextAction::Set { .. } => "Set",
+                //     ContextAction::Delete { .. } => "Delete",
+                //     ContextAction::RemoveRecursively { .. } => "RemoveRecursively",
+                //     ContextAction::Copy { .. } => "Copy",
+                //     ContextAction::Checkout { .. } => "Checkout",
+                //     ContextAction::Commit { .. } => "Commit",
+                //     ContextAction::Mem { .. } => "Mem",
+                //     ContextAction::DirMem { .. } => "DirMem",
+                //     ContextAction::Get { .. } => "Get",
+                //     ContextAction::Fold { .. } => "Fold",
+                //     ContextAction::Shutdown { .. } => "Shutdown"
+                // });
+
                 // record actions
                 for recorder in context_action_recorders.iter_mut() {
                     if let Err(error) = recorder.record(&action) {

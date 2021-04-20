@@ -118,3 +118,30 @@ pub fn get_tree_id(action: &ContextAction) -> Option<TreeId> {
         ContextAction::Checkout { .. } | ContextAction::Shutdown => None,
     }
 }
+
+pub fn get_new_tree_id(action: &ContextAction) -> Option<TreeId> {
+    match &action {
+        | ContextAction::Set { new_tree_id, .. }
+        | ContextAction::Copy { new_tree_id, .. }
+        | ContextAction::Delete { new_tree_id, .. }
+        | ContextAction::RemoveRecursively { new_tree_id, .. } => Some(*new_tree_id),
+        _ => None
+    }
+}
+
+pub fn get_operation_hash(action: &ContextAction) -> Option<Vec<u8>> {
+    match &action {
+        ContextAction::Get { operation_hash, .. }
+        | ContextAction::Mem { operation_hash, .. }
+        | ContextAction::DirMem { operation_hash, .. }
+        | ContextAction::Set { operation_hash, .. }
+        | ContextAction::Copy { operation_hash, .. }
+        | ContextAction::Delete { operation_hash, .. }
+        | ContextAction::RemoveRecursively { operation_hash, .. }
+        // | ContextAction::Commit { operation_hash, .. }
+        | ContextAction::Fold { operation_hash, .. } => operation_hash.clone(),
+        ContextAction::Checkout { .. }
+        | ContextAction::Shutdown => None,
+        | ContextAction::Commit { .. } => None,
+    }
+}
