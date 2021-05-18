@@ -1,7 +1,7 @@
 // Copyright (c) SimpleStaking and Tezedge Contributors
 // SPDX-License-Identifier: MIT
 
-use std::collections::HashMap;
+use std::{collections::HashMap, fs::File, io::Write};
 
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use crypto::hash::{BlockHash, ContextHash, OperationHash};
@@ -208,6 +208,7 @@ impl ActionStats {
 }
 
 struct Timing {
+    log: std::fs::File,
     current_block: Option<(HashId, BlockHash)>,
     current_operation: Option<(HashId, OperationHash)>,
     current_context: Option<(HashId, ContextHash)>,
@@ -267,7 +268,8 @@ fn start_timing(recv: Receiver<TimingMessage>) {
 
     let mut timing = Timing::new(db_path);
 
-    for msg in recv {
+    for msg in &recv {
+        timing.log.write_all(format!("LEN={:?} MSG={:?}", recv.len(), msg).as_bytes()).unwrap();
         if let Err(_err) = timing.process_msg(msg) {
             // TODO: log error, and retry
         }
@@ -289,7 +291,10 @@ impl Timing {
     fn new(db_path: Option<String>) -> Timing {
         let sql = Self::init_sqlite(db_path).unwrap();
 
+        let log = File::create("/tmp/timing_log.txt").unwrap();
+
         Timing {
+            log,
             current_block: None,
             current_operation: None,
             current_context: None,
