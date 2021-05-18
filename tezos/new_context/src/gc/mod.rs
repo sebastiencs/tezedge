@@ -12,7 +12,7 @@ use failure::Fail;
 
 use crypto::hash::{FromBytesError, HashType};
 
-use crate::hash::{hash_entry, HashingError};
+use crate::hash::HashingError;
 use crate::persistent::{DBError, KeyValueStoreBackend};
 use crate::working_tree::Entry;
 use crate::{ContextKeyValueStoreSchema, EntryHash};
@@ -53,25 +53,27 @@ pub fn fetch_entry_from_store(
 
 pub fn collect_hashes_recursively(
     entry: &Entry,
+    entry_hash: &EntryHash,
     cache: HashMap<EntryHash, HashSet<EntryHash>>,
     store: &dyn KeyValueStoreBackend<ContextKeyValueStoreSchema>,
 ) -> Result<HashMap<EntryHash, HashSet<EntryHash>>, GarbageCollectionError> {
     let mut entries = HashSet::new();
     let mut c = cache;
-    collect_hashes(entry, &mut entries, &mut c, store)?;
+    collect_hashes(entry, entry_hash, &mut entries, &mut c, store)?;
     Ok(c)
 }
 
 /// collects entries from tree like structure recursively
 pub fn collect_hashes(
     entry: &Entry,
+    entry_hash: &EntryHash,
     batch: &mut HashSet<EntryHash>,
     cache: &mut HashMap<EntryHash, HashSet<EntryHash>>,
     store: &dyn KeyValueStoreBackend<ContextKeyValueStoreSchema>,
 ) -> Result<(), GarbageCollectionError> {
-    batch.insert(hash_entry(entry)?);
+    batch.insert(*entry_hash);
 
-    match cache.get(&hash_entry(entry)?) {
+    match cache.get(entry_hash) {
         // if we know subtree already lets just use it
         Some(v) => {
             batch.extend(v);
@@ -86,15 +88,15 @@ pub fn collect_hashes(
                     let mut b = HashSet::new();
                     for (_, child_node) in tree.iter() {
                         let entry = fetch_entry_from_store(store, child_node.entry_hash()?)?;
-                        collect_hashes(&entry, &mut b, cache, store)?;
+                        collect_hashes(&entry, entry_hash, &mut b, cache, store)?;
                     }
-                    cache.insert(hash_entry(entry)?, b.clone());
+                    cache.insert(*entry_hash, b.clone());
                     batch.extend(b);
                     Ok(())
                 }
                 Entry::Commit(commit) => {
                     let entry = fetch_entry_from_store(store, commit.root_hash)?;
-                    Ok(collect_hashes(&entry, batch, cache, store)?)
+                    Ok(collect_hashes(&entry, entry_hash, batch, cache, store)?)
                 }
             }
         }

@@ -411,6 +411,7 @@ impl<T: 'static + KeyValueStoreBackend<ContextKeyValueStoreSchema> + Send + Sync
             Entry::Commit { .. } => {
                 let cache = collect_hashes_recursively(
                     &commit_entry,
+                    &commit,
                     std::mem::take(&mut self.cache),
                     self.deref() as &dyn KeyValueStoreBackend<ContextKeyValueStoreSchema>,
                 )?;
@@ -419,7 +420,7 @@ impl<T: 'static + KeyValueStoreBackend<ContextKeyValueStoreSchema> + Send + Sync
                 if let Some(r) = reused {
                     self.mark_reused(r)?;
                 }
-                self.cache = cache.clone();
+                self.cache = cache;
                 Ok(())
             }
             _ => Err(GarbageCollectionError::GarbageCollectorError {

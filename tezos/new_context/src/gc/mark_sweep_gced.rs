@@ -77,7 +77,13 @@ impl<T: 'static + KeyValueStoreBackend<ContextKeyValueStoreSchema> + Default> Ma
         match commit_entry {
             Entry::Commit { .. } => {
                 let mut entries = HashSet::new();
-                collect_hashes(&commit_entry, &mut entries, &mut self.cache, &self.store)?;
+                collect_hashes(
+                    &commit_entry,
+                    &commit,
+                    &mut entries,
+                    &mut self.cache,
+                    &self.store,
+                )?;
 
                 // remove keys non used in current block
                 self.cache.retain(|k, _| entries.contains(k));
