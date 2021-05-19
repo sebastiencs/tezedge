@@ -169,7 +169,7 @@ ocaml_export! {
             index.block_applied(context_hash)
                 .map_err(|err| format!("{:?}", err))
         } else if let Some(0) = cycle_position {
-            index.cycle_started().map_err(|err| format!("{:?}", err))
+            index.cycle_started().map_err(|err| format!("BlockApplied->CycleStarted: {:?}", err))
         } else {
             Ok(())
         };
