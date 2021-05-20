@@ -1,7 +1,6 @@
 // Copyright (c) SimpleStaking and Tezedge Contributors
 // SPDX-License-Identifier: MIT
 
-use std::collections::HashMap;
 use std::collections::HashSet;
 use std::mem;
 use std::ops::{Deref, DerefMut};
@@ -10,7 +9,6 @@ use std::sync::{mpsc, Arc, Mutex, RwLock};
 use std::thread;
 use std::time::Duration;
 
-use crypto::hash::HashType;
 use failure::Error;
 
 use crate::hash::EntryHash;
@@ -18,10 +16,7 @@ use crate::persistent::database::DBError;
 use crate::persistent::KeyValueStoreBackend;
 use crate::working_tree::Entry;
 use crate::{
-    gc::{
-        collect_hashes_recursively, fetch_entry_from_store, GarbageCollectionError,
-        GarbageCollector,
-    },
+    gc::{GarbageCollectionError, GarbageCollector},
     persistent::{Flushable, Persistable},
 };
 use crate::{ContextKeyValueStoreSchema, ContextValue};
@@ -104,7 +99,6 @@ pub struct MarkMoveGCed<T: KeyValueStoreBackend<ContextKeyValueStoreSchema>> {
     _thread: thread::JoinHandle<()>,
     /// Channel to communicate with GC thread from main thread
     msg: Mutex<mpsc::Sender<CmdMsg>>,
-    cache: HashMap<EntryHash, HashSet<EntryHash>>,
 }
 
 impl<T: 'static + KeyValueStoreBackend<ContextKeyValueStoreSchema> + Send + Sync + Default>
@@ -134,7 +128,6 @@ impl<T: 'static + KeyValueStoreBackend<ContextKeyValueStoreSchema> + Send + Sync
             is_busy: busy_ref,
             msg_cnt: msg_cnt_ref,
             current: Default::default(),
-            cache: HashMap::new(),
         }
     }
 
@@ -405,38 +398,9 @@ impl<T: 'static + KeyValueStoreBackend<ContextKeyValueStoreSchema> + Send + Sync
         self.new_cycle_started()
     }
 
-    fn block_applied(&mut self, commit: EntryHash) -> Result<(), GarbageCollectionError> {
-        let commit_entry = fetch_entry_from_store(
-            self.deref() as &dyn KeyValueStoreBackend<ContextKeyValueStoreSchema>,
-            &commit,
-            "*commit*",
-        )?;
-
-        match commit_entry {
-            Entry::Commit { .. } => {
-                let mut path = String::with_capacity(1024);
-                let cache = collect_hashes_recursively(
-                    &commit_entry,
-                    &commit,
-                    std::mem::take(&mut self.cache),
-                    self.deref() as &dyn KeyValueStoreBackend<ContextKeyValueStoreSchema>,
-                    &mut path,
-                )?;
-
-                let reused = cache.get(&commit);
-                if let Some(r) = reused {
-                    self.mark_reused(r)?;
-                }
-                self.cache = cache;
-                Ok(())
-            }
-            _ => Err(GarbageCollectionError::GarbageCollectorError {
-                error: format!(
-                    "{} is not a commit",
-                    HashType::ContextHash.hash_to_b58check(&commit)?
-                ),
-            }),
-        }
+    fn block_applied(&mut self, entries: HashSet<EntryHash>) -> Result<(), GarbageCollectionError> {
+        self.mark_reused(&entries)?;
+        Ok(())
     }
 }
 
