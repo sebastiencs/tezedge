@@ -408,7 +408,7 @@ impl<T: 'static + KeyValueStoreBackend<ContextKeyValueStoreSchema> + Send + Sync
     fn block_applied(&mut self, commit: EntryHash) -> Result<(), GarbageCollectionError> {
         let commit_entry = fetch_entry_from_store(
             self.deref() as &dyn KeyValueStoreBackend<ContextKeyValueStoreSchema>,
-            commit,
+            &commit,
             "*commit*",
         )?;
 

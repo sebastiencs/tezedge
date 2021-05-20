@@ -41,12 +41,12 @@ impl<T: NotGarbageCollected> GarbageCollector for T {
 /// helper function for fetching and deserializing entry from the store
 pub fn fetch_entry_from_store(
     store: &dyn KeyValueStoreBackend<ContextKeyValueStoreSchema>,
-    hash: EntryHash,
+    hash: &EntryHash,
     path: &str,
 ) -> Result<Entry, GarbageCollectionError> {
     match store.get(&hash)? {
         None => Err(GarbageCollectionError::EntryNotFound {
-            hash: HashType::ContextHash.hash_to_b58check(&hash)?,
+            hash: HashType::ContextHash.hash_to_b58check(hash)?,
             path: path.to_string(),
         }),
         Some(entry_bytes) => Ok(bincode::deserialize(&entry_bytes)?),
@@ -94,7 +94,7 @@ pub fn collect_hashes(
                         let base_len = path.len();
                         path.push('/');
                         path.push_str(&fragment.0);
-                        let entry = fetch_entry_from_store(store, child_node.entry_hash()?, path)?;
+                        let entry = fetch_entry_from_store(store, &child_node.entry_hash()?, path)?;
                         collect_hashes(&entry, entry_hash, &mut b, cache, store, path)?;
                         path.truncate(base_len);
                     }
@@ -103,9 +103,9 @@ pub fn collect_hashes(
                     Ok(())
                 }
                 Entry::Commit(commit) => {
-                    let entry = fetch_entry_from_store(store, commit.root_hash, "/")?;
+                    let entry = fetch_entry_from_store(store, &commit.root_hash, "/")?;
                     Ok(collect_hashes(
-                        &entry, entry_hash, batch, cache, store, path,
+                        &entry, &commit.root_hash, batch, cache, store, path,
                     )?)
                 }
             }
