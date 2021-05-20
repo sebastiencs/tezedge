@@ -91,11 +91,12 @@ pub fn collect_hashes(
                     // anywhere in the recursion paths. TODO: is revert possible?
                     let mut b = HashSet::new();
                     for (fragment, child_node) in tree.iter() {
+                        let child_entry_hash = &child_node.entry_hash()?;
                         let base_len = path.len();
                         path.push('/');
                         path.push_str(&fragment.0);
-                        let entry = fetch_entry_from_store(store, &child_node.entry_hash()?, path)?;
-                        collect_hashes(&entry, entry_hash, &mut b, cache, store, path)?;
+                        let child_entry = fetch_entry_from_store(store, child_entry_hash, path)?;
+                        collect_hashes(&child_entry, child_entry_hash, &mut b, cache, store, path)?;
                         path.truncate(base_len);
                     }
                     cache.insert(*entry_hash, b.clone());
@@ -103,9 +104,9 @@ pub fn collect_hashes(
                     Ok(())
                 }
                 Entry::Commit(commit) => {
-                    let entry = fetch_entry_from_store(store, &commit.root_hash, "/")?;
+                    let root_entry = fetch_entry_from_store(store, &commit.root_hash, "/")?;
                     Ok(collect_hashes(
-                        &entry,
+                        &root_entry,
                         &commit.root_hash,
                         batch,
                         cache,
