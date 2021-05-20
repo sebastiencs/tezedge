@@ -105,7 +105,12 @@ pub fn collect_hashes(
                 Entry::Commit(commit) => {
                     let entry = fetch_entry_from_store(store, &commit.root_hash, "/")?;
                     Ok(collect_hashes(
-                        &entry, &commit.root_hash, batch, cache, store, path,
+                        &entry,
+                        &commit.root_hash,
+                        batch,
+                        cache,
+                        store,
+                        path,
                     )?)
                 }
             }
