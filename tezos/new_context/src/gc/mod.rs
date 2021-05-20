@@ -42,10 +42,12 @@ impl<T: NotGarbageCollected> GarbageCollector for T {
 pub fn fetch_entry_from_store(
     store: &dyn KeyValueStoreBackend<ContextKeyValueStoreSchema>,
     hash: EntryHash,
+    path: &str,
 ) -> Result<Entry, GarbageCollectionError> {
     match store.get(&hash)? {
         None => Err(GarbageCollectionError::EntryNotFound {
             hash: HashType::ContextHash.hash_to_b58check(&hash)?,
+            path: path.to_string(),
         }),
         Some(entry_bytes) => Ok(bincode::deserialize(&entry_bytes)?),
     }
@@ -54,13 +56,13 @@ pub fn fetch_entry_from_store(
 pub fn collect_hashes_recursively(
     entry: &Entry,
     entry_hash: &EntryHash,
-    cache: HashMap<EntryHash, HashSet<EntryHash>>,
+    mut cache: HashMap<EntryHash, HashSet<EntryHash>>,
     store: &dyn KeyValueStoreBackend<ContextKeyValueStoreSchema>,
+    path: &mut String,
 ) -> Result<HashMap<EntryHash, HashSet<EntryHash>>, GarbageCollectionError> {
     let mut entries = HashSet::new();
-    let mut c = cache;
-    collect_hashes(entry, entry_hash, &mut entries, &mut c, store)?;
-    Ok(c)
+    collect_hashes(entry, entry_hash, &mut entries, &mut cache, store, path)?;
+    Ok(cache)
 }
 
 /// collects entries from tree like structure recursively
@@ -70,6 +72,7 @@ pub fn collect_hashes(
     batch: &mut HashSet<EntryHash>,
     cache: &mut HashMap<EntryHash, HashSet<EntryHash>>,
     store: &dyn KeyValueStoreBackend<ContextKeyValueStoreSchema>,
+    path: &mut String,
 ) -> Result<(), GarbageCollectionError> {
     batch.insert(*entry_hash);
 
@@ -83,20 +86,27 @@ pub fn collect_hashes(
             match entry {
                 Entry::Blob(_) => Ok(()),
                 Entry::Tree(tree) => {
+                    // FIXME: what is this comment about?
                     // Go through all descendants and gather errors. Remap error if there is a failure
                     // anywhere in the recursion paths. TODO: is revert possible?
                     let mut b = HashSet::new();
-                    for (_, child_node) in tree.iter() {
-                        let entry = fetch_entry_from_store(store, child_node.entry_hash()?)?;
-                        collect_hashes(&entry, entry_hash, &mut b, cache, store)?;
+                    for (fragment, child_node) in tree.iter() {
+                        let base_len = path.len();
+                        path.push('/');
+                        path.push_str(&fragment.0);
+                        let entry = fetch_entry_from_store(store, child_node.entry_hash()?, path)?;
+                        collect_hashes(&entry, entry_hash, &mut b, cache, store, path)?;
+                        path.truncate(base_len);
                     }
                     cache.insert(*entry_hash, b.clone());
                     batch.extend(b);
                     Ok(())
                 }
                 Entry::Commit(commit) => {
-                    let entry = fetch_entry_from_store(store, commit.root_hash)?;
-                    Ok(collect_hashes(&entry, entry_hash, batch, cache, store)?)
+                    let entry = fetch_entry_from_store(store, commit.root_hash, "/")?;
+                    Ok(collect_hashes(
+                        &entry, entry_hash, batch, cache, store, path,
+                    )?)
                 }
             }
         }
@@ -123,8 +133,8 @@ pub enum GarbageCollectionError {
     GarbageCollectorError { error: String },
     #[fail(display = "Mutex/lock lock error! Reason: {:?}", reason)]
     LockError { reason: String },
-    #[fail(display = "Entry not found in store: {:?}", hash)]
-    EntryNotFound { hash: String },
+    #[fail(display = "Entry not found in store: path={:?} hash={:?}", path, hash)]
+    EntryNotFound { hash: String, path: String },
     #[fail(display = "Failed to convert hash into string: {}", error)]
     HashToStringError { error: FromBytesError },
     #[fail(display = "Failed to encode hash: {}", error)]

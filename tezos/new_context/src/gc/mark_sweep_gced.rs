@@ -72,7 +72,8 @@ impl<T: 'static + KeyValueStoreBackend<ContextKeyValueStoreSchema> + Default> Ma
         &mut self,
         commit: EntryHash,
     ) -> Result<(), GarbageCollectionError> {
-        let commit_entry = fetch_entry_from_store(&self.store, commit)?;
+        let commit_entry = fetch_entry_from_store(&self.store, commit, "*commit*")?;
+        let mut path = String::with_capacity(1024);
 
         match commit_entry {
             Entry::Commit { .. } => {
@@ -83,6 +84,7 @@ impl<T: 'static + KeyValueStoreBackend<ContextKeyValueStoreSchema> + Default> Ma
                     &mut entries,
                     &mut self.cache,
                     &self.store,
+                    &mut path,
                 )?;
 
                 // remove keys non used in current block

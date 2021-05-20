@@ -376,17 +376,21 @@ fn kvstore_gc_thread_fn<T: KeyValueStoreBackend<ContextKeyValueStoreSchema>>(
                 match entry {
                     Entry::Blob(_) => {}
                     Entry::Tree(tree) => {
+                        // Push every entry in this directory
                         for node in tree.values() {
                             todo_keys.push(node.entry_hash()?);
                         }
                     }
                     Entry::Commit(commit) => {
+                        // Push the root tree for this commit
                         todo_keys.push(commit.root_hash);
                     }
                 }
             }
         }
 
+        // If we have reused key sets for more cycles than we want to keep, and we are
+        // done collecting the old cycle, we drop that set.
         if reused_keys.len() > len && reused_keys[0].is_empty() && todo_keys.is_empty() {
             drop(reused_keys.drain(..1));
             drop(stores.write()?.drain(..1));
@@ -405,15 +409,18 @@ impl<T: 'static + KeyValueStoreBackend<ContextKeyValueStoreSchema> + Send + Sync
         let commit_entry = fetch_entry_from_store(
             self.deref() as &dyn KeyValueStoreBackend<ContextKeyValueStoreSchema>,
             commit,
+            "*commit*",
         )?;
 
         match commit_entry {
             Entry::Commit { .. } => {
+                let mut path = String::with_capacity(1024);
                 let cache = collect_hashes_recursively(
                     &commit_entry,
                     &commit,
                     std::mem::take(&mut self.cache),
                     self.deref() as &dyn KeyValueStoreBackend<ContextKeyValueStoreSchema>,
+                    &mut path,
                 )?;
 
                 let reused = cache.get(&commit);
