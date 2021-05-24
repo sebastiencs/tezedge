@@ -446,7 +446,9 @@ fn make_replayed_blocks_non_applied(persistent_storage: &PersistentStorage, repl
     while let Ok(Some(mut block_meta)) = block_meta_storage.get(&block_hash) {
         if block_meta.is_applied() {
             block_meta.set_is_applied(false);
-            block_meta_storage.put(&block_hash, &block_meta);
+            block_meta_storage
+                .put(&block_hash, &block_meta)
+                .expect("Failed to make the replayed block non applied");
         }
 
         if Some(&block_hash) == replay.from.as_ref() {
