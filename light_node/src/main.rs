@@ -6,9 +6,11 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use configuration::Replay;
 use riker::actors::*;
 use slog::{debug, error, info, warn, Logger};
 
+use crypto::hash::BlockHash;
 use monitoring::{Monitor, WebsocketHandler};
 use networking::p2p::network_channel::NetworkChannel;
 use networking::ShellCompatibilityVersion;
@@ -24,12 +26,13 @@ use shell::peer_manager::PeerManager;
 use shell::shell_channel::{ShellChannel, ShellChannelTopic, ShuttingDown};
 use shell::state::head_state::init_current_head_state;
 use shell::state::synchronization_state::init_synchronization_bootstrap_state_storage;
-use storage::context::TezedgeContext;
-use storage::initializer::{
+use std::convert::TryFrom;
+use storage::{BlockMetaStorage, block_meta_storage::Meta, initializer::{
     initialize_merkle, initialize_rocksdb, GlobalRocksDbCacheHolder, MainChain, RocksDbCache,
-};
+}};
 use storage::persistent::sequence::Sequences;
 use storage::persistent::{open_cl, CommitLogSchema};
+use storage::{context::TezedgeContext, BlockStorageReader};
 use storage::{resolve_storage_init_chain_data, BlockStorage, PersistentStorage, StorageInitInfo};
 use tezos_api::environment;
 use tezos_api::environment::TezosEnvironmentConfiguration;
@@ -436,6 +439,27 @@ fn check_deprecated_network(env: &Environment, log: &Logger) {
     }
 }
 
+fn make_replayed_blocks_non_applied(persistent_storage: &PersistentStorage, replay: &Replay) {
+    let block_meta_storage = BlockMetaStorage::new(&persistent_storage);
+    let mut block_hash = replay.to.clone();
+
+    while let Ok(Some(mut block_meta)) = block_meta_storage.get(&block_hash) {
+        if block_meta.is_applied() {
+            block_meta.set_is_applied(false);
+            block_meta_storage.put(&block_hash, &block_meta);
+        }
+
+        if Some(&block_hash) == replay.from.as_ref() {
+            break;
+        }
+
+        block_hash = match block_meta.predecessor() {
+            Some(block) => block.clone(),
+            None => break,
+        }
+    }
+}
+
 fn main() {
     // Parses config + cli args
     let env = crate::configuration::Environment::from_args();
@@ -583,6 +607,10 @@ fn main() {
             &log,
         ) {
             Ok(init_data) => {
+                if let Some(replay) = env.replay.as_ref() {
+                    make_replayed_blocks_non_applied(&persistent_storage, replay);
+                };
+
                 info!(log, "Databases loaded successfully");
                 block_on_actors(
                     env,

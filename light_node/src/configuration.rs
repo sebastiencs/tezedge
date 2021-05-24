@@ -259,8 +259,8 @@ impl std::str::FromStr for LogFormat {
 
 #[derive(Debug, Clone)]
 pub struct Replay {
-    from: Option<BlockHash>,
-    to: BlockHash,
+    pub from: Option<BlockHash>,
+    pub to: BlockHash,
 }
 
 #[derive(Debug, Clone)]
