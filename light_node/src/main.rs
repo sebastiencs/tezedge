@@ -468,9 +468,7 @@ fn make_replayed_blocks_non_applied(
                 .expect("Failed to make the replayed block non applied");
         }
 
-        if (replay.from_block.as_ref() == Some(&block_hash)
-            // Don't include genesis
-            || block_meta.level() == 1)
+        if replay.from_block.as_ref() == Some(&block_hash) || block_meta.level() == 0
         {
             break;
         }
