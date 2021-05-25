@@ -259,8 +259,8 @@ impl std::str::FromStr for LogFormat {
 
 #[derive(Debug, Clone)]
 pub struct Replay {
-    pub from: Option<BlockHash>,
-    pub to: BlockHash,
+    pub from_block: Option<BlockHash>,
+    pub to_block: BlockHash,
 }
 
 #[derive(Debug, Clone)]
@@ -961,8 +961,8 @@ impl Environment {
             tezos_data_dir = target_path;
 
             Replay {
-                from: from_block,
-                to: to_block,
+                from_block,
+                to_block,
             }
         });
 

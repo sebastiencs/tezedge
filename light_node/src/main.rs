@@ -15,7 +15,7 @@ use monitoring::{Monitor, WebsocketHandler};
 use networking::p2p::network_channel::NetworkChannel;
 use networking::ShellCompatibilityVersion;
 use rpc::rpc_actor::RpcServer;
-use shell::chain_current_head_manager::ChainCurrentHeadManager;
+use shell::{chain_current_head_manager::ChainCurrentHeadManager, shell_channel::ShellChannelMsg};
 use shell::chain_feeder::ChainFeeder;
 use shell::chain_manager::ChainManager;
 use shell::context_listener::ContextListener;
@@ -170,6 +170,7 @@ fn block_on_actors(
     identity: Arc<Identity>,
     persistent_storage: PersistentStorage,
     tezedge_context: TezedgeContext,
+    blocks_replay: Option<Vec<Arc<BlockHash>>>,
     log: Logger,
 ) {
     // if feeding is started, than run chain manager
@@ -376,18 +377,29 @@ fn block_on_actors(
     // TODO: TE-386 - controlled startup
     std::thread::sleep(std::time::Duration::from_secs(2));
 
-    // and than open p2p and others
-    let _ = PeerManager::actor(
-        &actor_system,
-        network_channel,
-        shell_channel.clone(),
-        tokio_runtime.handle().clone(),
-        identity,
-        shell_compatibility_version,
-        env.p2p,
-        env.identity.expected_pow,
-    )
-    .expect("Failed to create peer manager");
+    if let Some(blocks) = blocks_replay {
+        shell_channel.tell(
+            Publish {
+                msg: ShellChannelMsg::Replay {
+                    blocks
+                },
+                topic: ShellChannelTopic::ShellCommands.into(),
+            },
+            None,
+        );
+    } else {
+        // and than open p2p and others
+        let _ = PeerManager::actor(
+            &actor_system,
+            network_channel,
+            shell_channel.clone(),
+            tokio_runtime.handle().clone(),
+            identity,
+            shell_compatibility_version,
+            env.p2p,
+            env.identity.expected_pow,
+        ).expect("Failed to create peer manager");
+    }
 
     info!(log, "Actors initialized");
 
@@ -439,11 +451,14 @@ fn check_deprecated_network(env: &Environment, log: &Logger) {
     }
 }
 
-fn make_replayed_blocks_non_applied(persistent_storage: &PersistentStorage, replay: &Replay) {
+fn make_replayed_blocks_non_applied(persistent_storage: &PersistentStorage, replay: &Replay) -> Vec<Arc<BlockHash>> {
     let block_meta_storage = BlockMetaStorage::new(&persistent_storage);
-    let mut block_hash = replay.to.clone();
+    let mut block_hash = replay.to_block.clone();
+    let mut blocks = Vec::new();
 
     while let Ok(Some(mut block_meta)) = block_meta_storage.get(&block_hash) {
+        blocks.push(Arc::new(block_hash.clone()));
+
         if block_meta.is_applied() {
             block_meta.set_is_applied(false);
             block_meta_storage
@@ -451,7 +466,7 @@ fn make_replayed_blocks_non_applied(persistent_storage: &PersistentStorage, repl
                 .expect("Failed to make the replayed block non applied");
         }
 
-        if Some(&block_hash) == replay.from.as_ref() {
+        if replay.from_block.as_ref() == Some(&block_hash) {
             break;
         }
 
@@ -460,6 +475,9 @@ fn make_replayed_blocks_non_applied(persistent_storage: &PersistentStorage, repl
             None => break,
         }
     }
+
+    blocks.reverse();
+    blocks
 }
 
 fn main() {
@@ -609,8 +627,11 @@ fn main() {
             &log,
         ) {
             Ok(init_data) => {
+                let mut blocks_replay = None;
+
                 if let Some(replay) = env.replay.as_ref() {
-                    make_replayed_blocks_non_applied(&persistent_storage, replay);
+                    let blocks = make_replayed_blocks_non_applied(&persistent_storage, replay);
+                    blocks_replay = Some(blocks);
                 };
 
                 info!(log, "Databases loaded successfully");
@@ -621,6 +642,7 @@ fn main() {
                     Arc::new(tezos_identity),
                     persistent_storage,
                     tezedge_context,
+                    blocks_replay,
                     log,
                 )
             }
