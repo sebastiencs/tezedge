@@ -380,9 +380,7 @@ fn block_on_actors(
     if let Some(blocks) = blocks_replay {
         shell_channel.tell(
             Publish {
-                msg: ShellChannelMsg::Replay {
-                    blocks
-                },
+                msg: ShellChannelMsg::Replay { blocks },
                 topic: ShellChannelTopic::ShellCommands.into(),
             },
             None,
@@ -398,7 +396,8 @@ fn block_on_actors(
             shell_compatibility_version,
             env.p2p,
             env.identity.expected_pow,
-        ).expect("Failed to create peer manager");
+        )
+        .expect("Failed to create peer manager");
     }
 
     info!(log, "Actors initialized");
@@ -451,7 +450,10 @@ fn check_deprecated_network(env: &Environment, log: &Logger) {
     }
 }
 
-fn make_replayed_blocks_non_applied(persistent_storage: &PersistentStorage, replay: &Replay) -> Vec<Arc<BlockHash>> {
+fn make_replayed_blocks_non_applied(
+    persistent_storage: &PersistentStorage,
+    replay: &Replay,
+) -> Vec<Arc<BlockHash>> {
     let block_meta_storage = BlockMetaStorage::new(&persistent_storage);
     let mut block_hash = replay.to_block.clone();
     let mut blocks = Vec::new();
@@ -466,7 +468,10 @@ fn make_replayed_blocks_non_applied(persistent_storage: &PersistentStorage, repl
                 .expect("Failed to make the replayed block non applied");
         }
 
-        if replay.from_block.as_ref() == Some(&block_hash) {
+        if (replay.from_block.as_ref() == Some(&block_hash)
+            // Don't include genesis
+            || block_meta.level() == 1)
+        {
             break;
         }
 
