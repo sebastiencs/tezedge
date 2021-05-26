@@ -38,6 +38,7 @@ use tezos_messages::p2p::encoding::prelude::*;
 use tezos_messages::Head;
 use tezos_wrapper::TezosApiConnectionPool;
 
+use crate::chain_feeder::ChainFeederRef;
 use crate::mempool::mempool_channel::{
     MempoolChannelRef, MempoolChannelTopic, MempoolOperationReceived,
 };
@@ -58,7 +59,6 @@ use crate::state::StateError;
 use crate::subscription::*;
 use crate::utils::{dispatch_condvar_result, CondvarResult};
 use crate::validation;
-use crate::chain_feeder::ChainFeederRef;
 
 /// How often to ask all connected peers for current head
 const ASK_CURRENT_HEAD_INTERVAL: Duration = Duration::from_secs(90);

@@ -3,7 +3,6 @@
 
 // TODO - TE-261: there is a bunch of context stuff here, remove
 
-use std::convert::TryFrom;
 use std::env;
 use std::ffi::OsString;
 use std::fs;
@@ -688,11 +687,7 @@ pub fn tezos_app() -> App<'static, 'static> {
                      .display_order(0)
                      .help("Block from which we start the replay")
                      .validator(|value| {
-                         if BlockHash::try_from(value.as_str()).is_ok() {
-                             Ok(())
-                         } else {
-                             Err(format!("Block hash not valid"))
-                         }
+                         value.parse::<BlockHash>().map(|_| ()).map_err(|_| format!("Block hash not valid"))
                      })
                 )
                 .arg(Arg::with_name("to-block")
@@ -703,11 +698,7 @@ pub fn tezos_app() -> App<'static, 'static> {
                      .required(true)
                      .help("Replay until this block")
                      .validator(|value| {
-                         if BlockHash::try_from(value.as_str()).is_ok() {
-                             Ok(())
-                         } else {
-                             Err(format!("Block hash not valid"))
-                         }
+                         value.parse::<BlockHash>().map(|_| ()).map_err(|_| format!("Block hash not valid"))
                      })
                 )
                 .arg(Arg::with_name("target-path")

@@ -14,7 +14,7 @@ use monitoring::{Monitor, WebsocketHandler};
 use networking::p2p::network_channel::NetworkChannel;
 use networking::ShellCompatibilityVersion;
 use rpc::rpc_actor::RpcServer;
-use shell::{chain_feeder::ChainFeeder, state::{ApplyBlockBatch, data_requester::{DataRequester, DataRequesterRef}}};
+use shell::chain_current_head_manager::ChainCurrentHeadManager;
 use shell::chain_manager::ChainManager;
 use shell::context_listener::ContextListener;
 use shell::mempool::init_mempool_state_storage;
@@ -24,17 +24,22 @@ use shell::peer_manager::PeerManager;
 use shell::shell_channel::{ShellChannel, ShellChannelTopic, ShuttingDown};
 use shell::state::head_state::init_current_head_state;
 use shell::state::synchronization_state::init_synchronization_bootstrap_state_storage;
-use shell::chain_current_head_manager::ChainCurrentHeadManager;
-use storage::{OperationsMetaStorage, persistent::sequence::Sequences};
+use shell::{
+    chain_feeder::ChainFeeder,
+    state::{
+        data_requester::{DataRequester, DataRequesterRef},
+        ApplyBlockBatch,
+    },
+};
+use storage::context::TezedgeContext;
 use storage::persistent::{open_cl, CommitLogSchema};
 use storage::{
     initializer::{
         initialize_merkle, initialize_rocksdb, GlobalRocksDbCacheHolder, MainChain, RocksDbCache,
     },
-    BlockMetaStorage,
-    Replay,
+    BlockMetaStorage, Replay,
 };
-use storage::context::TezedgeContext;
+use storage::{persistent::sequence::Sequences, OperationsMetaStorage};
 use storage::{resolve_storage_init_chain_data, BlockStorage, PersistentStorage, StorageInitInfo};
 use tezos_api::environment;
 use tezos_api::environment::TezosEnvironmentConfiguration;
@@ -378,7 +383,7 @@ fn block_on_actors(
             env.rpc.websocket_address,
             log.clone(),
         )
-            .expect("Failed to start websocket actor");
+        .expect("Failed to start websocket actor");
         let _ = Monitor::actor(
             &actor_system,
             network_channel.clone(),
@@ -387,7 +392,7 @@ fn block_on_actors(
             persistent_storage.clone(),
             init_storage_data.chain_id.clone(),
         )
-            .expect("Failed to create monitor actor");
+        .expect("Failed to create monitor actor");
 
         // TODO: TE-386 - controlled startup
         std::thread::sleep(std::time::Duration::from_secs(2));
@@ -485,7 +490,7 @@ fn collect_replayed_blocks(
     match (from_block, blocks.get(0)) {
         (Some(block), first) if blocks.is_empty() || block != &**first.unwrap() => {
             panic!("Unable to find block {:?}", block);
-        },
+        }
         (None, _) if !first_block_reached => {
             panic!("Unable to find first block");
         }

@@ -667,7 +667,9 @@ fn feed_chain_to_protocol(
                     )> = None;
 
                     // lets apply blocks in order
-                    for (index, block_to_apply) in batch.take_all_blocks_to_apply().into_iter().enumerate() {
+                    for (index, block_to_apply) in
+                        batch.take_all_blocks_to_apply().into_iter().enumerate()
+                    {
                         debug!(log, "Applying block";
                                     "block_header_hash" => block_to_apply.to_base58_check(), "chain_id" => chain_id.to_base58_check());
 
@@ -905,7 +907,11 @@ fn _apply_block(
     // we need to check and wait for context_hash to be 100% sure, that everything is ok
     let context_wait_timer = Instant::now();
     // TODO - TE-261: wait_for_context will not be needed anymore
-    wait_for_context(context, &apply_block_result.context_hash, storage_init_info.one_context)?;
+    wait_for_context(
+        context,
+        &apply_block_result.context_hash,
+        storage_init_info.one_context,
+    )?;
     let context_wait_elapsed = context_wait_timer.elapsed();
     if context_wait_elapsed.gt(&CONTEXT_WAIT_DURATION_LONG_TO_LOG) {
         info!(log, "Block was applied with long context processing";
