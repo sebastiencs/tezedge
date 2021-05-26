@@ -16,7 +16,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use failure::{format_err, Error, Fail};
 use riker::actors::*;
-use slog::{debug, info, warn, Logger};
+use slog::{debug, info, trace, warn, Logger};
 
 use crypto::hash::{BlockHash, ChainId, ContextHash};
 use storage::chain_meta_storage::ChainMetaStorageReader;
@@ -1073,7 +1073,7 @@ pub(crate) fn initialize_protocol_context(
         };
 
     let load_metadata_elapsed = load_metadata_timer.elapsed();
-    info!(log, "Looking for genesis if applied"; "need_commit_genesis" => need_commit_genesis);
+    trace!(log, "Looking for genesis if applied"; "need_commit_genesis" => need_commit_genesis);
 
     // initialize protocol context runtime
     let protocol_call_timer = Instant::now();
