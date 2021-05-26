@@ -36,7 +36,7 @@ use storage::initializer::{
     ContextActionsRocksDbTableInitializer, ContextKvStoreConfiguration,
     ContextRocksDbTableInitializer, DbsRocksDbTableInitializer, RocksDbConfig,
 };
-use storage::PersistentStorage;
+use storage::{PersistentStorage, Replay};
 use tezos_api::environment;
 use tezos_api::environment::{TezosEnvironment, ZcashParams};
 use tezos_api::ffi::{
@@ -255,12 +255,6 @@ impl std::str::FromStr for LogFormat {
             _ => Err(format!("Unsupported variant: {}", s)),
         }
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct Replay {
-    pub from_block: Option<BlockHash>,
-    pub to_block: BlockHash,
 }
 
 #[derive(Debug, Clone)]
@@ -963,6 +957,7 @@ impl Environment {
             Replay {
                 from_block,
                 to_block,
+                nblocks: 0,
             }
         });
 

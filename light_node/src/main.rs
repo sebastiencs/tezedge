@@ -6,7 +6,6 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use configuration::Replay;
 use riker::actors::*;
 use slog::{debug, error, info, warn, Logger};
 
@@ -15,8 +14,7 @@ use monitoring::{Monitor, WebsocketHandler};
 use networking::p2p::network_channel::NetworkChannel;
 use networking::ShellCompatibilityVersion;
 use rpc::rpc_actor::RpcServer;
-use shell::{chain_current_head_manager::ChainCurrentHeadManager, shell_channel::ShellChannelMsg};
-use shell::chain_feeder::ChainFeeder;
+use shell::{chain_feeder::ChainFeeder, state::{ApplyBlockBatch, data_requester::{DataRequester, DataRequesterRef}}};
 use shell::chain_manager::ChainManager;
 use shell::context_listener::ContextListener;
 use shell::mempool::init_mempool_state_storage;
@@ -26,13 +24,17 @@ use shell::peer_manager::PeerManager;
 use shell::shell_channel::{ShellChannel, ShellChannelTopic, ShuttingDown};
 use shell::state::head_state::init_current_head_state;
 use shell::state::synchronization_state::init_synchronization_bootstrap_state_storage;
-use std::convert::TryFrom;
-use storage::{BlockMetaStorage, block_meta_storage::Meta, initializer::{
-    initialize_merkle, initialize_rocksdb, GlobalRocksDbCacheHolder, MainChain, RocksDbCache,
-}};
-use storage::persistent::sequence::Sequences;
+use shell::chain_current_head_manager::ChainCurrentHeadManager;
+use storage::{OperationsMetaStorage, persistent::sequence::Sequences};
 use storage::persistent::{open_cl, CommitLogSchema};
-use storage::{context::TezedgeContext, BlockStorageReader};
+use storage::{
+    initializer::{
+        initialize_merkle, initialize_rocksdb, GlobalRocksDbCacheHolder, MainChain, RocksDbCache,
+    },
+    BlockMetaStorage,
+    Replay,
+};
+use storage::context::TezedgeContext;
 use storage::{resolve_storage_init_chain_data, BlockStorage, PersistentStorage, StorageInitInfo};
 use tezos_api::environment;
 use tezos_api::environment::TezosEnvironmentConfiguration;
@@ -170,7 +172,7 @@ fn block_on_actors(
     identity: Arc<Identity>,
     persistent_storage: PersistentStorage,
     tezedge_context: TezedgeContext,
-    blocks_replay: Option<Vec<Arc<BlockHash>>>,
+    mut blocks_replay: Option<Vec<Arc<BlockHash>>>,
     log: Logger,
 ) {
     // if feeding is started, than run chain manager
@@ -306,7 +308,7 @@ fn block_on_actors(
     .expect("Failed to create chain feeder");
     let _ = ChainManager::actor(
         &actor_system,
-        block_applier,
+        block_applier.clone(),
         network_channel.clone(),
         shell_channel.clone(),
         mempool_channel.clone(),
@@ -323,46 +325,14 @@ fn block_on_actors(
     )
     .expect("Failed to create chain manager");
 
-    if env.p2p.disable_mempool {
-        info!(log, "Mempool disabled");
-    } else {
-        info!(log, "Mempool enabled");
-        let _ = MempoolPrevalidator::actor(
-            &actor_system,
-            shell_channel.clone(),
-            mempool_channel.clone(),
-            &persistent_storage,
-            current_mempool_state_storage.clone(),
-            init_storage_data.chain_id.clone(),
-            tezos_readonly_api_pool.clone(),
-            log.clone(),
-        )
-        .expect("Failed to create mempool prevalidator");
-    }
-    let websocket_handler = WebsocketHandler::actor(
-        &actor_system,
-        tokio_runtime.handle().clone(),
-        env.rpc.websocket_address,
-        log.clone(),
-    )
-    .expect("Failed to start websocket actor");
-    let _ = Monitor::actor(
-        &actor_system,
-        network_channel.clone(),
-        websocket_handler,
-        shell_channel.clone(),
-        persistent_storage.clone(),
-        init_storage_data.chain_id.clone(),
-    )
-    .expect("Failed to create monitor actor");
     let _ = RpcServer::actor(
         &actor_system,
         shell_channel.clone(),
-        mempool_channel,
+        mempool_channel.clone(),
         ([0, 0, 0, 0], env.rpc.listener_port).into(),
         &tokio_runtime.handle(),
         &persistent_storage,
-        current_mempool_state_storage,
+        current_mempool_state_storage.clone(),
         &tezedge_context,
         tezos_readonly_api_pool.clone(),
         tezos_readonly_prevalidation_api_pool.clone(),
@@ -374,18 +344,54 @@ fn block_on_actors(
     )
     .expect("Failed to create RPC server");
 
-    // TODO: TE-386 - controlled startup
-    std::thread::sleep(std::time::Duration::from_secs(2));
+    if let Some(mut blocks) = blocks_replay.take() {
+        let chain_id = init_storage_data.chain_id.clone();
+        let starting_block = blocks.remove(0);
+        let batch = ApplyBlockBatch::batch(starting_block, blocks);
+        let requester = DataRequesterRef::new(DataRequester::new(
+            BlockMetaStorage::new(&persistent_storage),
+            OperationsMetaStorage::new(&persistent_storage),
+            block_applier,
+        ));
 
-    if let Some(blocks) = blocks_replay {
-        shell_channel.tell(
-            Publish {
-                msg: ShellChannelMsg::Replay { blocks },
-                topic: ShellChannelTopic::ShellCommands.into(),
-            },
-            None,
-        );
+        requester.call_schedule_apply_block(Arc::new(chain_id), batch, None);
     } else {
+        if env.p2p.disable_mempool {
+            info!(log, "Mempool disabled");
+        } else {
+            info!(log, "Mempool enabled");
+            let _ = MempoolPrevalidator::actor(
+                &actor_system,
+                shell_channel.clone(),
+                mempool_channel,
+                &persistent_storage,
+                current_mempool_state_storage,
+                init_storage_data.chain_id.clone(),
+                tezos_readonly_api_pool.clone(),
+                log.clone(),
+            )
+            .expect("Failed to create mempool prevalidator");
+        }
+        let websocket_handler = WebsocketHandler::actor(
+            &actor_system,
+            tokio_runtime.handle().clone(),
+            env.rpc.websocket_address,
+            log.clone(),
+        )
+            .expect("Failed to start websocket actor");
+        let _ = Monitor::actor(
+            &actor_system,
+            network_channel.clone(),
+            websocket_handler,
+            shell_channel.clone(),
+            persistent_storage.clone(),
+            init_storage_data.chain_id.clone(),
+        )
+            .expect("Failed to create monitor actor");
+
+        // TODO: TE-386 - controlled startup
+        std::thread::sleep(std::time::Duration::from_secs(2));
+
         // and than open p2p and others
         let _ = PeerManager::actor(
             &actor_system,
@@ -450,26 +456,21 @@ fn check_deprecated_network(env: &Environment, log: &Logger) {
     }
 }
 
-fn make_replayed_blocks_non_applied(
+fn collect_replayed_blocks(
     persistent_storage: &PersistentStorage,
     replay: &Replay,
 ) -> Vec<Arc<BlockHash>> {
     let block_meta_storage = BlockMetaStorage::new(&persistent_storage);
+    let from_block = replay.from_block.as_ref();
     let mut block_hash = replay.to_block.clone();
     let mut blocks = Vec::new();
+    let mut first_block_reached = false;
 
-    while let Ok(Some(mut block_meta)) = block_meta_storage.get(&block_hash) {
+    while let Ok(Some(block_meta)) = block_meta_storage.get(&block_hash) {
         blocks.push(Arc::new(block_hash.clone()));
 
-        if block_meta.is_applied() {
-            block_meta.set_is_applied(false);
-            block_meta_storage
-                .put(&block_hash, &block_meta)
-                .expect("Failed to make the replayed block non applied");
-        }
-
-        if replay.from_block.as_ref() == Some(&block_hash) || block_meta.level() == 0
-        {
+        first_block_reached = block_meta.level() == 1;
+        if from_block == Some(&block_hash) || first_block_reached {
             break;
         }
 
@@ -480,12 +481,23 @@ fn make_replayed_blocks_non_applied(
     }
 
     blocks.reverse();
+
+    match (from_block, blocks.get(0)) {
+        (Some(block), first) if blocks.is_empty() || block != &**first.unwrap() => {
+            panic!("Unable to find block {:?}", block);
+        },
+        (None, _) if !first_block_reached => {
+            panic!("Unable to find first block");
+        }
+        _ => {}
+    }
+
     blocks
 }
 
 fn main() {
     // Parses config + cli args
-    let env = crate::configuration::Environment::from_args();
+    let mut env = crate::configuration::Environment::from_args();
     let tezos_env = environment::TEZOS_ENV
         .get(&env.tezos_network)
         .unwrap_or_else(|| {
@@ -620,6 +632,13 @@ fn main() {
             persistent_storage.merkle(),
         );
 
+        let mut blocks_replay = None;
+        if let Some(replay) = env.replay.as_mut() {
+            let blocks = collect_replayed_blocks(&persistent_storage, replay);
+            replay.nblocks = blocks.len();
+            blocks_replay = Some(blocks);
+        };
+
         match resolve_storage_init_chain_data(
             &tezos_env,
             &env.storage.db_path,
@@ -627,16 +646,10 @@ fn main() {
             &env.storage.patch_context,
             env.storage.one_context,
             &env.storage.context_stats_db_path,
+            &env.replay,
             &log,
         ) {
             Ok(init_data) => {
-                let mut blocks_replay = None;
-
-                if let Some(replay) = env.replay.as_ref() {
-                    let blocks = make_replayed_blocks_non_applied(&persistent_storage, replay);
-                    blocks_replay = Some(blocks);
-                };
-
                 info!(log, "Databases loaded successfully");
                 block_on_actors(
                     env,
