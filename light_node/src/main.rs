@@ -330,14 +330,46 @@ fn block_on_actors(
     )
     .expect("Failed to create chain manager");
 
+    if env.p2p.disable_mempool {
+        info!(log, "Mempool disabled");
+    } else {
+        info!(log, "Mempool enabled");
+        let _ = MempoolPrevalidator::actor(
+            &actor_system,
+            shell_channel.clone(),
+            mempool_channel.clone(),
+            &persistent_storage,
+            current_mempool_state_storage.clone(),
+            init_storage_data.chain_id.clone(),
+            tezos_readonly_api_pool.clone(),
+            log.clone(),
+        )
+        .expect("Failed to create mempool prevalidator");
+    }
+    let websocket_handler = WebsocketHandler::actor(
+        &actor_system,
+        tokio_runtime.handle().clone(),
+        env.rpc.websocket_address,
+        log.clone(),
+    )
+    .expect("Failed to start websocket actor");
+    let _ = Monitor::actor(
+        &actor_system,
+        network_channel.clone(),
+        websocket_handler,
+        shell_channel.clone(),
+        persistent_storage.clone(),
+        init_storage_data.chain_id.clone(),
+    )
+    .expect("Failed to create monitor actor");
     let _ = RpcServer::actor(
         &actor_system,
         shell_channel.clone(),
-        mempool_channel.clone(),
+        mempool_channel,
         ([0, 0, 0, 0], env.rpc.listener_port).into(),
         &tokio_runtime.handle(),
         &persistent_storage,
-        current_mempool_state_storage.clone(),
+        current_mempool_state_storage,
         &tezedge_context,
         tezos_readonly_api_pool.clone(),
         tezos_readonly_prevalidation_api_pool.clone(),
@@ -361,39 +393,6 @@ fn block_on_actors(
 
         requester.call_schedule_apply_block(Arc::new(chain_id), batch, None);
     } else {
-        if env.p2p.disable_mempool {
-            info!(log, "Mempool disabled");
-        } else {
-            info!(log, "Mempool enabled");
-            let _ = MempoolPrevalidator::actor(
-                &actor_system,
-                shell_channel.clone(),
-                mempool_channel,
-                &persistent_storage,
-                current_mempool_state_storage,
-                init_storage_data.chain_id.clone(),
-                tezos_readonly_api_pool.clone(),
-                log.clone(),
-            )
-            .expect("Failed to create mempool prevalidator");
-        }
-        let websocket_handler = WebsocketHandler::actor(
-            &actor_system,
-            tokio_runtime.handle().clone(),
-            env.rpc.websocket_address,
-            log.clone(),
-        )
-        .expect("Failed to start websocket actor");
-        let _ = Monitor::actor(
-            &actor_system,
-            network_channel.clone(),
-            websocket_handler,
-            shell_channel.clone(),
-            persistent_storage.clone(),
-            init_storage_data.chain_id.clone(),
-        )
-        .expect("Failed to create monitor actor");
-
         // TODO: TE-386 - controlled startup
         std::thread::sleep(std::time::Duration::from_secs(2));
 
