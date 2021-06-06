@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::hash::{hash_entry, EntryHash, HashingError};
 use crate::ContextValue;
+use crate::gc::new_gc::{HashId, HashInterner};
 
 use self::working_tree::MerkleError;
 
@@ -71,7 +72,7 @@ pub struct Node {
     #[serde(default = "node_serialized")]
     pub commited: Cell<bool>,
     #[serde(serialize_with = "ensure_non_null_entry_hash")]
-    pub entry_hash: RefCell<Option<EntryHash>>,
+    pub entry_hash: RefCell<Option<HashId>>,
     #[serde(skip)]
     pub entry: RefCell<Option<Entry>>,
 }
@@ -83,8 +84,8 @@ fn node_serialized() -> Cell<bool> {
 
 #[derive(Debug, Hash, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct Commit {
-    pub(crate) parent_commit_hash: Option<EntryHash>,
-    pub(crate) root_hash: EntryHash,
+    pub(crate) parent_commit_hash: Option<HashId>,
+    pub(crate) root_hash: HashId,
     pub(crate) time: u64,
     pub(crate) author: String,
     pub(crate) message: String,
@@ -98,28 +99,57 @@ pub enum Entry {
 }
 
 impl Node {
-    pub fn entry_hash(&self) -> Result<EntryHash, HashingError> {
+    pub fn entry_hash(&self, hashes: &mut HashInterner) -> Result<EntryHash, HashingError> {
+        let hash_id = self.entry_hash_id(hashes)?;
+        Ok(hashes.get(hash_id).unwrap().clone())
+        // match &mut *self
+        //     .entry_hash
+        //     .try_borrow_mut()
+        //     .map_err(|_| HashingError::EntryBorrow)?
+        // {
+        //     Some(hash_id) => {
+        //         Ok(hashes.get(*hash_id).unwrap().clone())
+        //     },
+        //     entry_hash @ None => {
+        //         let hash_id = hash_entry(
+        //             self.entry
+        //                 .try_borrow()
+        //                 .map_err(|_| HashingError::EntryBorrow)?
+        //                 .as_ref()
+        //                 .ok_or(HashingError::MissingEntry)?,
+        //             hashes,
+        //         )?;
+        //         entry_hash.replace(hash_id);
+        //         Ok(hashes.get(hash_id).unwrap().clone())
+        //     }
+        // }
+    }
+
+    pub fn entry_hash_id(&self, hashes: &mut HashInterner) -> Result<HashId, HashingError> {
         match &mut *self
             .entry_hash
             .try_borrow_mut()
             .map_err(|_| HashingError::EntryBorrow)?
         {
-            Some(hash) => Ok(*hash),
+            Some(hash_id) => {
+                Ok(*hash_id)
+            },
             entry_hash @ None => {
-                let hash = hash_entry(
+                let hash_id = hash_entry(
                     self.entry
                         .try_borrow()
                         .map_err(|_| HashingError::EntryBorrow)?
                         .as_ref()
                         .ok_or(HashingError::MissingEntry)?,
+                    hashes,
                 )?;
-                entry_hash.replace(hash);
-                Ok(hash)
+                entry_hash.replace(hash_id);
+                Ok(hash_id)
             }
         }
     }
 
-    pub fn get_hash(&self) -> Result<EntryHash, MerkleError> {
+    pub fn get_hash_id(&self) -> Result<HashId, MerkleError> {
         self.entry_hash
             .try_borrow()
             .map_err(|_| MerkleError::InvalidState("The Entry hash is borrowed more than once"))?
@@ -127,6 +157,15 @@ impl Node {
             .copied()
             .ok_or(MerkleError::InvalidState("Missing entry hash"))
     }
+
+    // pub fn get_hash(&self) -> Result<EntryHash, MerkleError> {
+    //     self.entry_hash
+    //         .try_borrow()
+    //         .map_err(|_| MerkleError::InvalidState("The Entry hash is borrowed more than once"))?
+    //         .as_ref()
+    //         .copied()
+    //         .ok_or(MerkleError::InvalidState("Missing entry hash"))
+    // }
 
     fn set_entry(&self, entry: &Entry) -> Result<(), MerkleError> {
         self.entry
@@ -140,7 +179,7 @@ impl Node {
 
 // Make sure the node contains the entry hash when serializing
 fn ensure_non_null_entry_hash<S>(
-    entry_hash: &RefCell<Option<EntryHash>>,
+    entry_hash: &RefCell<Option<HashId>>,
     s: S,
 ) -> Result<S::Ok, S::Error>
 where

@@ -4118,6 +4118,7 @@ dependencies = [
  "bytes 1.0.1",
  "clap",
  "commitlog",
+ "crossbeam-channel",
  "crypto",
  "derive_builder",
  "failure",
@@ -4131,6 +4132,7 @@ dependencies = [
  "ocaml-sys",
  "serde 1.0.123",
  "serde_json",
+ "slab",
  "sled",
  "slog",
  "slog-async",
@@ -4142,8 +4144,13 @@ dependencies = [
  "tezos-sys",
  "tezos_api",
  "tezos_messages",
+ "tezos_spsc",
  "tezos_timing",
 ]
+
+[[package]]
+name = "tezos_spsc"
+version = "0.1.0"
 
 [[package]]
 name = "tezos_timing"

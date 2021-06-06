@@ -9,6 +9,7 @@ bincode = "1.3"
 blake2 = "0.9"
 bytes = "1.0.1"
 commitlog = "0.1"
+crossbeam-channel = "0.5"
 derive_builder = "0.9"
 failure = "0.1"
 getset = "0.1"
@@ -19,6 +20,7 @@ leb128 = "0.2"
 ocaml-interop = { version = "0.8.4", features = ["without-ocamlopt", "caml-state"] }
 ocaml-sys = { version = "0.20.1" }
 serde = { version = "1.0", features = ["derive"] }
+slab = "*"
 sled = "0.34.6"
 slog = { version = "2.7", features = ["max_level_trace", "release_max_level_debug"] }
 snap = "1.0.4"
@@ -27,6 +29,7 @@ strum_macros = "0.20"
 # Internal dependencies
 tezos-sys = { path = "../sys" }
 tezos_api = { path = "../api" }
+tezos_spsc = { path = "../spsc" }
 crypto = { path = "../../crypto" }
 tezos_timing = { path = "../timing" }
 

@@ -62,180 +62,180 @@ impl FromStr for SupportedContextKeyValueStore {
     }
 }
 
-pub mod test_support {
-    use std::collections::HashMap;
-    use std::convert::TryFrom;
-    use std::fs;
-    use std::path::{Path, PathBuf};
+// pub mod test_support {
+//     use std::collections::HashMap;
+//     use std::convert::TryFrom;
+//     use std::fs;
+//     use std::path::{Path, PathBuf};
 
-    use strum::IntoEnumIterator;
+//     use strum::IntoEnumIterator;
 
-    use crate::persistent::Persistable;
-    use crate::working_tree::Entry;
-    use crate::ContextKeyValueStore;
-    use crate::EntryHash;
+//     use crate::persistent::Persistable;
+//     use crate::working_tree::Entry;
+//     use crate::ContextKeyValueStore;
+//     use crate::EntryHash;
 
-    use super::SupportedContextKeyValueStore;
+//     use super::SupportedContextKeyValueStore;
 
-    pub type TestKeyValueStoreError = failure::Error;
-    pub type TestContextKvStoreFactoryInstance = Box<dyn TestContextKvStoreFactory>;
+//     pub type TestKeyValueStoreError = failure::Error;
+//     pub type TestContextKvStoreFactoryInstance = Box<dyn TestContextKvStoreFactory>;
 
-    pub fn blob(value: Vec<u8>) -> Entry {
-        Entry::Blob(value)
-    }
+//     pub fn blob(value: Vec<u8>) -> Entry {
+//         Entry::Blob(value)
+//     }
 
-    pub fn entry_hash(key: &[u8]) -> EntryHash {
-        assert!(key.len() < 32);
-        let bytes: Vec<u8> = key
-            .iter()
-            .chain(std::iter::repeat(&0u8))
-            .take(32)
-            .cloned()
-            .collect();
+//     pub fn entry_hash(key: &[u8]) -> EntryHash {
+//         assert!(key.len() < 32);
+//         let bytes: Vec<u8> = key
+//             .iter()
+//             .chain(std::iter::repeat(&0u8))
+//             .take(32)
+//             .cloned()
+//             .collect();
 
-        EntryHash::try_from(bytes).unwrap()
-    }
+//         EntryHash::try_from(bytes).unwrap()
+//     }
 
-    pub fn blob_serialized(value: Vec<u8>) -> Vec<u8> {
-        bincode::serialize(&blob(value)).unwrap()
-    }
+//     pub fn blob_serialized(value: Vec<u8>) -> Vec<u8> {
+//         bincode::serialize(&blob(value)).unwrap()
+//     }
 
-    pub fn all_kv_stores(
-        base_dir: PathBuf,
-    ) -> HashMap<SupportedContextKeyValueStore, TestContextKvStoreFactoryInstance> {
-        let mut store_factories: HashMap<
-            SupportedContextKeyValueStore,
-            TestContextKvStoreFactoryInstance,
-        > = HashMap::new();
+//     pub fn all_kv_stores(
+//         base_dir: PathBuf,
+//     ) -> HashMap<SupportedContextKeyValueStore, TestContextKvStoreFactoryInstance> {
+//         let mut store_factories: HashMap<
+//             SupportedContextKeyValueStore,
+//             TestContextKvStoreFactoryInstance,
+//         > = HashMap::new();
 
-        for sckvs in SupportedContextKeyValueStore::iter() {
-            let _ = match sckvs {
-                SupportedContextKeyValueStore::InMem => store_factories.insert(
-                    SupportedContextKeyValueStore::InMem,
-                    Box::new(InMemoryBackendTestContextKvStoreFactory),
-                ),
-                SupportedContextKeyValueStore::InMemGC => store_factories.insert(
-                    SupportedContextKeyValueStore::InMemGC,
-                    Box::new(InMemoryGCBackendTestContextKvStoreFactory),
-                ),
-                SupportedContextKeyValueStore::Sled { .. } => store_factories.insert(
-                    SupportedContextKeyValueStore::Sled {
-                        path: base_dir.clone(),
-                    },
-                    Box::new(SledBackendTestContextKvStoreFactory {
-                        base_path: base_dir.clone(),
-                    }),
-                ),
-                SupportedContextKeyValueStore::BTreeMap => store_factories.insert(
-                    SupportedContextKeyValueStore::BTreeMap,
-                    Box::new(BTreeMapBackendTestContextKvStoreFactory),
-                ),
-            };
-        }
+//         for sckvs in SupportedContextKeyValueStore::iter() {
+//             let _ = match sckvs {
+//                 SupportedContextKeyValueStore::InMem => store_factories.insert(
+//                     SupportedContextKeyValueStore::InMem,
+//                     Box::new(InMemoryBackendTestContextKvStoreFactory),
+//                 ),
+//                 SupportedContextKeyValueStore::InMemGC => store_factories.insert(
+//                     SupportedContextKeyValueStore::InMemGC,
+//                     Box::new(InMemoryGCBackendTestContextKvStoreFactory),
+//                 ),
+//                 SupportedContextKeyValueStore::Sled { .. } => store_factories.insert(
+//                     SupportedContextKeyValueStore::Sled {
+//                         path: base_dir.clone(),
+//                     },
+//                     Box::new(SledBackendTestContextKvStoreFactory {
+//                         base_path: base_dir.clone(),
+//                     }),
+//                 ),
+//                 SupportedContextKeyValueStore::BTreeMap => store_factories.insert(
+//                     SupportedContextKeyValueStore::BTreeMap,
+//                     Box::new(BTreeMapBackendTestContextKvStoreFactory),
+//                 ),
+//             };
+//         }
 
-        assert_eq!(
-            SupportedContextKeyValueStore::iter().count(),
-            store_factories.len(),
-            "There must be registered test factory for every supported kv-store!"
-        );
+//         assert_eq!(
+//             SupportedContextKeyValueStore::iter().count(),
+//             store_factories.len(),
+//             "There must be registered test factory for every supported kv-store!"
+//         );
 
-        store_factories
-    }
+//         store_factories
+//     }
 
-    pub trait TestContextKvStoreFactory: 'static + Send + Sync + Persistable {
-        /// Creates new storage and also clean all existing data
-        fn create(&self, name: &str) -> Result<Box<ContextKeyValueStore>, TestKeyValueStoreError>;
-    }
+//     pub trait TestContextKvStoreFactory: 'static + Send + Sync + Persistable {
+//         /// Creates new storage and also clean all existing data
+//         fn create(&self, name: &str) -> Result<Box<ContextKeyValueStore>, TestKeyValueStoreError>;
+//     }
 
-    /// In-memory kv-store
-    pub struct InMemoryBackendTestContextKvStoreFactory;
+//     /// In-memory kv-store
+//     pub struct InMemoryBackendTestContextKvStoreFactory;
 
-    impl TestContextKvStoreFactory for InMemoryBackendTestContextKvStoreFactory {
-        fn create(&self, _: &str) -> Result<Box<ContextKeyValueStore>, TestKeyValueStoreError> {
-            use crate::kv_store::in_memory_backend::InMemoryBackend;
-            Ok(Box::new(InMemoryBackend::new()))
-        }
-    }
+//     impl TestContextKvStoreFactory for InMemoryBackendTestContextKvStoreFactory {
+//         fn create(&self, _: &str) -> Result<Box<ContextKeyValueStore>, TestKeyValueStoreError> {
+//             use crate::kv_store::in_memory_backend::InMemoryBackend;
+//             Ok(Box::new(InMemoryBackend::new()))
+//         }
+//     }
 
-    impl Persistable for InMemoryBackendTestContextKvStoreFactory {
-        fn is_persistent(&self) -> bool {
-            false
-        }
-    }
+//     impl Persistable for InMemoryBackendTestContextKvStoreFactory {
+//         fn is_persistent(&self) -> bool {
+//             false
+//         }
+//     }
 
-    /// Garbage-collected In-memory kv-store
-    pub struct InMemoryGCBackendTestContextKvStoreFactory;
+//     /// Garbage-collected In-memory kv-store
+//     pub struct InMemoryGCBackendTestContextKvStoreFactory;
 
-    impl TestContextKvStoreFactory for InMemoryGCBackendTestContextKvStoreFactory {
-        fn create(&self, _: &str) -> Result<Box<ContextKeyValueStore>, TestKeyValueStoreError> {
-            use crate::gc::mark_move_gced::MarkMoveGCed;
-            use crate::kv_store::in_memory_backend::InMemoryBackend;
-            Ok(Box::new(MarkMoveGCed::<InMemoryBackend>::new(7)))
-        }
-    }
+//     impl TestContextKvStoreFactory for InMemoryGCBackendTestContextKvStoreFactory {
+//         fn create(&self, _: &str) -> Result<Box<ContextKeyValueStore>, TestKeyValueStoreError> {
+//             use crate::gc::mark_move_gced::MarkMoveGCed;
+//             use crate::kv_store::in_memory_backend::InMemoryBackend;
+//             Ok(Box::new(MarkMoveGCed::<InMemoryBackend>::new(7)))
+//         }
+//     }
 
-    impl Persistable for InMemoryGCBackendTestContextKvStoreFactory {
-        fn is_persistent(&self) -> bool {
-            false
-        }
-    }
+//     impl Persistable for InMemoryGCBackendTestContextKvStoreFactory {
+//         fn is_persistent(&self) -> bool {
+//             false
+//         }
+//     }
 
-    /// BTree map kv-store
-    pub struct BTreeMapBackendTestContextKvStoreFactory;
+//     /// BTree map kv-store
+//     pub struct BTreeMapBackendTestContextKvStoreFactory;
 
-    impl TestContextKvStoreFactory for BTreeMapBackendTestContextKvStoreFactory {
-        fn create(&self, _: &str) -> Result<Box<ContextKeyValueStore>, TestKeyValueStoreError> {
-            use crate::kv_store::btree_map::BTreeMapBackend;
-            Ok(Box::new(BTreeMapBackend::new()))
-        }
-    }
+//     impl TestContextKvStoreFactory for BTreeMapBackendTestContextKvStoreFactory {
+//         fn create(&self, _: &str) -> Result<Box<ContextKeyValueStore>, TestKeyValueStoreError> {
+//             use crate::kv_store::btree_map::BTreeMapBackend;
+//             Ok(Box::new(BTreeMapBackend::new()))
+//         }
+//     }
 
-    impl Persistable for BTreeMapBackendTestContextKvStoreFactory {
-        fn is_persistent(&self) -> bool {
-            false
-        }
-    }
+//     impl Persistable for BTreeMapBackendTestContextKvStoreFactory {
+//         fn is_persistent(&self) -> bool {
+//             false
+//         }
+//     }
 
-    /// Sled map kv-store
-    pub struct SledBackendTestContextKvStoreFactory {
-        base_path: PathBuf,
-    }
+//     /// Sled map kv-store
+//     pub struct SledBackendTestContextKvStoreFactory {
+//         base_path: PathBuf,
+//     }
 
-    impl SledBackendTestContextKvStoreFactory {
-        fn db_path(&self, name: &str) -> PathBuf {
-            self.base_path.join(format!("sled_{}", name))
-        }
+//     impl SledBackendTestContextKvStoreFactory {
+//         fn db_path(&self, name: &str) -> PathBuf {
+//             self.base_path.join(format!("sled_{}", name))
+//         }
 
-        fn db(&self, db_name: &str, create_new: bool) -> Result<sled::Db, TestKeyValueStoreError> {
-            Ok(sled::Config::new()
-                .path(self.db_path(db_name))
-                .create_new(create_new)
-                .open()?)
-        }
-    }
+//         fn db(&self, db_name: &str, create_new: bool) -> Result<sled::Db, TestKeyValueStoreError> {
+//             Ok(sled::Config::new()
+//                 .path(self.db_path(db_name))
+//                 .create_new(create_new)
+//                 .open()?)
+//         }
+//     }
 
-    impl TestContextKvStoreFactory for SledBackendTestContextKvStoreFactory {
-        fn create(&self, name: &str) -> Result<Box<ContextKeyValueStore>, TestKeyValueStoreError> {
-            use crate::kv_store::sled_backend::SledBackend;
+//     impl TestContextKvStoreFactory for SledBackendTestContextKvStoreFactory {
+//         fn create(&self, name: &str) -> Result<Box<ContextKeyValueStore>, TestKeyValueStoreError> {
+//             use crate::kv_store::sled_backend::SledBackend;
 
-            // clear files
-            let db_path = self.db_path(name);
-            if Path::new(&db_path).exists() {
-                let _ = fs::remove_dir_all(&db_path)?;
-            }
+//             // clear files
+//             let db_path = self.db_path(name);
+//             if Path::new(&db_path).exists() {
+//                 let _ = fs::remove_dir_all(&db_path)?;
+//             }
 
-            // open and clear db
-            let db = self.db(name, true)?;
-            db.clear()?;
-            db.flush()?;
+//             // open and clear db
+//             let db = self.db(name, true)?;
+//             db.clear()?;
+//             db.flush()?;
 
-            Ok(Box::new(SledBackend::new(db)))
-        }
-    }
+//             Ok(Box::new(SledBackend::new(db)))
+//         }
+//     }
 
-    impl Persistable for SledBackendTestContextKvStoreFactory {
-        fn is_persistent(&self) -> bool {
-            true
-        }
-    }
-}
+//     impl Persistable for SledBackendTestContextKvStoreFactory {
+//         fn is_persistent(&self) -> bool {
+//             true
+//         }
+//     }
+// }

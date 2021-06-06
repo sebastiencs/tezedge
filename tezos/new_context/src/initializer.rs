@@ -6,7 +6,7 @@ use std::{path::PathBuf, rc::Rc};
 
 use ocaml_interop::BoxRoot;
 
-use crate::gc::mark_move_gced::MarkMoveGCed;
+//use crate::gc::mark_move_gced::MarkMoveGCed;
 use crate::kv_store::{
     btree_map::BTreeMapBackend, in_memory_backend::InMemoryBackend, sled_backend::SledBackend,
 };
@@ -29,22 +29,22 @@ pub fn initialize_tezedge_index(
     patch_context: Option<BoxRoot<PatchContextFunction>>,
 ) -> TezedgeIndex {
     TezedgeIndex::new(
-        match context_kv_store {
-            ContextKvStoreConfiguration::Sled { path } => {
-                let sled = sled::Config::new()
-                    .path(path)
-                    .open()
-                    .expect("Failed to create/initialize Sled database (db_context)");
-                Rc::new(RefCell::new(SledBackend::new(sled)))
-            }
-            ContextKvStoreConfiguration::InMem => Rc::new(RefCell::new(InMemoryBackend::new())),
-            ContextKvStoreConfiguration::BTreeMap => Rc::new(RefCell::new(BTreeMapBackend::new())),
-            ContextKvStoreConfiguration::InMemGC => {
-                Rc::new(RefCell::new(MarkMoveGCed::<InMemoryBackend>::new(
-                    PRESERVE_CYCLE_COUNT,
-                )))
-            }
-        },
+        // match context_kv_store {
+        //     ContextKvStoreConfiguration::Sled { path } => {
+        //         let sled = sled::Config::new()
+        //             .path(path)
+        //             .open()
+        //             .expect("Failed to create/initialize Sled database (db_context)");
+        //         Rc::new(RefCell::new(SledBackend::new(sled)))
+        //     }
+        //     ContextKvStoreConfiguration::InMem => Rc::new(RefCell::new(InMemoryBackend::new())),
+        //     ContextKvStoreConfiguration::BTreeMap => Rc::new(RefCell::new(BTreeMapBackend::new())),
+        //     ContextKvStoreConfiguration::InMemGC => {
+        //         Rc::new(RefCell::new(MarkMoveGCed::<InMemoryBackend>::new(
+        //             PRESERVE_CYCLE_COUNT,
+        //         )))
+        //     }
+        // },
         patch_context,
     )
 }

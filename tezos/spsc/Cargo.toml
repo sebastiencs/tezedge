@@ -1,0 +1,7 @@
+[package]
+name = "tezos_spsc"
+version = "0.1.0"
+authors = ["Sebastien Chapuis <sebastien@chapu.is>"]
+edition = "2018"
+
+[dependencies]

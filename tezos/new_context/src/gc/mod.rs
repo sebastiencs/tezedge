@@ -17,8 +17,9 @@ use crate::persistent::{DBError, KeyValueStoreBackend};
 use crate::working_tree::Entry;
 use crate::{ContextKeyValueStoreSchema, EntryHash};
 
-pub mod mark_move_gced;
-pub mod mark_sweep_gced;
+// pub mod mark_move_gced;
+// pub mod mark_sweep_gced;
+pub mod new_gc;
 
 pub trait GarbageCollector {
     fn new_cycle_started(&mut self) -> Result<(), GarbageCollectionError>;

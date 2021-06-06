@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #![feature(hash_set_entry)]
+#![feature(new_uninit)]
 // #![forbid(unsafe_code)]
 
 //! Implementation of the TezEdge context for the Tezos economic protocol
@@ -26,7 +27,7 @@ use std::num::TryFromIntError;
 use std::{array::TryFromSliceError, collections::HashSet};
 
 use failure::Fail;
-use gc::GarbageCollectionError;
+use gc::{GarbageCollectionError, new_gc::HashId};
 use persistent::DBError;
 use serde::Deserialize;
 use serde::Serialize;
@@ -113,7 +114,7 @@ where
     fn get_merkle_root(&self) -> Result<EntryHash, ContextError>;
 }
 
-/// Index API used by the Shell
+/// Index API used by the IShell
 pub trait IndexApi<T: ShellContextApi + ProtocolContextApi> {
     // checks if a commit exists in the repository
     fn exists(&self, context_hash: &ContextHash) -> Result<bool, ContextError>;
@@ -122,7 +123,7 @@ pub trait IndexApi<T: ShellContextApi + ProtocolContextApi> {
     // called after a block is applied
     fn block_applied(
         &self,
-        referenced_older_entries: HashSet<EntryHash>,
+        referenced_older_entries: HashSet<HashId>,
     ) -> Result<(), ContextError>;
     // called when a new cycle starts
     fn cycle_started(&mut self) -> Result<(), ContextError>;
