@@ -99,9 +99,9 @@ pub enum Entry {
 }
 
 impl Node {
-    pub fn entry_hash(&self, hashes: &mut HashInterner) -> Result<EntryHash, HashingError> {
+    pub fn entry_hash<'a>(&self, hashes: &'a mut HashInterner) -> Result<&'a EntryHash, HashingError> {
         let hash_id = self.entry_hash_id(hashes)?;
-        Ok(hashes.get(hash_id).unwrap().clone())
+        Ok(hashes.get(hash_id).unwrap())
         // match &mut *self
         //     .entry_hash
         //     .try_borrow_mut()

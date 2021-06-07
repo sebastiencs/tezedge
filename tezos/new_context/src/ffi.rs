@@ -435,7 +435,7 @@ ocaml_export! {
             Err(err) => Err(format!("{:?}", err)),
             Ok(hash) => {
                 let new_gc: Ref<NewGC> = (*tree.index.new_gc).borrow();
-                let hash = new_gc.hashes.get_value(hash).unwrap();
+                let hash = new_gc.hashes.get(hash).unwrap();
                 ContextHash::try_from(hash.as_ref()).map_err(|err| format!("{:?}", err))
             }
         };
