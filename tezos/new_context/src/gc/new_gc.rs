@@ -98,6 +98,7 @@ struct GCThread {
     stores: Stores,
     send_free: Producer<HashId>,
     recv: Receiver<Command>,
+    pending: Vec<HashId>,
 }
 
 /// Commands used by MarkMoveGCed to interact with GC thread.
@@ -163,12 +164,12 @@ impl Default for NewGC {
 impl NewGC {
     pub fn new() -> Self {
         let (sender, recv) = crossbeam_channel::unbounded();
-        let (prod, cons) = tezos_spsc::bounded(1_000_000);
+        let (prod, cons) = tezos_spsc::bounded(2_000_000);
 
         std::thread::spawn(move || {
             let stores = Stores::default();
 
-            GCThread { stores, recv, send_free: prod }.run()
+            GCThread { stores, recv, send_free: prod, pending: Vec::new() }.run()
         });
 
         let current = Default::default();
@@ -240,7 +241,49 @@ impl GCThread {
 
         println!("FREE SOME IDS AFTER CYCLE LEN={:?}", unused.len());
 
-        self.send_free.push_slice(&unused).unwrap();
+        let unused_length = unused.len();
+        let length = self.send_free.available();
+
+        let (to_send, pending) = if length < unused_length {
+            unused.split_at(length)
+        } else {
+            (&unused[..], &[][..])
+        };
+
+        println!("SENDING {:?}", to_send.len());
+
+        self.send_free.push_slice(&to_send).unwrap();
+
+        if pending.is_empty() {
+            return;
+        }
+
+        self.pending.extend_from_slice(pending);
+    }
+
+    fn send_pending(&mut self) {
+
+        println!("SEND PENDING LEN={:?} AVAIL={:?}", self.pending.len(), self.send_free.available());
+
+        if self.pending.is_empty() {
+            return;
+        }
+
+        let length = self.send_free.available();
+        if length == 0 {
+            return;
+        }
+
+        let to_take = length.min(self.pending.len());
+        let start = self.pending.len() - to_take;
+
+
+        let to_send = &self.pending[start..];
+
+        println!("SENDING {:?} START={:?}", to_send.len(), start);
+
+        self.send_free.push_slice(&to_send).unwrap();
+        self.pending.truncate(start);
     }
 
     fn mark_reused(&mut self, mut reused: Vec<HashId>) {
@@ -279,6 +322,8 @@ impl GCThread {
             }
 
         }
+
+        self.send_pending();
 
         let elapsed = now.elapsed();
 
