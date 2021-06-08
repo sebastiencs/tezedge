@@ -172,8 +172,15 @@ impl<T> Queue<T> {
     }
 
     fn len(&self) -> usize {
-        let tail = self.tail.load(Acquire) & (self.mask_bit - 1);
-        let head = self.head.load(Acquire) & (self.mask_bit - 1);
+        let tail = self.tail.load(Acquire);
+        let head = self.head.load(Acquire);
+
+        if tail.wrapping_sub(self.mask_bit) == head {
+            return self.buffer.len();
+        }
+
+        let tail = tail & (self.mask_bit - 1);
+        let head = head & (self.mask_bit - 1);
 
         if tail < head {
             (tail + self.buffer.len()) - head
@@ -413,6 +420,87 @@ mod tests {
     fn empty() {
         let queue = Queue::<usize>::new_queue(2);
         assert!(queue.pop().is_err());
+    }
+
+    #[test]
+    fn len() {
+        let queue = Queue::new_queue(3);
+        assert_eq!(queue.len(), 0);
+
+        queue.push(1).unwrap();
+        assert_eq!(queue.len(), 1);
+        queue.push(1).unwrap();
+        assert_eq!(queue.len(), 2);
+        queue.push(1).unwrap();
+        assert_eq!(queue.len(), 3);
+        assert!(queue.push(1).is_err());
+        assert_eq!(queue.len(), 3);
+
+        queue.pop().unwrap();
+        assert_eq!(queue.len(), 2);
+
+        queue.push(1).unwrap();
+        assert_eq!(queue.len(), 3);
+        assert!(queue.push(1).is_err());
+
+        queue.pop().unwrap();
+        assert_eq!(queue.len(), 2);
+        queue.pop().unwrap();
+        assert_eq!(queue.len(), 1);
+
+        queue.push(1).unwrap();
+        assert_eq!(queue.len(), 2);
+        queue.push(1).unwrap();
+        assert_eq!(queue.len(), 3);
+        assert!(queue.push(1).is_err());
+
+        queue.pop().unwrap();
+        assert_eq!(queue.len(), 2);
+        queue.pop().unwrap();
+        assert_eq!(queue.len(), 1);
+        queue.pop().unwrap();
+        assert_eq!(queue.len(), 0);
+        assert!(queue.is_empty());
+
+        queue.push(1).unwrap();
+        assert_eq!(queue.len(), 1);
+        queue.push(2).unwrap();
+        assert_eq!(queue.len(), 2);
+        queue.push(3).unwrap();
+        assert_eq!(queue.len(), 3);
+        assert!(queue.push(1).is_err());
+    }
+
+    #[test]
+    fn len_even() {
+        let queue = Queue::new_queue(2);
+        assert_eq!(queue.len(), 0);
+
+        queue.push(1).unwrap();
+        assert_eq!(queue.len(), 1);
+        queue.push(1).unwrap();
+        assert_eq!(queue.len(), 2);
+        assert!(queue.push(1).is_err());
+        assert_eq!(queue.len(), 2);
+
+        queue.pop().unwrap();
+        assert_eq!(queue.len(), 1);
+
+        queue.push(1).unwrap();
+        assert_eq!(queue.len(), 2);
+        assert!(queue.push(1).is_err());
+
+        queue.pop().unwrap();
+        assert_eq!(queue.len(), 1);
+        queue.pop().unwrap();
+        assert_eq!(queue.len(), 0);
+        assert!(queue.is_empty());
+
+        queue.push(1).unwrap();
+        assert_eq!(queue.len(), 1);
+        queue.push(1).unwrap();
+        assert_eq!(queue.len(), 2);
+        assert!(queue.push(1).is_err());
     }
 
     #[test]
