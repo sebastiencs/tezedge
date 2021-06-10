@@ -9,9 +9,9 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+use crate::gc::repository::{HashId, HashValueStore};
 use crate::hash::{hash_entry, EntryHash, HashingError};
 use crate::ContextValue;
-use crate::gc::new_gc::{HashId, HashInterner};
 
 use self::working_tree::MerkleError;
 
@@ -99,9 +99,12 @@ pub enum Entry {
 }
 
 impl Node {
-    pub fn entry_hash<'a>(&self, hashes: &'a mut HashInterner) -> Result<&'a EntryHash, HashingError> {
+    pub fn entry_hash<'a>(
+        &self,
+        hashes: &'a mut HashValueStore,
+    ) -> Result<&'a EntryHash, HashingError> {
         let hash_id = self.entry_hash_id(hashes)?;
-        Ok(hashes.get(hash_id).unwrap())
+        Ok(hashes.get_hash(hash_id).unwrap())
         // match &mut *self
         //     .entry_hash
         //     .try_borrow_mut()
@@ -125,15 +128,13 @@ impl Node {
         // }
     }
 
-    pub fn entry_hash_id(&self, hashes: &mut HashInterner) -> Result<HashId, HashingError> {
+    pub fn entry_hash_id(&self, hashes: &mut HashValueStore) -> Result<HashId, HashingError> {
         match &mut *self
             .entry_hash
             .try_borrow_mut()
             .map_err(|_| HashingError::EntryBorrow)?
         {
-            Some(hash_id) => {
-                Ok(*hash_id)
-            },
+            Some(hash_id) => Ok(*hash_id),
             entry_hash @ None => {
                 let hash_id = hash_entry(
                     self.entry

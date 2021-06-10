@@ -499,12 +499,22 @@ fn schedule_replay_blocks(
         } else {
             info!(
                 log,
-                "{:08} {:.5}% Block {} applied in {:?}. Result={:?}", index, percent, hash, time, result
+                "{:08} {:.5}% Block {} applied in {:?}. Result={:?}",
+                index,
+                percent,
+                hash,
+                time,
+                result
             );
         }
     }
 
-    info!(log, "Replayer successfully applied {} blocks in {:?}", nblocks, now.elapsed());
+    info!(
+        log,
+        "Replayer successfully applied {} blocks in {:?}",
+        nblocks,
+        now.elapsed()
+    );
 
     replay_shutdown(shell_channel);
 }

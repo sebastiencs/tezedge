@@ -47,16 +47,27 @@
 //! ``
 //!
 //! Reference: https://git-scm.com/book/en/v2/Git-Internals-Git-Objects
-use std::{array::TryFromSliceError, borrow::Cow, cell::{Cell, RefCell}, collections::HashSet, mem::MaybeUninit, rc::Rc, sync::Arc};
+use std::{
+    array::TryFromSliceError,
+    borrow::Cow,
+    cell::{Cell, RefCell},
+    collections::HashSet,
+    mem::MaybeUninit,
+    rc::Rc,
+    sync::Arc,
+};
 
 use failure::Fail;
 
-use crypto::hash::{FromBytesError, HashType};
+use crypto::hash::FromBytesError;
 
-use crate::{gc::new_gc::{HashId, HashInterner}, hash::{hash_commit, hash_tree, HashingError}};
 use crate::persistent;
 use crate::working_tree::working_tree_stats::{MerkleStoragePerfReport, TezedgeContextStatistics};
 use crate::working_tree::{Commit, Entry, Node, NodeKind, Tree};
+use crate::{
+    gc::repository::{HashId, HashValueStore},
+    hash::{hash_commit, hash_tree, HashingError},
+};
 use crate::{gc::GarbageCollectionError, tezedge_context::TezedgeIndex};
 use crate::{hash::EntryHash, ContextKeyOwned};
 use crate::{ContextKey, ContextValue, StringTreeEntry, StringTreeMap};
@@ -237,9 +248,8 @@ pub enum MerkleError {
         sought, found
     )]
     FoundUnexpectedStructure { sought: String, found: String },
-    #[fail(display = "Entry not found! Hash={}", hash)]
-    EntryNotFound { hash: String },
-    //EntryNotFound { hash: HashId },
+    #[fail(display = "Entry not found! HashId={:?}", hash_id)]
+    EntryNotFound { hash_id: HashId },
 
     /// Wrong user input errors
     #[fail(display = "No value under key {:?}.", key)]
@@ -360,8 +370,8 @@ impl WorkingTree {
 
     pub fn hash(&self) -> Result<EntryHash, MerkleError> {
         let hash_id = self.get_working_tree_root_hash()?;
-        let hashes = self.index.new_gc.borrow();
-        Ok(hashes.hashes.get(hash_id).unwrap().clone())
+        let repo = self.index.repository.borrow();
+        Ok(repo.hashes.get_hash(hash_id).unwrap().clone())
     }
 
     pub fn kind(&self) -> NodeKind {
@@ -498,30 +508,30 @@ impl WorkingTree {
         rv
     }
 
-    // /// Get value. Staging area is checked first, then last (checked out) commit.
-    // pub fn get_by_prefix(
-    //     &self,
-    //     prefix: &ContextKey,
-    // ) -> Result<Option<Vec<(ContextKeyOwned, ContextValue)>>, MerkleError> {
-    //     let root = self.get_working_tree_root_ref();
-    //     self._get_key_values_by_prefix(root.as_ref(), prefix)
-    // }
+    /// Get value. Staging area is checked first, then last (checked out) commit.
+    pub fn get_by_prefix(
+        &self,
+        prefix: &ContextKey,
+    ) -> Result<Option<Vec<(ContextKeyOwned, ContextValue)>>, MerkleError> {
+        let root = self.get_working_tree_root_ref();
+        self._get_key_values_by_prefix(root.as_ref(), prefix)
+    }
 
-    // /// Get value from historical context identified by commit hash.
-    // pub fn get_history(
-    //     &self,
-    //     commit_hash: &EntryHash,
-    //     key: &ContextKey,
-    // ) -> Result<ContextValue, MerkleError> {
-    //     // let stat_updater = StatUpdater::new(MerkleStorageAction::GetHistory, Some(key));
+    /// Get value from historical context identified by commit hash.
+    pub fn get_history(
+        &self,
+        commit_hash_id: HashId,
+        key: &ContextKey,
+    ) -> Result<ContextValue, MerkleError> {
+        // let stat_updater = StatUpdater::new(MerkleStorageAction::GetHistory, Some(key));
 
-    //     let commit = self.get_commit(commit_hash)?;
-    //     let entry = self.get_entry_from_hash(&commit.root_hash)?;
-    //     let rv = self.get_from_tree(self.get_tree(&entry)?, key);
+        let commit = self.get_commit(commit_hash_id)?;
+        let entry = self.get_entry_from_hash_id(commit.root_hash)?;
+        let rv = self.get_from_tree(self.get_tree(&entry)?, key);
 
-    //     // stat_updater.update_execution_stats(&mut self.stats);
-    //     rv
-    // }
+        // stat_updater.update_execution_stats(&mut self.stats);
+        rv
+    }
 
     fn value_exists(&self, tree: &Tree, key: &ContextKey) -> Result<bool, MerkleError> {
         let (file, path) = key.split_last().ok_or(MerkleError::KeyEmpty)?;
@@ -633,85 +643,85 @@ impl WorkingTree {
         }
     }
 
-    // /// Get context tree under given prefix in string form (for JSON)
-    // /// depth - None returns full tree
-    // pub fn get_context_tree_by_prefix(
-    //     &self,
-    //     context_hash: &EntryHash,
-    //     prefix: &ContextKey,
-    //     depth: Option<usize>,
-    // ) -> Result<StringTreeEntry, MerkleError> {
-    //     if let Some(0) = depth {
-    //         return Ok(StringTreeEntry::Null);
-    //     }
+    /// Get context tree under given prefix in string form (for JSON)
+    /// depth - None returns full tree
+    pub fn get_context_tree_by_prefix(
+        &self,
+        context_hash_id: HashId,
+        prefix: &ContextKey,
+        depth: Option<usize>,
+    ) -> Result<StringTreeEntry, MerkleError> {
+        if let Some(0) = depth {
+            return Ok(StringTreeEntry::Null);
+        }
 
-    //     //let stat_updater =
-    //     //    StatUpdater::new(MerkleStorageAction::GetContextTreeByPrefix, Some(prefix));
-    //     let mut out = StringTreeMap::new();
-    //     let commit = self.get_commit(context_hash)?;
+        //let stat_updater =
+        //    StatUpdater::new(MerkleStorageAction::GetContextTreeByPrefix, Some(prefix));
+        let mut out = StringTreeMap::new();
+        let commit = self.get_commit(context_hash_id)?;
 
-    //     let entry = self.get_entry_from_hash(&commit.root_hash)?;
-    //     let root_tree = self.get_tree(&entry)?;
-    //     let prefixed_tree = self.find_raw_tree(&root_tree, prefix)?;
-    //     let delimiter = if prefix.is_empty() { "" } else { "/" };
+        let entry = self.get_entry_from_hash_id(commit.root_hash)?;
+        let root_tree = self.get_tree(&entry)?;
+        let prefixed_tree = self.find_raw_tree(&root_tree, prefix)?;
+        let delimiter = if prefix.is_empty() { "" } else { "/" };
 
-    //     for (key, child_node) in prefixed_tree.iter() {
-    //         let entry = self.get_entry(&child_node)?;
+        for (key, child_node) in prefixed_tree.iter() {
+            let entry = self.get_entry(&child_node)?;
 
-    //         // construct full path as Tree key is only one chunk of it
-    //         let fullpath = self.key_to_string(prefix) + delimiter + key;
-    //         let rdepth = depth.map(|d| d - 1);
-    //         out.insert(
-    //             key.clone(),
-    //             self.get_context_recursive(&fullpath, &entry, rdepth)?,
-    //         );
-    //     }
+            // construct full path as Tree key is only one chunk of it
+            let fullpath = self.key_to_string(prefix) + delimiter + key;
+            let rdepth = depth.map(|d| d - 1);
+            out.insert(
+                key.clone(),
+                self.get_context_recursive(&fullpath, &entry, rdepth)?,
+            );
+        }
 
-    //     //stat_updater.update_execution_stats(&mut self.stats);
-    //     Ok(StringTreeEntry::Tree(out))
-    // }
+        //stat_updater.update_execution_stats(&mut self.stats);
+        Ok(StringTreeEntry::Tree(out))
+    }
 
-    // /// Construct Vec of all context key-values under given prefix
-    // pub fn get_key_values_by_prefix(
-    //     &self,
-    //     context_hash: &EntryHash,
-    //     prefix: &ContextKey,
-    // ) -> Result<Option<Vec<(ContextKeyOwned, ContextValue)>>, MerkleError> {
-    //     // let stat_updater =
-    //     //     StatUpdater::new(MerkleStorageAction::GetKeyValuesByPrefix, Some(prefix));
+    /// Construct Vec of all context key-values under given prefix
+    pub fn get_key_values_by_prefix(
+        &self,
+        context_hash_id: HashId,
+        prefix: &ContextKey,
+    ) -> Result<Option<Vec<(ContextKeyOwned, ContextValue)>>, MerkleError> {
+        // let stat_updater =
+        //     StatUpdater::new(MerkleStorageAction::GetKeyValuesByPrefix, Some(prefix));
 
-    //     let commit = self.get_commit(context_hash)?;
-    //     let entry = self.get_entry_from_hash(&commit.root_hash)?;
-    //     let root_tree = self.get_tree(&entry)?;
-    //     let rv = self._get_key_values_by_prefix(root_tree, prefix);
+        let commit = self.get_commit(context_hash_id)?;
+        let entry = self.get_entry_from_hash_id(commit.root_hash)?;
+        let root_tree = self.get_tree(&entry)?;
+        let rv = self._get_key_values_by_prefix(root_tree, prefix);
 
-    //     // stat_updater.update_execution_stats(&mut self.stats);
-    //     rv
-    // }
+        // stat_updater.update_execution_stats(&mut self.stats);
+        rv
+    }
 
-    // fn _get_key_values_by_prefix(
-    //     &self,
-    //     root_tree: &Tree,
-    //     prefix: &ContextKey,
-    // ) -> Result<Option<Vec<(ContextKeyOwned, ContextValue)>>, MerkleError> {
-    //     let prefixed_tree = self.find_raw_tree(root_tree, prefix)?;
-    //     let mut keyvalues: Vec<(ContextKeyOwned, ContextValue)> = Vec::new();
-    //     let delimiter = if prefix.is_empty() { "" } else { "/" };
+    fn _get_key_values_by_prefix(
+        &self,
+        root_tree: &Tree,
+        prefix: &ContextKey,
+    ) -> Result<Option<Vec<(ContextKeyOwned, ContextValue)>>, MerkleError> {
+        let prefixed_tree = self.find_raw_tree(root_tree, prefix)?;
+        let mut keyvalues: Vec<(ContextKeyOwned, ContextValue)> = Vec::new();
+        let delimiter = if prefix.is_empty() { "" } else { "/" };
 
-    //     for (key, child_node) in prefixed_tree.iter() {
-    //         let entry = self.get_entry(&child_node)?;
+        for (key, child_node) in prefixed_tree.iter() {
+            let entry = self.get_entry(&child_node)?;
 
-    //         // construct full path as Tree key is only one chunk of it
-    //         let fullpath = self.key_to_string(prefix) + delimiter + key;
-    //         self.get_key_values_from_tree_recursively(&fullpath, &entry, &mut keyvalues)?;
-    //     }
+            // construct full path as Tree key is only one chunk of it
+            let fullpath = self.key_to_string(prefix) + delimiter + key;
+            self.get_key_values_from_tree_recursively(&fullpath, &entry, &mut keyvalues)?;
+        }
 
-    //     if keyvalues.is_empty() {
-    //         Ok(None)
-    //     } else {
-    //         Ok(Some(keyvalues))
-    //     }
-    // }
+        if keyvalues.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(keyvalues))
+        }
+    }
 
     /// Take the current changes in the staging area, create a commit and persist all changes
     /// to database under the new commit. Return last commit if there are no changes, that is
@@ -723,19 +733,12 @@ impl WorkingTree {
         author: String,
         message: String,
         parent_commit_hash: Option<HashId>,
-    ) -> Result<
-        (
-            HashId,
-            Vec<(HashId, Arc<[u8]>)>,
-            HashSet<HashId>,
-        ),
-        MerkleError,
-    > {
+    ) -> Result<(HashId, Vec<(HashId, Arc<[u8]>)>, HashSet<HashId>), MerkleError> {
         //let stat_updater = StatUpdater::new(MerkleStorageAction::Commit, None);
         let root_hash = self.get_working_tree_root_hash()?;
         let root = self.get_working_tree_root_ref();
-        let mut hashes = self.index.new_gc.borrow_mut();
-        let hashes = &mut hashes.hashes;
+        let mut repo = self.index.repository.borrow_mut();
+        let hashes = &mut repo.hashes;
 
         let new_commit = Commit {
             root_hash,
@@ -746,8 +749,6 @@ impl WorkingTree {
         };
         let entry = Entry::Commit(new_commit.clone());
         let commit_hash = hash_commit(&new_commit, hashes)?;
-
-        // println!("PREPARE {:?} HASH={:?}", commit_hash, bincode::serialize(&entry)?);
 
         // produce entries to be persisted to storage
         let mut batch: Vec<(HashId, Arc<[u8]>)> = Vec::new();
@@ -964,8 +965,8 @@ impl WorkingTree {
     pub fn get_working_tree_root_hash(&self) -> Result<HashId, MerkleError> {
         // TOOD: unnecessery recalculation, should be one when set_staged_root
         let root = self.get_working_tree_root_ref();
-        let mut hashes = self.index.new_gc.borrow_mut();
-        hash_tree(root.as_ref(), &mut hashes.hashes).map_err(MerkleError::from)
+        let mut repo = self.index.repository.borrow_mut();
+        hash_tree(root.as_ref(), &mut repo.hashes).map_err(MerkleError::from)
     }
 
     /// Builds vector of entries to be persisted to DB, recursively
@@ -976,7 +977,7 @@ impl WorkingTree {
         root: Option<&Tree>,
         batch: &mut Vec<(HashId, Arc<[u8]>)>,
         referenced_older_entries: &mut HashSet<HashId>,
-        hashes: &mut HashInterner,
+        hashes: &mut HashValueStore,
     ) -> Result<(), MerkleError> {
         // add entry to batch
 
@@ -1037,7 +1038,14 @@ impl WorkingTree {
                     Some(root) => Entry::Tree(root.clone()),
                     None => self.get_entry_from_hash_id(commit.root_hash)?,
                 };
-                self.get_entries_recursively(&entry, commit.root_hash, None, batch, referenced_older_entries, hashes)
+                self.get_entries_recursively(
+                    &entry,
+                    commit.root_hash,
+                    None,
+                    batch,
+                    referenced_older_entries,
+                    hashes,
+                )
             }
         }
     }
@@ -1070,20 +1078,20 @@ impl WorkingTree {
         }
     }
 
-    // // TODO: part of the outer layer, this should not be on the working tree
-    // fn get_commit(&self, hash: &EntryHash) -> Result<Commit, MerkleError> {
-    //     match self.get_entry_from_hash(hash)? {
-    //         Entry::Commit(commit) => Ok(commit),
-    //         Entry::Tree(_) => Err(MerkleError::FoundUnexpectedStructure {
-    //             sought: "commit".to_string(),
-    //             found: "tree".to_string(),
-    //         }),
-    //         Entry::Blob(_) => Err(MerkleError::FoundUnexpectedStructure {
-    //             sought: "commit".to_string(),
-    //             found: "blob".to_string(),
-    //         }),
-    //     }
-    // }
+    // TODO: part of the outer layer, this should not be on the working tree
+    fn get_commit(&self, hash_id: HashId) -> Result<Commit, MerkleError> {
+        match self.get_entry_from_hash_id(hash_id)? {
+            Entry::Commit(commit) => Ok(commit),
+            Entry::Tree(_) => Err(MerkleError::FoundUnexpectedStructure {
+                sought: "commit".to_string(),
+                found: "tree".to_string(),
+            }),
+            Entry::Blob(_) => Err(MerkleError::FoundUnexpectedStructure {
+                sought: "commit".to_string(),
+                found: "blob".to_string(),
+            }),
+        }
+    }
 
     fn get_entry(&self, node: &Node) -> Result<Entry, MerkleError> {
         if let Some(e) = node
@@ -1103,24 +1111,11 @@ impl WorkingTree {
         Ok(entry)
     }
 
-    // fn get_entry_from_hash(&self, hash: &EntryHash) -> Result<Entry, MerkleError> {
-    //     match self.index.repository.borrow().get(hash)? {
-    //         None => Err(MerkleError::EntryNotFound {
-    //             hash: HashType::ContextHash.hash_to_b58check(hash)?,
-    //         }),
-    //         Some(entry_bytes) => Ok(bincode::deserialize(&entry_bytes)?),
-    //     }
-    // }
+    fn get_entry_from_hash_id(&self, hash_id: HashId) -> Result<Entry, MerkleError> {
+        let repo = self.index.repository.borrow();
 
-    fn get_entry_from_hash_id(&self, hash: HashId) -> Result<Entry, MerkleError> {
-        let hashes = self.index.new_gc.borrow();
-
-        match hashes.hashes.get_value(hash) {
-        // match self.index.repository.borrow().get(hash)? {
-            None => Err(MerkleError::EntryNotFound {
-                hash: "a".to_string(),
-                //hash: HashType::ContextHash.hash_to_b58check(hash)?,
-            }),
+        match repo.hashes.get_value(hash_id) {
+            None => Err(MerkleError::EntryNotFound { hash_id }),
             Some(entry_bytes) => Ok(bincode::deserialize(entry_bytes)?),
         }
     }

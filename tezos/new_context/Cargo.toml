@@ -20,7 +20,6 @@ leb128 = "0.2"
 ocaml-interop = { version = "0.8.4", features = ["without-ocamlopt", "caml-state"] }
 ocaml-sys = { version = "0.20.1" }
 serde = { version = "1.0", features = ["derive"] }
-slab = "*"
 sled = "0.34.6"
 slog = { version = "2.7", features = ["max_level_trace", "release_max_level_debug"] }
 snap = "1.0.4"

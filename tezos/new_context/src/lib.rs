@@ -27,7 +27,7 @@ use std::num::TryFromIntError;
 use std::{array::TryFromSliceError, collections::HashSet};
 
 use failure::Fail;
-use gc::{GarbageCollectionError, new_gc::HashId};
+use gc::{repository::HashId, GarbageCollectionError};
 use persistent::DBError;
 use serde::Deserialize;
 use serde::Serialize;
@@ -121,10 +121,7 @@ pub trait IndexApi<T: ShellContextApi + ProtocolContextApi> {
     // checkout context for hash
     fn checkout(&self, context_hash: &ContextHash) -> Result<Option<T>, ContextError>;
     // called after a block is applied
-    fn block_applied(
-        &self,
-        referenced_older_entries: HashSet<HashId>,
-    ) -> Result<(), ContextError>;
+    fn block_applied(&self, referenced_older_entries: HashSet<HashId>) -> Result<(), ContextError>;
     // called when a new cycle starts
     fn cycle_started(&mut self) -> Result<(), ContextError>;
 }

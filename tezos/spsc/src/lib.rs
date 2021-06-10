@@ -1,15 +1,8 @@
-use std::{
-    cell::UnsafeCell,
-    fmt::Debug,
-    mem::MaybeUninit,
-    sync::{
-        atomic::{
-            AtomicUsize,
-            Ordering::{Acquire, Relaxed, Release},
-        },
-        Arc,
-    },
-};
+use std::{fmt::Debug, mem::MaybeUninit};
+
+use crate::sync::{Acquire, Arc, AtomicUsize, Relaxed, Release, UnsafeCell};
+
+mod sync;
 
 const SHIFT: usize = (std::mem::size_of::<AtomicUsize>() * 8) - 1;
 const CLOSED_BIT: usize = 1 << SHIFT;
@@ -303,9 +296,10 @@ impl<T: Copy> Queue<T> {
 mod tests {
     use std::time::Duration;
 
-    use super::{PopError, PushError, Queue};
+    use super::*;
 
     #[test]
+    #[cfg_attr(loom, ignore)] // single thread
     fn simple() {
         let queue = Queue::new_queue(5);
 
@@ -319,6 +313,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(loom, ignore)] // single thread
     fn slices() {
         let queue = Queue::new_queue(5);
 
@@ -407,6 +402,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(loom, ignore)] // single thread
     fn full() {
         let queue = Queue::new_queue(2);
 
@@ -417,12 +413,14 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(loom, ignore)] // single thread
     fn empty() {
         let queue = Queue::<usize>::new_queue(2);
         assert!(queue.pop().is_err());
     }
 
     #[test]
+    #[cfg_attr(loom, ignore)] // single thread
     fn len() {
         let queue = Queue::new_queue(3);
         assert_eq!(queue.len(), 0);
@@ -472,6 +470,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(loom, ignore)] // single thread
     fn len_even() {
         let queue = Queue::new_queue(2);
         assert_eq!(queue.len(), 0);
@@ -504,6 +503,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(loom, ignore)] // single thread
     fn seq() {
         let queue = Queue::new_queue(2);
 
@@ -561,6 +561,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(loom, ignore)] // single thread
     fn closed() {
         let (mut sender, mut recv) = Queue::new(10);
 
@@ -573,6 +574,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(loom, ignore)] // single thread
     fn closed_recv() {
         let (mut sender, recv) = Queue::new(10);
 
@@ -588,6 +590,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)] // Way too slow on miri
+    #[cfg_attr(loom, ignore)] // loom test is `loom_threads`
     fn threads() {
         for size in 1..=10 {
             let (mut sender, mut recv) = Queue::new(size);
@@ -633,6 +636,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)] // Way too slow on miri
+    #[cfg_attr(loom, ignore)] // loom test is `loom_threads_slice_available`
     fn threads_slice() {
         for size in 5..=10 {
             let (mut sender, mut recv) = Queue::new(size);
@@ -674,5 +678,103 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
             assert_eq!(recv.pop(), Err(PopError::Closed));
         }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    #[cfg(loom)]
+    fn loom_threads() {
+        loom::model(|| {
+            let (mut sender, mut recv) = Queue::new(2);
+            let thread = loom::thread::spawn(move || {
+                for n in 0..10 {
+                    loop {
+                        match sender.push(n) {
+                            Ok(_) => break,
+                            Err(PushError::Closed(_)) => panic!("closed"),
+                            _ => {}
+                        }
+                        loom::thread::yield_now();
+                    }
+                }
+                std::mem::drop(sender);
+            });
+
+            let mut last_value = 0;
+
+            for n in 0..10 {
+                loop {
+                    match recv.pop() {
+                        Ok(v) => {
+                            assert_eq!(v, n, "value={} loop={} last_value={}", v, n, last_value);
+                            last_value = v;
+                            break;
+                        }
+                        Err(PopError::Closed) => panic!(),
+                        _ => {}
+                    }
+                    loom::thread::yield_now();
+                }
+            }
+
+            thread.join().unwrap();
+            assert_eq!(recv.pop(), Err(PopError::Closed));
+        })
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    #[cfg(loom)]
+    fn loom_threads_slice_available() {
+        loom::model(|| {
+            use std::collections::VecDeque;
+
+            let (sender, mut recv) = Queue::new(3);
+
+            let mut list = VecDeque::new();
+            for n in 0..10 {
+                list.push_back(n);
+            }
+
+            let thread = loom::thread::spawn(move || {
+                let mut data = Vec::with_capacity(10);
+
+                while !list.is_empty() {
+                    let available = sender.available();
+                    if available > 0 {
+                        for _ in 0..available {
+                            if let Some(value) = list.pop_front() {
+                                data.push(value);
+                            };
+                        }
+                        if let Err(PushError::Closed(_)) = sender.push_slice(&data[..]) {
+                            panic!("closed");
+                        }
+                        data.clear();
+                    }
+                    loom::thread::yield_now();
+                }
+                std::mem::drop(sender);
+            });
+
+            loom::thread::yield_now();
+
+            for n in 0..10 {
+                'inner: loop {
+                    match recv.pop() {
+                        Ok(v) => {
+                            assert_eq!(v, n);
+                            break 'inner;
+                        }
+                        Err(PopError::Closed) => panic!(),
+                        _ => {}
+                    }
+                    loom::thread::yield_now();
+                }
+            }
+
+            thread.join().unwrap();
+            assert_eq!(recv.pop(), Err(PopError::Closed));
+        })
     }
 }

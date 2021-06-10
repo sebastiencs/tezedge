@@ -5,7 +5,7 @@
 //!
 //! A document describing the algorithm can be found [here](https://github.com/tarides/tezos-context-hash).
 
-use std::{array::TryFromSliceError, convert::TryInto, io};
+use std::{array::TryFromSliceError, io};
 
 use blake2::digest::{InvalidOutputSize, Update, VariableOutput};
 use blake2::VarBlake2b;
@@ -13,7 +13,11 @@ use failure::Fail;
 
 use ocaml::ocaml_hash_string;
 
-use crate::{gc::new_gc::{HashId, HashInterner}, persistent::BincodeEncoded, working_tree::{Commit, Entry, Node, NodeKind, Tree}};
+use crate::{
+    gc::repository::{HashId, HashValueStore},
+    persistent::BincodeEncoded,
+    working_tree::{Commit, Entry, Node, NodeKind, Tree},
+};
 use crate::{working_tree::KeyFragment, ContextValue};
 
 mod ocaml;
@@ -69,7 +73,7 @@ enum Inode<'a> {
     Tree {
         depth: u32,
         children: usize,
-        pointers: Vec<(u8, EntryHash)>,
+        pointers: Vec<(u8, HashId)>,
     },
 }
 
@@ -90,7 +94,7 @@ fn index(depth: u32, name: &str) -> u32 {
 fn partition_entries<'a>(
     depth: u32,
     entries: &[(&KeyFragment, &'a Node)],
-    hashes: &mut HashInterner,
+    hashes: &mut HashValueStore,
 ) -> Result<Inode<'a>, HashingError> {
     if entries.is_empty() {
         Ok(Inode::Empty)
@@ -125,7 +129,7 @@ fn partition_entries<'a>(
     }
 }
 
-fn hash_long_inode(inode: &Inode, hashes: &mut HashInterner) -> Result<EntryHash, HashingError> {
+fn hash_long_inode(inode: &Inode, hashes: &mut HashValueStore) -> Result<HashId, HashingError> {
     let mut hasher = VarBlake2b::new(ENTRY_HASH_LEN)?;
 
     match inode {
@@ -183,12 +187,16 @@ fn hash_long_inode(inode: &Inode, hashes: &mut HashInterner) -> Result<EntryHash
 
             for (index, hash) in pointers {
                 hasher.update(&[*index]);
+                let hash = hashes.get_hash(*hash).unwrap();
                 hasher.update(hash);
             }
         }
     }
 
-    Ok(hasher.finalize_boxed().as_ref().try_into()?)
+    let hash_id = hashes.push_hash_with(move |entry| {
+        hasher.finalize_variable(|r| entry.copy_from_slice(r));
+    });
+    Ok(hash_id)
 }
 
 // hash is calculated as:
@@ -196,7 +204,7 @@ fn hash_long_inode(inode: &Inode, hashes: &mut HashInterner) -> Result<EntryHash
 // where:
 // - CHILD NODE - <NODE TYPE><length of string (1 byte)><string/path bytes><length of hash (8bytes)><hash bytes>
 // - NODE TYPE - leaf node(0xff0000000000000000) or internal node (0x0000000000000000)
-fn hash_short_inode(tree: &Tree, hashes: &mut HashInterner) -> Result<EntryHash, HashingError> {
+fn hash_short_inode(tree: &Tree, hashes: &mut HashValueStore) -> Result<HashId, HashingError> {
     let mut hasher = VarBlake2b::new(ENTRY_HASH_LEN)?;
 
     // Node list:
@@ -222,35 +230,41 @@ fn hash_short_inode(tree: &Tree, hashes: &mut HashInterner) -> Result<EntryHash,
         hasher.update(&v.entry_hash(hashes)?);
     }
 
-    Ok(hasher.finalize_boxed().as_ref().try_into()?)
+    let hash_id = hashes.push_hash_with(move |entry| {
+        hasher.finalize_variable(|r| entry.copy_from_slice(r));
+    });
+    Ok(hash_id)
 }
 
 // Calculates hash of tree
 // uses BLAKE2 binary 256 length hash function
-pub(crate) fn hash_tree(tree: &Tree, hashes: &mut HashInterner) -> Result<HashId, HashingError> {
+pub(crate) fn hash_tree(tree: &Tree, hashes: &mut HashValueStore) -> Result<HashId, HashingError> {
     // If there are >256 entries, we need to partition the tree and hash the resulting inode
-    let hash = if tree.len() > 256 {
+    if tree.len() > 256 {
         let entries: Vec<(&KeyFragment, &Node)> =
             tree.iter().map(|(s, n)| (s, n.as_ref())).collect();
         let inode = partition_entries(0, &entries, hashes)?;
-        hash_long_inode(&inode, hashes)?
+        hash_long_inode(&inode, hashes)
     } else {
-        hash_short_inode(tree, hashes)?
-    };
-
-    Ok(hashes.put(hash))
+        hash_short_inode(tree, hashes)
+    }
 }
 
 // Calculates hash of BLOB
 // uses BLAKE2 binary 256 length hash function
 // hash is calculated as <length of data (8 bytes)><data>
-pub(crate) fn hash_blob(blob: &ContextValue, hashes: &mut HashInterner) -> Result<HashId, HashingError> {
+pub(crate) fn hash_blob(
+    blob: &ContextValue,
+    hashes: &mut HashValueStore,
+) -> Result<HashId, HashingError> {
     let mut hasher = VarBlake2b::new(ENTRY_HASH_LEN)?;
     hasher.update(&(blob.len() as u64).to_be_bytes());
     hasher.update(blob);
 
-    let hash = hasher.finalize_boxed().as_ref().try_into()?;
-    Ok(hashes.put(hash))
+    let hash_id = hashes.push_hash_with(move |entry| {
+        hasher.finalize_variable(|r| entry.copy_from_slice(r));
+    });
+    Ok(hash_id)
 }
 
 // Calculates hash of commit
@@ -261,19 +275,22 @@ pub(crate) fn hash_blob(blob: &ContextValue, hashes: &mut HashInterner) -> Resul
 // <time in epoch format (8bytes)
 // <commit author name length (8bytes)><commit author name bytes>
 // <commit message length (8bytes)><commit message bytes>
-pub(crate) fn hash_commit(commit: &Commit, hashes: &mut HashInterner) -> Result<HashId, HashingError> {
+pub(crate) fn hash_commit(
+    commit: &Commit,
+    hashes: &mut HashValueStore,
+) -> Result<HashId, HashingError> {
     let mut hasher = VarBlake2b::new(ENTRY_HASH_LEN)?;
     hasher.update(&(ENTRY_HASH_LEN as u64).to_be_bytes());
 
     // TODO: Do not use unwrap
-    let root_hash = hashes.get(commit.root_hash).unwrap();
+    let root_hash = hashes.get_hash(commit.root_hash).unwrap();
     hasher.update(root_hash);
 
     if commit.parent_commit_hash.is_none() {
         hasher.update(&(0_u64).to_be_bytes());
     } else {
         // TODO: Do not use unwrap
-        let parent_commit_hash = hashes.get(commit.parent_commit_hash.unwrap()).unwrap();
+        let parent_commit_hash = hashes.get_hash(commit.parent_commit_hash.unwrap()).unwrap();
         hasher.update(&(1_u64).to_be_bytes()); // # of parents; we support only 1
         hasher.update(&(parent_commit_hash.len() as u64).to_be_bytes());
         hasher.update(&parent_commit_hash);
@@ -284,12 +301,16 @@ pub(crate) fn hash_commit(commit: &Commit, hashes: &mut HashInterner) -> Result<
     hasher.update(&(commit.message.len() as u64).to_be_bytes());
     hasher.update(&commit.message.clone().into_bytes());
 
-    let entry_hash: EntryHash = hasher.finalize_boxed().as_ref().try_into()?;
-    Ok(hashes.put(entry_hash))
-    // Ok(hasher.finalize_boxed().as_ref().try_into()?)
+    let hash_id = hashes.push_hash_with(move |entry| {
+        hasher.finalize_variable(|r| entry.copy_from_slice(r));
+    });
+    Ok(hash_id)
 }
 
-pub(crate) fn hash_entry(entry: &Entry, hashes: &mut HashInterner) -> Result<HashId, HashingError> {
+pub(crate) fn hash_entry(
+    entry: &Entry,
+    hashes: &mut HashValueStore,
+) -> Result<HashId, HashingError> {
     match entry {
         Entry::Commit(commit) => hash_commit(&commit, hashes),
         Entry::Tree(tree) => hash_tree(&tree, hashes),

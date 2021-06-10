@@ -6,16 +6,28 @@
 // TODO: extend init function
 
 use core::borrow::Borrow;
-use std::{cell::{Ref, RefCell}, convert::TryFrom, rc::Rc};
+use std::{
+    cell::{Ref, RefCell},
+    convert::TryFrom,
+    rc::Rc,
+};
 
 use ocaml_interop::*;
 
 use crypto::hash::ContextHash;
 
-use crate::{ContextValue, IndexApi, PatchContextFunction, ProtocolContextApi, ShellContextApi, TezedgeContext, TezedgeIndex, gc::new_gc::NewGC, initializer::ContextKvStoreConfiguration, initializer::initialize_tezedge_index, timings, working_tree::{
+use crate::{
+    gc::repository::Repository,
+    initializer::initialize_tezedge_index,
+    initializer::ContextKvStoreConfiguration,
+    timings,
+    working_tree::{
         working_tree::{FoldDepth, TreeWalker, WorkingTree},
         NodeKind,
-    }};
+    },
+    ContextValue, IndexApi, PatchContextFunction, ProtocolContextApi, ShellContextApi,
+    TezedgeContext, TezedgeIndex,
+};
 use tezos_api::ocaml_conv::{OCamlBlockHash, OCamlContextHash, OCamlOperationHash};
 
 // TODO: instead of converting errors into strings, it may be useful to pass
@@ -434,8 +446,8 @@ ocaml_export! {
         let result = match tree.get_working_tree_root_hash()  {
             Err(err) => Err(format!("{:?}", err)),
             Ok(hash) => {
-                let new_gc: Ref<NewGC> = (*tree.index.new_gc).borrow();
-                let hash = new_gc.hashes.get(hash).unwrap();
+                let new_gc: Ref<Repository> = (*tree.index.repository).borrow();
+                let hash = new_gc.hashes.get_hash(hash).unwrap();
                 ContextHash::try_from(hash.as_ref()).map_err(|err| format!("{:?}", err))
             }
         };

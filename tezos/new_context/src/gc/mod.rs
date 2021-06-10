@@ -4,7 +4,6 @@
 //! This sub module provides different KV alternatives for context persistence
 
 use std::array::TryFromSliceError;
-use std::collections::HashSet;
 use std::sync::PoisonError;
 
 use blake2::digest::InvalidOutputSize;
@@ -17,16 +16,19 @@ use crate::persistent::{DBError, KeyValueStoreBackend};
 use crate::working_tree::Entry;
 use crate::{ContextKeyValueStoreSchema, EntryHash};
 
+use self::repository::HashId;
+
 // pub mod mark_move_gced;
 // pub mod mark_sweep_gced;
-pub mod new_gc;
+pub mod entries;
+pub mod repository;
 
 pub trait GarbageCollector {
     fn new_cycle_started(&mut self) -> Result<(), GarbageCollectionError>;
 
     fn block_applied(
         &mut self,
-        referenced_older_entries: HashSet<EntryHash>,
+        referenced_older_entries: Vec<HashId>,
     ) -> Result<(), GarbageCollectionError>;
 }
 
@@ -39,7 +41,7 @@ impl<T: NotGarbageCollected> GarbageCollector for T {
 
     fn block_applied(
         &mut self,
-        _referenced_older_entries: HashSet<EntryHash>,
+        _referenced_older_entries: Vec<HashId>,
     ) -> Result<(), GarbageCollectionError> {
         Ok(())
     }
