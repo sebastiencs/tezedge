@@ -2,6 +2,7 @@ use std::{
     collections::{hash_map::DefaultHasher, BTreeMap, HashMap, VecDeque},
     convert::TryFrom,
     hash::Hasher,
+    num::NonZeroUsize,
     sync::Arc,
 };
 
@@ -17,17 +18,18 @@ use tezos_spsc::{Consumer, Producer};
 const PRESERVE_CYCLE_COUNT: usize = 7;
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct HashId(usize);
+pub struct HashId(NonZeroUsize);
 
 impl Into<usize> for HashId {
     fn into(self) -> usize {
-        self.0
+        self.0.get().checked_sub(1).unwrap()
     }
 }
 
 impl From<usize> for HashId {
     fn from(v: usize) -> Self {
-        HashId(v)
+        let v = v.checked_add(1).unwrap();
+        HashId(NonZeroUsize::new(v).unwrap())
     }
 }
 
