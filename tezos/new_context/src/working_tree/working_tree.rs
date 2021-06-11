@@ -1123,7 +1123,7 @@ impl WorkingTree {
     fn get_non_leaf(entry: Entry) -> Node {
         Node {
             node_kind: NodeKind::NonLeaf,
-            entry_hash: RefCell::new(None),
+            entry_hash: Cell::new(None),
             entry: RefCell::new(Some(entry)),
             commited: Cell::new(false),
         }
@@ -1132,7 +1132,7 @@ impl WorkingTree {
     fn get_leaf(entry: Entry) -> Node {
         Node {
             node_kind: NodeKind::Leaf,
-            entry_hash: RefCell::new(None),
+            entry_hash: Cell::new(None),
             entry: RefCell::new(Some(entry)),
             commited: Cell::new(false),
         }

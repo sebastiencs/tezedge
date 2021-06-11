@@ -72,7 +72,7 @@ pub struct Node {
     #[serde(default = "node_serialized")]
     pub commited: Cell<bool>,
     #[serde(serialize_with = "ensure_non_null_entry_hash")]
-    pub entry_hash: RefCell<Option<HashId>>,
+    pub entry_hash: Cell<Option<HashId>>,
     #[serde(skip)]
     pub entry: RefCell<Option<Entry>>,
 }
@@ -105,37 +105,12 @@ impl Node {
     ) -> Result<&'a EntryHash, HashingError> {
         let hash_id = self.entry_hash_id(hashes)?;
         Ok(hashes.get_hash(hash_id).unwrap())
-        // match &mut *self
-        //     .entry_hash
-        //     .try_borrow_mut()
-        //     .map_err(|_| HashingError::EntryBorrow)?
-        // {
-        //     Some(hash_id) => {
-        //         Ok(hashes.get(*hash_id).unwrap().clone())
-        //     },
-        //     entry_hash @ None => {
-        //         let hash_id = hash_entry(
-        //             self.entry
-        //                 .try_borrow()
-        //                 .map_err(|_| HashingError::EntryBorrow)?
-        //                 .as_ref()
-        //                 .ok_or(HashingError::MissingEntry)?,
-        //             hashes,
-        //         )?;
-        //         entry_hash.replace(hash_id);
-        //         Ok(hashes.get(hash_id).unwrap().clone())
-        //     }
-        // }
     }
 
     pub fn entry_hash_id(&self, hashes: &mut HashValueStore) -> Result<HashId, HashingError> {
-        match &mut *self
-            .entry_hash
-            .try_borrow_mut()
-            .map_err(|_| HashingError::EntryBorrow)?
-        {
-            Some(hash_id) => Ok(*hash_id),
-            entry_hash @ None => {
+        match self.entry_hash.get() {
+            Some(hash_id) => Ok(hash_id),
+            None => {
                 let hash_id = hash_entry(
                     self.entry
                         .try_borrow()
@@ -144,7 +119,7 @@ impl Node {
                         .ok_or(HashingError::MissingEntry)?,
                     hashes,
                 )?;
-                entry_hash.replace(hash_id);
+                self.entry_hash.set(Some(hash_id));
                 Ok(hash_id)
             }
         }
@@ -152,21 +127,9 @@ impl Node {
 
     pub fn get_hash_id(&self) -> Result<HashId, MerkleError> {
         self.entry_hash
-            .try_borrow()
-            .map_err(|_| MerkleError::InvalidState("The Entry hash is borrowed more than once"))?
-            .as_ref()
-            .copied()
+            .get()
             .ok_or(MerkleError::InvalidState("Missing entry hash"))
     }
-
-    // pub fn get_hash(&self) -> Result<EntryHash, MerkleError> {
-    //     self.entry_hash
-    //         .try_borrow()
-    //         .map_err(|_| MerkleError::InvalidState("The Entry hash is borrowed more than once"))?
-    //         .as_ref()
-    //         .copied()
-    //         .ok_or(MerkleError::InvalidState("Missing entry hash"))
-    // }
 
     fn set_entry(&self, entry: &Entry) -> Result<(), MerkleError> {
         self.entry
@@ -180,16 +143,14 @@ impl Node {
 
 // Make sure the node contains the entry hash when serializing
 fn ensure_non_null_entry_hash<S>(
-    entry_hash: &RefCell<Option<HashId>>,
+    entry_hash: &Cell<Option<HashId>>,
     s: S,
 ) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
 {
-    let entry_hash_ref = entry_hash.borrow();
-    let entry_hash = entry_hash_ref
-        .as_ref()
+    let entry_hash = entry_hash.get()
         .ok_or_else(|| serde::ser::Error::custom("entry_hash missing in Node"))?;
 
-    s.serialize_some(entry_hash)
+    s.serialize_some(&entry_hash)
 }

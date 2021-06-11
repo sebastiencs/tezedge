@@ -227,7 +227,7 @@ fn hash_short_inode(tree: &Tree, hashes: &mut HashValueStore) -> Result<HashId, 
         leb128::write::unsigned(&mut hasher, k.len() as u64)?;
         hasher.update(k.as_bytes());
         hasher.update(&(ENTRY_HASH_LEN as u64).to_be_bytes());
-        hasher.update(&v.entry_hash(hashes)?);
+        hasher.update(v.entry_hash(hashes)?);
     }
 
     let hash_id = hashes.push_hash_with(move |entry| {
