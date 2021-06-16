@@ -24,15 +24,14 @@ pub fn force_libtezos_linking() {
 use std::collections::BTreeMap;
 use std::num::TryFromIntError;
 use std::sync::PoisonError;
-use std::{array::TryFromSliceError, collections::HashSet};
+use std::array::TryFromSliceError;
 
 use failure::Fail;
-use gc::GarbageCollectionError;
-use persistent::DBError;
+use gc::{repository::HashId, GarbageCollectionError};
+use persistent::{DBError, KeyValueStoreBackend};
 use serde::Deserialize;
 use serde::Serialize;
 
-pub use actions::ActionRecorder;
 pub use hash::EntryHash;
 pub use tezedge_context::PatchContextFunction;
 pub use tezedge_context::TezedgeContext;
@@ -49,9 +48,8 @@ use crypto::hash::{ContextHash, FromBytesError};
 
 mod persistent;
 
-use crate::persistent::{Flushable, KeyValueSchema, KeyValueStoreBackend, Persistable};
+use crate::persistent::{Flushable, KeyValueSchema, Persistable};
 
-pub mod actions;
 pub mod kv_store;
 pub mod tezedge_context;
 
@@ -121,10 +119,7 @@ pub trait IndexApi<T: ShellContextApi + ProtocolContextApi> {
     // checkout context for hash
     fn checkout(&self, context_hash: &ContextHash) -> Result<Option<T>, ContextError>;
     // called after a block is applied
-    fn block_applied(
-        &self,
-        referenced_older_entries: HashSet<EntryHash>,
-    ) -> Result<(), ContextError>;
+    fn block_applied(&self, referenced_older_entries: Vec<HashId>) -> Result<(), ContextError>;
     // called when a new cycle starts
     fn cycle_started(&mut self) -> Result<(), ContextError>;
     // get value for key from a point in history indicated by context hash
@@ -265,12 +260,12 @@ impl KeyValueSchema for ContextKeyValueStoreSchema {
 pub type ContextKeyValueStore = dyn ContextKeyValueStoreWithGargbageCollection + Sync + Send;
 
 pub trait ContextKeyValueStoreWithGargbageCollection:
-    KeyValueStoreBackend<ContextKeyValueStoreSchema> + GarbageCollector + Flushable + Persistable
+    KeyValueStoreBackend + GarbageCollector + Flushable + Persistable
 {
 }
 
 impl<
-        T: KeyValueStoreBackend<ContextKeyValueStoreSchema>
+        T: KeyValueStoreBackend
             + GarbageCollector
             + Flushable
             + Persistable,
