@@ -799,3 +799,53 @@ impl TezedgeContext {
         Ok(commit_hash)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use tezos_api::ffi::{ContextKvStoreConfiguration, TezosContextTezEdgeStorageConfiguration};
+
+    use super::*;
+    use crate::initializer::initialize_tezedge_context;
+
+    #[test]
+    fn init_context() {
+        let context = initialize_tezedge_context(&TezosContextTezEdgeStorageConfiguration {
+            backend: ContextKvStoreConfiguration::InMem,
+            ipc_socket_path: None,
+        })
+        .unwrap();
+
+        // Context is immutable so on any modification, the methods return the new tree
+        let context = context.add(&["a", "b", "c"], vec![1, 2, 3]).unwrap();
+        let context = context.add(&["m", "n", "o"], vec![4, 5, 6]).unwrap();
+        assert_eq!(context.find(&["a", "b", "c"]).unwrap().unwrap(), &[1, 2, 3]);
+
+        let context2 = context.delete(&["m", "n", "o"]).unwrap();
+        assert!(context.mem(&["m", "n", "o"]).unwrap());
+        assert!(context2.mem(&["m", "n", "o"]).unwrap() == false);
+
+        assert!(context.mem_tree(&["a"]));
+
+        let tree_a = context.find_tree(&["a"]).unwrap().unwrap();
+        let context = context.add_tree(&["z"], &tree_a).unwrap();
+
+        assert_eq!(
+            context.find(&["a", "b", "c"]).unwrap().unwrap(),
+            context.find(&["z", "b", "c"]).unwrap().unwrap(),
+        );
+
+        let context = context.add(&["a", "b1", "c"], vec![10, 20, 30]).unwrap();
+        let list = context.list(None, None, &["a"]).unwrap();
+
+        assert_eq!(&*list[0].0, "b");
+        assert_eq!(&*list[1].0, "b1");
+
+        assert_eq!(
+            context.get_merkle_root().unwrap(),
+            [
+                1, 217, 94, 141, 166, 51, 65, 3, 104, 220, 208, 35, 122, 106, 131, 147, 183, 133,
+                81, 239, 195, 111, 25, 29, 88, 1, 46, 251, 25, 205, 202, 229
+            ]
+        );
+    }
+}
