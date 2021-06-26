@@ -53,6 +53,7 @@ use std::{
     cell::{Cell, RefCell},
     rc::Rc,
     sync::{Arc, PoisonError},
+    vec::IntoIter,
 };
 
 use failure::Fail;
@@ -69,7 +70,11 @@ use crate::{
 use crate::{persistent, ContextKeyValueStore};
 use crate::{ContextKey, ContextValue};
 
-use super::{map::ConsumingMapIter, KeyFragment};
+use super::{
+    serializer::{deserialize, serialize_entry, SerializationError},
+    tree_storage::TreeStorage,
+    KeyFragment, NodeBitfield,
+};
 
 // The 'working tree' can be either a Tree or a Value
 #[derive(Clone)]
@@ -122,7 +127,7 @@ struct TreeWalkerLevel {
     root: WorkingTree,
     current_depth: i64,
     yield_self: bool,
-    children_iter: Option<ConsumingMapIter<KeyFragment, Rc<Node>>>,
+    children_iter: Option<IntoIter<(KeyFragment, Rc<Node>)>>,
 }
 
 impl TreeWalkerLevel {
@@ -139,7 +144,11 @@ impl TreeWalkerLevel {
         let children_iter = if should_continue {
             if let WorkingTreeValue::Tree(tree) = &root.value {
                 // TODO: can this clone be avoided?
-                Some(tree.clone().into_iter())
+
+                let tree_storage = root.index.trees.borrow();
+                let tree = tree_storage.get_tree(*tree).unwrap();
+
+                Some(tree.to_vec().into_iter())
             } else {
                 None
             }
@@ -227,8 +236,6 @@ pub enum MerkleError {
     DBError {
         error: persistent::database::DBError,
     },
-    #[fail(display = "Serialization error: {:?}", error)]
-    SerializationError { error: bincode::Error },
     #[fail(display = "Backend error: {:?}", error)]
     GarbageCollectionError { error: GarbageCollectionError },
 
@@ -263,6 +270,8 @@ pub enum MerkleError {
     InvalidState(&'static str),
     #[fail(display = "Mutex/lock error, reason: {:?}", reason)]
     LockError { reason: String },
+    #[fail(display = "Serialization error, {:?}", error)]
+    SerializationError { error: SerializationError },
 }
 
 impl From<persistent::database::DBError> for MerkleError {
@@ -277,15 +286,15 @@ impl From<HashingError> for MerkleError {
     }
 }
 
-impl From<GarbageCollectionError> for MerkleError {
-    fn from(error: GarbageCollectionError) -> Self {
-        Self::GarbageCollectionError { error }
+impl From<SerializationError> for MerkleError {
+    fn from(error: SerializationError) -> Self {
+        Self::SerializationError { error }
     }
 }
 
-impl From<bincode::Error> for MerkleError {
-    fn from(error: bincode::Error) -> Self {
-        Self::SerializationError { error }
+impl From<GarbageCollectionError> for MerkleError {
+    fn from(error: GarbageCollectionError) -> Self {
+        Self::GarbageCollectionError { error }
     }
 }
 
@@ -329,20 +338,15 @@ struct SerializingData<'a> {
     referenced_older_entries: Vec<HashId>,
     store: &'a mut ContextKeyValueStore,
     serialized: Vec<u8>,
-    /// When false, do not serialize or keeps older entries
-    commit_to_storage: bool,
 }
 
 impl<'a> SerializingData<'a> {
-    fn new(store: &'a mut ContextKeyValueStore, commit_to_storage: bool) -> Self {
-        let cap = if commit_to_storage { 2048 } else { 0 };
-
+    fn new(store: &'a mut ContextKeyValueStore) -> Self {
         Self {
-            batch: Vec::with_capacity(cap),
-            referenced_older_entries: Vec::with_capacity(cap),
+            batch: Vec::with_capacity(2048),
+            referenced_older_entries: Vec::with_capacity(2048),
             store,
-            serialized: Vec::with_capacity(cap),
-            commit_to_storage,
+            serialized: Vec::with_capacity(2048),
         }
     }
 
@@ -350,28 +354,28 @@ impl<'a> SerializingData<'a> {
         &mut self,
         entry_hash: HashId,
         entry: &Entry,
+        tree_storage: &TreeStorage<KeyFragment, Rc<Node>>,
     ) -> Result<(), MerkleError> {
-        if self.commit_to_storage {
-            self.serialized.clear();
-            bincode::serialize_into(&mut self.serialized, entry)?;
-            self.batch
-                .push((entry_hash, Arc::from(self.serialized.as_slice())));
-        }
+        serialize_entry(entry, &mut self.serialized, tree_storage)?;
+        self.batch
+            .push((entry_hash, Arc::from(self.serialized.as_slice())));
         Ok(())
     }
 
-    fn add_older_entry(&mut self, node: &Node) -> Result<(), MerkleError> {
-        if self.commit_to_storage {
-            self.referenced_older_entries
-                .push(node.entry_hash_id(self.store)?);
-        }
+    fn add_older_entry(
+        &mut self,
+        node: &Node,
+        tree_storage: &TreeStorage<KeyFragment, Rc<Node>>,
+    ) -> Result<(), MerkleError> {
+        self.referenced_older_entries
+            .push(node.entry_hash_id(self.store, tree_storage)?);
         Ok(())
     }
 }
 
 impl WorkingTree {
     pub fn new(index: TezedgeIndex) -> Self {
-        Self::new_with_tree(index, Tree::new())
+        Self::new_with_tree(index, Tree::empty())
     }
 
     pub fn new_with_tree(index: TezedgeIndex, tree: Tree) -> Self {
@@ -397,7 +401,9 @@ impl WorkingTree {
 
     pub fn find_tree(&self, key: &ContextKey) -> Result<Option<Self>, MerkleError> {
         let root = self.get_working_tree_root_ref();
-        let tree = self.find_raw_tree(root.as_ref(), key)?;
+        let mut tree_storage = self.index.trees.borrow_mut();
+
+        let tree = self.find_raw_tree(root.as_ref(), key, &mut tree_storage)?;
 
         if tree.is_empty() {
             return Ok(None);
@@ -458,7 +464,11 @@ impl WorkingTree {
         key: &ContextKey,
     ) -> Result<Vec<(KeyFragment, WorkingTree)>, MerkleError> {
         let root = self.get_working_tree_root_ref();
-        let node = self.find_raw_tree(root.as_ref(), key)?;
+        let mut tree_storage = self.index.trees.borrow_mut();
+
+        let node = self.find_raw_tree(root.as_ref(), key, &mut tree_storage)?;
+
+        let node = tree_storage.get_tree(node).unwrap().to_vec();
 
         let node_length = node.len();
         let length = length.unwrap_or(node_length).min(node_length);
@@ -467,7 +477,7 @@ impl WorkingTree {
         let mut children = Vec::with_capacity(length);
 
         for (key, value) in node.iter().skip(offset).take(length) {
-            let value = match self.node_entry(value)? {
+            let value = match self.node_entry(value, &mut tree_storage)? {
                 Entry::Tree(tree) => Self::new_with_tree(self.index.clone(), tree),
                 Entry::Blob(value) => Self::new_with_value(self.index.clone(), value),
                 Entry::Commit(_) => continue,
@@ -480,8 +490,10 @@ impl WorkingTree {
     }
 
     fn node_tree(&self, node: &Node) -> Result<Self, MerkleError> {
-        let entry = self.node_entry(&node)?;
-        let tree = match node.node_kind {
+        let mut tree_storage = self.index.trees.borrow_mut();
+
+        let entry = self.node_entry(&node, &mut tree_storage)?;
+        let tree = match node.node_kind() {
             NodeKind::NonLeaf => WorkingTree {
                 index: self.index.clone(),
                 value: WorkingTreeValue::Tree(self.entry_tree(&entry)?.clone()),
@@ -558,31 +570,52 @@ impl WorkingTree {
 
     fn value_exists(&self, tree: &Tree, key: &ContextKey) -> Result<bool, MerkleError> {
         let (file, path) = key.split_last().ok_or(MerkleError::KeyEmpty)?;
+        let mut tree_storage = self.index.trees.borrow_mut();
 
         // find tree by path
-        self.find_raw_tree(&tree, &path)
-            .map(|node| node.get(*file).is_some())
+        self.find_raw_tree(&tree, &path, &mut tree_storage)
+            .map(|node| {
+                tree_storage.get(node, *file).is_some()
+                // let node = match tree_storage.get_tree(node) {
+                //     Some(node) => node,
+                //     None => return false,
+                // };
+                // //tree_storage.get(tree_id)
+                // node.get(*file).is_some()
+            })
             .or(Ok(false))
     }
 
     fn directory_exists(&self, root: &Tree, key: &ContextKey) -> bool {
+        let mut tree_storage = self.index.trees.borrow_mut();
         // find tree by path
-        self.find_raw_tree(root, &key)
+        self.find_raw_tree(root, &key, &mut tree_storage)
             .map(|node| !node.is_empty())
             .unwrap_or(false)
     }
 
     fn get_from_tree(&self, root: &Tree, key: &ContextKey) -> Result<ContextValue, MerkleError> {
+        let mut tree_storage = self.index.trees.borrow_mut();
+
         let (file, path) = key.split_last().ok_or(MerkleError::KeyEmpty)?;
-        let node = self.find_raw_tree(&root, &path)?;
+        let node = self.find_raw_tree(&root, &path, &mut tree_storage)?;
 
         // get file node from tree
-        let node = node.get(*file).ok_or_else(|| MerkleError::ValueNotFound {
-            key: self.key_to_string(key),
-        })?;
+        let node =
+            tree_storage
+                .get(node, *file)
+                .cloned()
+                .ok_or_else(|| MerkleError::ValueNotFound {
+                    key: self.key_to_string(key),
+                })?;
+
+        // // get file node from tree
+        // let node = node.get(*file).ok_or_else(|| MerkleError::ValueNotFound {
+        //     key: self.key_to_string(key),
+        // })?;
 
         // get blob
-        match self.node_entry(&node)? {
+        match self.node_entry(&node, &mut tree_storage)? {
             Entry::Blob(blob) => Ok(blob),
             _ => Err(MerkleError::ValueIsNotABlob {
                 key: self.key_to_string(key),
@@ -597,6 +630,7 @@ impl WorkingTree {
         entry: &Entry,
         entries: &mut Vec<(ContextKeyOwned, ContextValue)>,
         store: &ContextKeyValueStore,
+        tree_storage: &mut TreeStorage<KeyFragment, Rc<Node>>,
     ) -> Result<(), MerkleError> {
         match entry {
             Entry::Blob(blob) => {
@@ -607,14 +641,21 @@ impl WorkingTree {
             Entry::Tree(tree) => {
                 // Go through all descendants and gather errors. Remap error if there is a failure
                 // anywhere in the recursion paths. TODO: is revert possible?
+
+                let tree = tree_storage.get_tree(*tree).unwrap().to_vec();
+
                 tree.iter()
                     .map(|(key, child_node)| {
                         let fullpath = path.to_owned() + "/" + key;
 
-                        match self.node_entry(&child_node) {
+                        match self.node_entry(&child_node, tree_storage) {
                             Err(_) => Ok(()),
                             Ok(entry) => self.get_key_values_from_tree_recursively(
-                                &fullpath, &entry, entries, store,
+                                &fullpath,
+                                &entry,
+                                entries,
+                                store,
+                                tree_storage,
                             ),
                         }
                     })
@@ -626,9 +667,13 @@ impl WorkingTree {
             }
             Entry::Commit(commit) => match self.get_entry_from_hash_id(commit.root_hash, store) {
                 Err(err) => Err(err),
-                Ok(entry) => {
-                    self.get_key_values_from_tree_recursively(path, &entry, entries, store)
-                }
+                Ok(entry) => self.get_key_values_from_tree_recursively(
+                    path,
+                    &entry,
+                    entries,
+                    store,
+                    tree_storage,
+                ),
             },
         }
     }
@@ -640,10 +685,12 @@ impl WorkingTree {
         prefix: &ContextKey,
         store: &ContextKeyValueStore,
     ) -> Result<Option<Vec<(ContextKeyOwned, ContextValue)>>, MerkleError> {
-        let commit = self.get_commit(context_hash_id)?;
+        let mut tree_storage = self.index.trees.borrow_mut();
+
+        let commit = self.get_commit(context_hash_id, &mut tree_storage)?;
         let entry = self.get_entry_from_hash_id(commit.root_hash, store)?;
         let root_tree = self.entry_tree(&entry)?;
-        let rv = self._get_key_values_by_prefix(root_tree, prefix, store);
+        let rv = self._get_key_values_by_prefix(root_tree, prefix, store, &mut tree_storage);
 
         rv
     }
@@ -653,17 +700,26 @@ impl WorkingTree {
         root_tree: &Tree,
         prefix: &ContextKey,
         store: &ContextKeyValueStore,
+        tree_storage: &mut TreeStorage<KeyFragment, Rc<Node>>,
     ) -> Result<Option<Vec<(ContextKeyOwned, ContextValue)>>, MerkleError> {
-        let prefixed_tree = self.find_raw_tree(root_tree, prefix)?;
+        let prefixed_tree = self.find_raw_tree(root_tree, prefix, tree_storage)?;
         let mut keyvalues: Vec<(ContextKeyOwned, ContextValue)> = Vec::new();
         let delimiter = if prefix.is_empty() { "" } else { "/" };
 
+        let prefixed_tree = tree_storage.get_tree(prefixed_tree).unwrap().to_vec();
+
         for (key, child_node) in prefixed_tree.iter() {
-            let entry = self.node_entry(&child_node)?;
+            let entry = self.node_entry(&child_node, tree_storage)?;
 
             // construct full path as Tree key is only one chunk of it
             let fullpath = self.key_to_string(prefix) + delimiter + key;
-            self.get_key_values_from_tree_recursively(&fullpath, &entry, &mut keyvalues, store)?;
+            self.get_key_values_from_tree_recursively(
+                &fullpath,
+                &entry,
+                &mut keyvalues,
+                store,
+                tree_storage,
+            )?;
         }
 
         if keyvalues.is_empty() {
@@ -686,7 +742,6 @@ impl WorkingTree {
         store: &mut ContextKeyValueStore,
         commit_to_storage: bool,
     ) -> Result<(HashId, Vec<(HashId, Arc<[u8]>)>, Vec<HashId>), MerkleError> {
-        //let stat_updater = StatUpdater::new(MerkleStorageAction::Commit, None);
         let root_hash = self.get_working_tree_root_hash(store)?;
         let root = self.get_working_tree_root_ref();
 
@@ -697,12 +752,21 @@ impl WorkingTree {
             author,
             message,
         };
-        let entry = Entry::Commit(new_commit.clone());
+        let entry = Entry::Commit(Box::new(new_commit.clone()));
         let commit_hash = hash_commit(&new_commit, store)?;
 
         // produce entries to be persisted to storage
-        let mut data = SerializingData::new(store, commit_to_storage);
-        self.get_entries_recursively(&entry, commit_hash, Some(root.as_ref()), &mut data)?;
+        let mut data = SerializingData::new(store);
+        if commit_to_storage {
+            let tree_storage = self.index.trees.borrow();
+            self.get_entries_recursively(
+                &entry,
+                commit_hash,
+                Some(root.as_ref()),
+                &mut data,
+                &tree_storage,
+            )?;
+        }
 
         Ok((commit_hash, data.batch, data.referenced_older_entries))
     }
@@ -726,7 +790,9 @@ impl WorkingTree {
     }
 
     fn _add(&self, key: &ContextKey, node: Node) -> Result<Entry, MerkleError> {
-        self.compute_new_root_with_change(&key, Some(node))
+        let mut tree_storage = self.index.trees.borrow_mut();
+
+        self.compute_new_root_with_change(&key, Some(node), &mut tree_storage)
     }
 
     /// Delete an item from the staging area.
@@ -742,7 +808,8 @@ impl WorkingTree {
         if key.is_empty() {
             return Ok(Entry::Tree(root.as_ref().clone()));
         }
-        self.compute_new_root_with_change(&key, None)
+        let mut tree_storage = self.index.trees.borrow_mut();
+        self.compute_new_root_with_change(&key, None, &mut tree_storage)
     }
 
     /// Copy subtree under a new path.
@@ -766,9 +833,10 @@ impl WorkingTree {
         from_key: &ContextKey,
         to_key: &ContextKey,
     ) -> Result<Option<Entry>, MerkleError> {
+        let mut tree_storage = self.index.trees.borrow_mut();
         let root = self.get_working_tree_root_ref();
 
-        let source_tree = match self.find_raw_tree(root.as_ref(), &from_key) {
+        let source_tree = match self.find_raw_tree(root.as_ref(), &from_key, &mut tree_storage) {
             Ok(tree) => tree,
             Err(MerkleError::EntryNotFound { .. }) => return Ok(None),
             Err(err) => return Err(err),
@@ -777,6 +845,7 @@ impl WorkingTree {
         Ok(Some(self.compute_new_root_with_change(
             &to_key,
             Some(Self::get_non_leaf(Entry::Tree(source_tree))),
+            &mut tree_storage,
         )?))
     }
 
@@ -793,6 +862,7 @@ impl WorkingTree {
         &self,
         key: &[&str],
         new_node: Option<Node>,
+        tree_storage: &mut TreeStorage<KeyFragment, Rc<Node>>,
     ) -> Result<Entry, MerkleError> {
         let last = match key.last() {
             Some(last) => *last,
@@ -812,32 +882,41 @@ impl WorkingTree {
                     // that means that we just removed whole tree
                     // so set merkle storage root to empty dir and place
                     // it in staging area
-                    return Ok(Entry::Tree(Tree::new()));
+                    return Ok(Entry::Tree(Tree::empty()));
                 }
             },
         };
 
         let path = &key[..key.len() - 1];
         let root = self.get_working_tree_root_ref();
-        let tree = self.find_raw_tree(root.as_ref(), path)?;
+        let tree = self.find_raw_tree(root.as_ref(), path, tree_storage)?;
 
         let tree = match new_node {
-            None => tree.remove(last),
+            None => tree_storage.remove(tree, last),
             Some(new_node) => {
                 let last = self.index.get_str(last);
-                tree.insert(last.into(), Rc::new(new_node))
+                tree_storage.insert(tree, last, Rc::new(new_node))
             }
         };
 
         if tree.is_empty() {
-            self.compute_new_root_with_change(path, None)
+            self.compute_new_root_with_change(path, None, tree_storage)
         } else {
-            self.compute_new_root_with_change(path, Some(Self::get_non_leaf(Entry::Tree(tree))))
+            self.compute_new_root_with_change(
+                path,
+                Some(Self::get_non_leaf(Entry::Tree(tree))),
+                tree_storage,
+            )
         }
     }
 
-    fn find_raw_tree(&self, root: &Tree, key: &[&str]) -> Result<Tree, MerkleError> {
-        self.index.find_raw_tree(root, key)
+    fn find_raw_tree(
+        &self,
+        root: &Tree,
+        key: &[&str],
+        tree_storage: &mut TreeStorage<KeyFragment, Rc<Node>>,
+    ) -> Result<Tree, MerkleError> {
+        self.index.find_raw_tree(*root, key, tree_storage)
     }
 
     pub fn get_working_tree_root_hash(
@@ -846,7 +925,8 @@ impl WorkingTree {
     ) -> Result<HashId, MerkleError> {
         // TOOD: unnecessery recalculation, should be one when set_staged_root
         let root = self.get_working_tree_root_ref();
-        hash_tree(root.as_ref(), store).map_err(MerkleError::from)
+        let tree_storage = self.index.trees.borrow();
+        hash_tree(root.as_ref(), store, &tree_storage).map_err(MerkleError::from)
     }
 
     /// Builds vector of entries to be persisted to DB, recursively
@@ -856,22 +936,26 @@ impl WorkingTree {
         entry_hash: HashId,
         root: Option<&Tree>,
         data: &mut SerializingData,
+        tree_storage: &TreeStorage<KeyFragment, Rc<Node>>,
     ) -> Result<(), MerkleError> {
         // Add entry to batch
-        data.add_serialized_entry(entry_hash, entry)?;
+        data.add_serialized_entry(entry_hash, entry, tree_storage)?;
 
         match entry {
             Entry::Blob(_) => Ok(()),
             Entry::Tree(tree) => {
                 // Go through all descendants and gather errors. Remap error if there is a failure
                 // anywhere in the recursion paths. TODO: is revert possible?
+                // let tree_storage = self.index.trees.borrow();
+                let tree = tree_storage.get_tree(*tree).unwrap();
+
                 tree.iter()
                     .map(|(_, child_node)| {
-                        if child_node.commited.get() {
-                            data.add_older_entry(&child_node)?;
+                        if child_node.is_commited() {
+                            data.add_older_entry(&child_node, tree_storage)?;
                             return Ok(());
                         }
-                        child_node.commited.set(true);
+                        child_node.set_commited(true);
 
                         match child_node
                             .entry
@@ -882,9 +966,10 @@ impl WorkingTree {
                             None => Ok(()),
                             Some(entry) => self.get_entries_recursively(
                                 entry,
-                                child_node.entry_hash_id(data.store)?,
+                                child_node.entry_hash_id(data.store, &tree_storage)?,
                                 None,
                                 data,
+                                tree_storage,
                             ),
                         }
                     })
@@ -899,7 +984,7 @@ impl WorkingTree {
                     Some(root) => Entry::Tree(root.clone()),
                     None => self.get_entry_from_hash_id(commit.root_hash, data.store)?,
                 };
-                self.get_entries_recursively(&entry, commit.root_hash, None, data)
+                self.get_entries_recursively(&entry, commit.root_hash, None, data, tree_storage)
             }
         }
     }
@@ -911,7 +996,11 @@ impl WorkingTree {
     ) -> Result<Entry, MerkleError> {
         match store.get_value(hash_id)? {
             None => Err(MerkleError::EntryNotFound { hash_id }),
-            Some(entry_bytes) => Ok(bincode::deserialize(entry_bytes.as_ref())?),
+            Some(entry_bytes) => {
+                let mut strings = self.index.strings.borrow_mut();
+                let mut tree_storage = self.index.trees.borrow_mut();
+                Ok(deserialize(entry_bytes.as_ref(), &mut strings, &mut tree_storage).unwrap())
+            }
         }
     }
 
@@ -943,30 +1032,54 @@ impl WorkingTree {
         }
     }
 
-    fn get_commit(&self, hash: HashId) -> Result<Commit, MerkleError> {
-        self.index.get_commit(hash)
+    fn get_commit(
+        &self,
+        hash: HashId,
+        tree_storage: &mut TreeStorage<KeyFragment, Rc<Node>>,
+    ) -> Result<Commit, MerkleError> {
+        self.index.get_commit(hash, tree_storage)
     }
 
-    fn node_entry(&self, node: &Node) -> Result<Entry, MerkleError> {
-        self.index.node_entry(node)
+    fn node_entry(
+        &self,
+        node: &Node,
+        tree_storage: &mut TreeStorage<KeyFragment, Rc<Node>>,
+    ) -> Result<Entry, MerkleError> {
+        self.index.node_entry(node, tree_storage)
     }
 
     fn get_non_leaf(entry: Entry) -> Node {
         Node {
-            node_kind: NodeKind::NonLeaf,
-            entry_hash: Cell::new(None),
+            bitfield: Cell::new(
+                NodeBitfield::new()
+                    .with_node_kind(NodeKind::NonLeaf)
+                    .with_commited(false),
+            ),
             entry: RefCell::new(Some(entry)),
-            commited: Cell::new(false),
         }
+        // Node {
+        //     node_kind: NodeKind::NonLeaf,
+        //     entry_hash: Cell::new(None),
+        //     entry: RefCell::new(Some(entry)),
+        //     commited: Cell::new(false),
+        // }
     }
 
     pub fn get_leaf(entry: Entry) -> Node {
         Node {
-            node_kind: NodeKind::Leaf,
-            entry_hash: Cell::new(None),
+            bitfield: Cell::new(
+                NodeBitfield::new()
+                    .with_node_kind(NodeKind::Leaf)
+                    .with_commited(false),
+            ),
             entry: RefCell::new(Some(entry)),
-            commited: Cell::new(false),
         }
+        // Node {
+        //     node_kind: NodeKind::Leaf,
+        //     entry_hash: Cell::new(None),
+        //     entry: RefCell::new(Some(entry)),
+        //     commited: Cell::new(false),
+        // }
     }
 
     /// Convert key in array form to string form
@@ -982,7 +1095,7 @@ impl WorkingTree {
     fn get_working_tree_root_ref(&self) -> Cow<Tree> {
         match &self.value {
             WorkingTreeValue::Tree(tree) => Cow::Borrowed(tree),
-            WorkingTreeValue::Value(_) => Cow::Owned(Tree::new()),
+            WorkingTreeValue::Value(_) => Cow::Owned(Tree::empty()),
         }
     }
 

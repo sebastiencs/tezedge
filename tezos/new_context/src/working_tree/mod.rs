@@ -4,22 +4,26 @@
 use std::{
     borrow::{Borrow, Cow},
     cell::{Cell, RefCell},
+    convert::TryInto,
     rc::Rc,
 };
-
-use serde::{Deserialize, Serialize};
 
 use crate::hash::{hash_entry, EntryHash, HashingError};
 use crate::ContextValue;
 use crate::{kv_store::HashId, ContextKeyValueStore};
 
-use self::{map::Map, working_tree::MerkleError};
+use self::{
+    tree_storage::{TreeStorage, TreeStorageId},
+    working_tree::MerkleError,
+};
 
 pub mod map;
+pub mod serializer;
+pub mod tree_storage;
 pub mod working_tree;
 pub mod working_tree_stats; // TODO - TE-261 remove or reimplement
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub struct KeyFragment(pub(crate) Rc<str>);
 
 impl std::ops::Deref for KeyFragment {
@@ -51,34 +55,43 @@ impl From<Rc<str>> for KeyFragment {
 // Tree must be an ordered structure for consistent hash in hash_tree.
 // The entry names *must* be in lexicographical order, as required by the hashing algorithm.
 // Currently immutable OrdMap is used to allow cloning trees without too much overhead.
-pub type Tree = Map<KeyFragment, Rc<Node>>;
+// pub type Tree = Map<KeyFragment, Rc<Node>>;
+pub type Tree = TreeStorageId;
 
-#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+use modular_bitfield::prelude::*;
+
+#[derive(BitfieldSpecifier)]
+#[bits = 1]
+#[derive(Clone, Debug, Eq, PartialEq, Copy)]
 pub enum NodeKind {
-    NonLeaf,
     Leaf,
+    NonLeaf,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+#[bitfield]
+#[derive(Clone, Debug, Eq, PartialEq, Copy)]
+pub struct NodeBitfield {
+    node_kind: NodeKind,
+    commited: bool,
+    entry_hash_id: B62,
+}
+
+impl NodeBitfield {
+    pub fn new_with(kind: NodeKind, hash_id: HashId) -> Self {
+        Self::new()
+            .with_entry_hash_id(hash_id.as_usize().try_into().unwrap())
+            .with_node_kind(kind)
+            .with_commited(false)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Node {
-    pub node_kind: NodeKind,
-    /// True when the entry has already been commited.
-    /// We don't need to serialize it twice.
-    #[serde(skip)]
-    #[serde(default = "node_serialized")]
-    pub commited: Cell<bool>,
-    #[serde(serialize_with = "ensure_non_null_entry_hash")]
-    pub entry_hash: Cell<Option<HashId>>,
-    #[serde(skip)]
+    pub bitfield: Cell<NodeBitfield>,
     pub entry: RefCell<Option<Entry>>,
 }
 
-fn node_serialized() -> Cell<bool> {
-    // Deserializing the Node means it was already serialized
-    Cell::new(true)
-}
-
-#[derive(Debug, Hash, Clone, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Debug, Hash, Clone, Eq, PartialEq)]
 pub struct Commit {
     pub(crate) parent_commit_hash: Option<HashId>,
     pub(crate) root_hash: HashId,
@@ -87,26 +100,49 @@ pub struct Commit {
     pub(crate) message: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Entry {
     Tree(Tree),
     Blob(ContextValue),
-    Commit(Commit),
+    Commit(Box<Commit>),
 }
 
 impl Node {
+    pub fn is_commited(&self) -> bool {
+        self.bitfield.get().commited()
+    }
+
+    pub fn set_commited(&self, commited: bool) {
+        let bitfield = self.bitfield.get().with_commited(commited);
+        self.bitfield.set(bitfield);
+    }
+
+    pub fn node_kind(&self) -> NodeKind {
+        self.bitfield.get().node_kind()
+    }
+
+    pub fn hash_id(&self) -> Option<HashId> {
+        let id = self.bitfield.get().entry_hash_id();
+        HashId::new(id.try_into().ok()?)
+    }
+
     pub fn entry_hash<'a>(
         &self,
         store: &'a mut ContextKeyValueStore,
+        tree_storage: &TreeStorage<KeyFragment, Rc<Node>>,
     ) -> Result<Cow<'a, EntryHash>, HashingError> {
-        let hash_id = self.entry_hash_id(store)?;
+        let hash_id = self.entry_hash_id(store, tree_storage)?;
         Ok(store
             .get_hash(hash_id)?
             .ok_or_else(|| HashingError::HashIdNotFound { hash_id })?)
     }
 
-    pub fn entry_hash_id(&self, store: &mut ContextKeyValueStore) -> Result<HashId, HashingError> {
-        match self.entry_hash.get() {
+    pub fn entry_hash_id(
+        &self,
+        store: &mut ContextKeyValueStore,
+        tree_storage: &TreeStorage<KeyFragment, Rc<Node>>,
+    ) -> Result<HashId, HashingError> {
+        match self.hash_id() {
             Some(hash_id) => Ok(hash_id),
             None => {
                 let hash_id = hash_entry(
@@ -116,16 +152,19 @@ impl Node {
                         .as_ref()
                         .ok_or(HashingError::MissingEntry)?,
                     store,
+                    tree_storage,
                 )?;
-                self.entry_hash.set(Some(hash_id));
+                let mut bitfield = self.bitfield.get();
+                bitfield.set_entry_hash_id(hash_id.as_usize().try_into().unwrap());
+                self.bitfield.set(bitfield);
+                //self.entry_hash.set(Some(hash_id));
                 Ok(hash_id)
             }
         }
     }
 
     pub fn get_hash_id(&self) -> Result<HashId, MerkleError> {
-        self.entry_hash
-            .get()
+        self.hash_id()
             .ok_or(MerkleError::InvalidState("Missing entry hash"))
     }
 
@@ -137,16 +176,4 @@ impl Node {
 
         Ok(())
     }
-}
-
-// Make sure the node contains the entry hash when serializing
-fn ensure_non_null_entry_hash<S>(entry_hash: &Cell<Option<HashId>>, s: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    let entry_hash = entry_hash
-        .get()
-        .ok_or_else(|| serde::ser::Error::custom("entry_hash missing in Node"))?;
-
-    s.serialize_some(&entry_hash)
 }

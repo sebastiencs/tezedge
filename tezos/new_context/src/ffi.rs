@@ -21,7 +21,7 @@ use crate::{
     timings,
     working_tree::{
         working_tree::{FoldDepth, TreeWalker, WorkingTree},
-        NodeKind,
+        NodeKind, Tree,
     },
     ContextKeyValueStore, ContextValue, IndexApi, PatchContextFunction, ProtocolContextApi,
     ShellContextApi, TezedgeContext, TezedgeIndex,
@@ -517,7 +517,7 @@ ocaml_export! {
         let ocaml_context = rt.get(context);
         let context: &TezedgeContextFFI = ocaml_context.borrow();
         let context = context.0.borrow().clone();
-        let empty_tree = WorkingTree::new_with_tree(context.index, Default::default());
+        let empty_tree = WorkingTree::new_with_tree(context.index, Tree::empty());
 
         empty_tree.to_ocaml(rt)
     }

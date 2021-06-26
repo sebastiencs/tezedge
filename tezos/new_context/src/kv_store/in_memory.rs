@@ -351,10 +351,4 @@ impl InMemory {
 
         Ok(())
     }
-
-    #[cfg(test)]
-    pub(crate) fn put_entry_hash(&mut self, entry_hash: EntryHash) -> HashId {
-        let vacant = self.get_vacant_entry_hash().unwrap();
-        vacant.write_with(|entry| *entry = entry_hash)
-    }
 }

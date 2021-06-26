@@ -50,7 +50,7 @@ use crypto::hash::{ContextHash, FromBytesError};
 
 mod persistent;
 
-use crate::persistent::{Flushable, KeyValueSchema, Persistable};
+use crate::persistent::{Flushable, Persistable};
 
 pub mod kv_store;
 pub mod tezedge_context;
@@ -192,8 +192,6 @@ pub enum ContextError {
     GarbageCollectionError { error: GarbageCollectionError },
     #[fail(display = "Database error error {:?}", error)]
     DBError { error: DBError },
-    #[fail(display = "Serialization error: {:?}", error)]
-    SerializationError { error: bincode::Error },
     #[fail(
         display = "Found wrong structure. Was looking for {}, but found {}",
         sought, found
@@ -239,31 +237,12 @@ impl From<DBError> for ContextError {
     }
 }
 
-impl From<bincode::Error> for ContextError {
-    fn from(error: bincode::Error) -> Self {
-        Self::SerializationError { error }
-    }
-}
-
 impl<T> From<PoisonError<T>> for ContextError {
     fn from(pe: PoisonError<T>) -> Self {
         Self::LockError {
             reason: format!("{}", pe),
         }
     }
-}
-
-// keys is hash of Entry
-pub type ContextKeyValueStoreSchemaKeyType = EntryHash;
-// Entry (serialized) - watch out, this is not the same as ContextValue
-pub type MerkleKeyValueStoreSchemaValueType = Vec<u8>;
-
-/// Common serialization prescript for K-V
-pub struct ContextKeyValueStoreSchema;
-
-impl KeyValueSchema for ContextKeyValueStoreSchema {
-    type Key = ContextKeyValueStoreSchemaKeyType;
-    type Value = MerkleKeyValueStoreSchemaValueType;
 }
 
 /// Base trait for kv-store to be used with merkle

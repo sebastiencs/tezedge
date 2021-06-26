@@ -9,7 +9,7 @@ use crypto::{
 };
 use failure::Fail;
 
-pub use codec::{BincodeEncoded, Codec, Decoder, Encoder, SchemaError};
+pub use codec::{Codec, Decoder, Encoder, SchemaError};
 pub use database::DBError;
 
 use crate::{

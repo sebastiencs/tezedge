@@ -2137,6 +2137,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "modular-bitfield"
+version = "0.11.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a53d79ba8304ac1c4f9eb3b9d281f21f7be9d4626f72ce7df4ad8fbde4f38a74"
+dependencies = [
+ "modular-bitfield-impl",
+ "static_assertions",
+]
+
+[[package]]
+name = "modular-bitfield-impl"
+version = "0.11.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a7d5f7076603ebc68de2dc6a650ec331a062a13abaa346975be747bbfa4b789"
+dependencies = [
+ "proc-macro2 1.0.24",
+ "quote 1.0.9",
+ "syn 1.0.60",
+]
+
+[[package]]
 name = "monitoring"
 version = "1.6.0"
 dependencies = [
@@ -3986,19 +4007,15 @@ dependencies = [
 name = "tezos_new_context"
 version = "1.6.0"
 dependencies = [
- "bincode",
  "blake2",
- "bytes 1.0.1",
  "crossbeam-channel",
  "crypto",
- "derive_builder",
  "failure",
- "flate2",
- "getset",
  "hex",
  "ipc",
  "lazy_static",
  "leb128",
+ "modular-bitfield",
  "ocaml-interop",
  "ocaml-sys",
  "serde 1.0.123",
