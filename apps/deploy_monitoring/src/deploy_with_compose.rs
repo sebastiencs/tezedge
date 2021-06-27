@@ -13,18 +13,19 @@ use crate::node::{OcamlNode, TezedgeNode};
 
 pub async fn launch_stack(compose_file_path: &PathBuf, log: &Logger, tezedge_only: bool) {
     info!(log, "Tezedge explorer is starting");
-    start_with_compose(compose_file_path, Explorer::NAME, "explorer");
+    let output = start_with_compose(compose_file_path, Explorer::NAME, "explorer");
+    println!("output explorer={:?}", output);
     wait_for_start(&format!("http://localhost:{}", EXPLORER_PORT)).await;
     info!(log, "Tezedge explorer is running");
 
-    info!(log, "Debugger is starting");
-    start_with_compose(compose_file_path, TezedgeDebugger::NAME, "tezedge-debugger");
-    wait_for_start(&format!("http://localhost:{}/v2/log", DEBUGGER_PORT)).await;
-    info!(log, "Debugger is running");
+    // info!(log, "Debugger is starting");
+    // start_with_compose(compose_file_path, TezedgeDebugger::NAME, "tezedge-debugger");
+    // wait_for_start(&format!("http://localhost:{}/v2/log", DEBUGGER_PORT)).await;
+    // info!(log, "Debugger is running");
 
-    info!(log, "Memprof is starting");
-    start_with_compose(compose_file_path, TezedgeMemprof::NAME, "tezedge-memprof");
-    info!(log, "Memprof is running");
+    // info!(log, "Memprof is starting");
+    // start_with_compose(compose_file_path, TezedgeMemprof::NAME, "tezedge-memprof");
+    // info!(log, "Memprof is running");
 
     info!(log, "Tezedge node is starting");
     start_with_compose(compose_file_path, TezedgeNode::NAME, "tezedge-node");
@@ -81,7 +82,7 @@ pub async fn shutdown_and_update(
     tezedge_only: bool,
 ) {
     stop_with_compose(compose_file_path);
-    cleanup_docker_system();
+    //cleanup_docker_system();
     update_with_compose(compose_file_path);
     restart_stack(compose_file_path, log, cleanup_data, tezedge_only).await;
 }
@@ -100,7 +101,7 @@ pub async fn shutdown_and_update_sandbox(compose_file_path: &PathBuf, log: &Logg
 }
 
 pub fn cleanup_docker(cleanup_data: bool) {
-    cleanup_docker_system();
+    //cleanup_docker_system();
     if cleanup_data {
         cleanup_volumes();
     }
@@ -162,10 +163,11 @@ pub fn cleanup_volumes() -> Output {
 }
 
 pub fn cleanup_docker_system() -> Output {
-    Command::new("docker")
-        .args(&["system", "prune", "-a", "-f"])
-        .output()
-        .expect("failed to execute docker command")
+    unimplemented!()
+    // Command::new("docker")
+    //     .args(&["system", "prune", "-a", "-f"])
+    //     .output()
+    //     .expect("failed to execute docker command")
 }
 
 async fn wait_for_start(url: &str) {

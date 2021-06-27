@@ -31,8 +31,8 @@ services:
       - "11001:11001/udp"  # debugger syslog port for tezos node
 
   tezedge-node:
-    image: tezedge/tezedge:latest-frame-pointers-enabled
-    command: ["--network", "${TEZOS_NETWORK}", "--log", "terminal", "file", "--log-file", "/tmp/tezedge/tezedge.log", "--tezos-context-storage", "irmin", "--peer-thresh-low", "30", "--peer-thresh-high", "45"]
+    image: tezedge:timings
+    command: ["--network", "${TEZOS_NETWORK}", "--log", "terminal", "file", "--log-file", "/tmp/tezedge/tezedge.log", "--tezos-context-storage", "tezedge", "--peer-thresh-low", "30", "--peer-thresh-high", "45"]
     logging:
       # Produce syslogs instead of terminal logs
       driver: "syslog"
@@ -91,10 +91,11 @@ services:
     environment:
       - SANDBOX=http://${HOSTNAME}.dev.tezedge.com:3030
       - DEBUGGER=http://${HOSTNAME}.dev.tezedge.com:17732
+      - MEMORYPROFILER=http://debug.dev.tezedge.com:17832
       # need a better way to provide such information
       - API=[{"id":"rust","name":"rust.${HOSTNAME}.dev.tezedge.com","http":"http://${HOSTNAME}.dev.tezedge.com:18732","ws":"ws://${HOSTNAME}.dev.tezedge.com:4927","monitoring":"http://${HOSTNAME}.dev.tezedge.com:38732/resources/tezedge","p2p_port":9732,"features":["MONITORING","RESOURCES","MEMPOOL_ACTION","STORAGE_BLOCK","NETWORK_ACTION","LOGS_ACTION"]},{"id":"ocaml","name":"ocaml.${HOSTNAME}.dev.tezedge.com","http":"http://${HOSTNAME}.dev.tezedge.com:18733","ws":false,"monitoring":"http://${HOSTNAME}.dev.tezedge.com:38732/resources/ocaml","p2p_port":9733,"features":["MONITORING","RESOURCES","MEMPOOL_ACTION","NETWORK_ACTION","LOGS_ACTION"]}]
     ports:
-      - "80:80"
+      - "801:80"
 volumes:
   tezedge-shared-data:
     external: false
