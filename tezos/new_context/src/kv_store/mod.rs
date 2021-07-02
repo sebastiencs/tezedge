@@ -3,7 +3,7 @@
 
 //! This sub module provides different KV alternatives for context persistence
 
-use std::str::FromStr;
+use std::{num::NonZeroU32, str::FromStr};
 use std::{
     convert::{TryFrom, TryInto},
     num::NonZeroUsize,
@@ -23,7 +23,7 @@ pub mod stats;
 pub const INMEM: &str = "inmem";
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct HashId(NonZeroUsize); // NonZeroUsize so that `Option<HashId>` is 8 bytes
+pub struct HashId(NonZeroU32); // NonZeroU32 so that `Option<HashId>` is 8 bytes
 
 pub struct HashIdError;
 
@@ -31,7 +31,8 @@ impl TryInto<usize> for HashId {
     type Error = HashIdError;
 
     fn try_into(self) -> Result<usize, Self::Error> {
-        self.0.get().checked_sub(1).ok_or(HashIdError)
+        let a = self.0.get().checked_sub(1).ok_or(HashIdError)?;
+        Ok(a as usize)
     }
 }
 
@@ -39,30 +40,36 @@ impl TryFrom<usize> for HashId {
     type Error = HashIdError;
 
     fn try_from(value: usize) -> Result<Self, Self::Error> {
+        let value: u32 = value.try_into().map_err(|_| HashIdError)?;
+
         value
             .checked_add(1)
-            .and_then(NonZeroUsize::new)
+            .and_then(NonZeroU32::new)
             .map(HashId)
             .ok_or(HashIdError)
     }
 }
 
-const SHIFT: usize = (std::mem::size_of::<usize>() * 8) - 1;
-const READONLY: usize = 1 << SHIFT;
+const SHIFT: usize = (std::mem::size_of::<u32>() * 8) - 1;
+const READONLY: u32 = 1 << SHIFT;
 
 impl HashId {
     pub fn new(value: usize) -> Option<Self> {
-        Some(HashId(NonZeroUsize::new(value)?))
+        Some(HashId(NonZeroU32::new(value.try_into().unwrap())?))
+    }
+
+    pub fn new_u32(value: u32) -> Option<Self> {
+        Some(HashId(NonZeroU32::new(value)?))
     }
 
     pub fn as_usize(&self) -> usize {
-        self.0.get()
+        self.0.get() as usize
     }
 
     fn set_readonly_runner(&mut self) -> Result<(), HashIdError> {
         let hash_id = self.0.get();
 
-        self.0 = NonZeroUsize::new(hash_id | READONLY).ok_or(HashIdError)?;
+        self.0 = NonZeroU32::new(hash_id | READONLY).ok_or(HashIdError)?;
 
         Ok(())
     }
@@ -71,7 +78,7 @@ impl HashId {
         let hash_id = self.0.get();
         if hash_id & READONLY != 0 {
             Ok(Some(HashId(
-                NonZeroUsize::new(hash_id & !READONLY).ok_or(HashIdError)?,
+                NonZeroU32::new(hash_id & !READONLY).ok_or(HashIdError)?,
             )))
         } else {
             Ok(None)

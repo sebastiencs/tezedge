@@ -1,10 +1,7 @@
 // Copyright (c) SimpleStaking, Viable Systems and Tezedge Contributors
 // SPDX-License-Identifier: MIT
 
-use std::{
-    convert::{TryFrom, TryInto},
-    marker::PhantomData,
-};
+use std::{convert::{TryFrom, TryInto}, marker::PhantomData, slice::SliceIndex};
 
 #[derive(Debug)]
 pub struct Entries<K, V> {
@@ -20,12 +17,37 @@ impl<K, V> Entries<K, V> {
         }
     }
 
+    pub fn with_capacity(cap: usize) -> Self {
+        Self {
+            entries: Vec::with_capacity(cap),
+            _phantom: PhantomData,
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
     pub fn capacity(&self) -> usize {
         self.entries.capacity()
+    }
+
+    pub fn get_index<I>(&self, index: I) -> Option<&<I as SliceIndex<[V]>>::Output>
+    where
+        I: SliceIndex<[V]>
+    {
+        self.entries.get(index)
+    }
+
+    pub fn as_slice(&self) -> &[V] {
+        self.entries.as_slice()
+    }
+
+    pub fn clear(&mut self) {
+        // unsafe {
+        //     self.entries.set_len(0);
+        // }
+        self.entries.clear();
     }
 }
 
@@ -43,6 +65,18 @@ where
 
     pub fn get_mut(&mut self, key: K) -> Result<Option<&mut V>, K::Error> {
         Ok(self.entries.get_mut(key.try_into()?))
+    }
+}
+
+impl<K, V> Entries<K, V>
+where
+    K: TryFrom<usize>,
+{
+
+    pub fn push(&mut self, value: V) -> Result<K, <K as TryFrom<usize>>::Error> {
+        let current = self.entries.len();
+        self.entries.push(value);
+        K::try_from(current)
     }
 }
 

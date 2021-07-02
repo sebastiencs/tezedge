@@ -5,7 +5,7 @@
 //!
 //! A document describing the algorithm can be found [here](https://github.com/tarides/tezos-context-hash).
 
-use std::{array::TryFromSliceError, io, rc::Rc};
+use std::{array::TryFromSliceError, io};
 
 use blake2::digest::{InvalidOutputSize, Update, VariableOutput};
 use blake2::VarBlake2b;
@@ -13,13 +13,8 @@ use failure::Fail;
 
 use ocaml::ocaml_hash_string;
 
-use crate::{
-    kv_store::HashId,
-    persistent::DBError,
-    working_tree::{tree_storage::TreeStorage, Commit, Entry, Node, NodeKind, Tree},
-    ContextKeyValueStore,
-};
-use crate::{working_tree::KeyFragment, ContextValue};
+use crate::{ContextKeyValueStore, kv_store::HashId, persistent::DBError, working_tree::{Commit, Entry, Node, NodeKind, Tree, string_interner::StringId, tree_storage::{BlobStorageId, NodeId, TreeStorage}}};
+use crate::working_tree::KeyFragment;
 
 mod ocaml;
 
@@ -76,9 +71,9 @@ impl From<io::Error> for HashingError {
 }
 
 /// Inode representation used for hashing directories with >256 entries.
-enum Inode<'a> {
+enum Inode {
     Empty,
-    Value(Vec<(KeyFragment, &'a Node)>),
+    Value(Vec<(StringId, NodeId)>),
     Tree {
         depth: u32,
         children: usize,
@@ -102,15 +97,15 @@ fn index(depth: u32, name: &str) -> u32 {
 // something to keep in mind if the representation of `Tree` changes.
 fn partition_entries<'a>(
     depth: u32,
-    entries: &[(&KeyFragment, &'a Node)],
+    entries: &[(StringId, NodeId)],
     store: &mut ContextKeyValueStore,
-    tree_storage: &TreeStorage<KeyFragment, Rc<Node>>,
-) -> Result<Inode<'a>, HashingError> {
+    tree_storage: &TreeStorage,
+) -> Result<Inode, HashingError> {
     if entries.is_empty() {
         Ok(Inode::Empty)
     } else if entries.len() <= 32 {
         Ok(Inode::Value(
-            entries.iter().map(|(s, n)| ((*s).clone(), *n)).collect(),
+            entries.to_vec()
         ))
     } else {
         let children = entries.len();
@@ -118,9 +113,12 @@ fn partition_entries<'a>(
 
         // pointers = {p(i) | i <- [0..31], t(i) != Empty}
         for i in 0..=31 {
-            let entries_at_depth_and_index_i: Vec<(&KeyFragment, &Node)> = entries
+            let entries_at_depth_and_index_i: Vec<(StringId, NodeId)> = entries
                 .iter()
-                .filter(|(name, _)| index(depth, name) == i)
+                .filter(|(name, _)| {
+                    let name = tree_storage.get_str(*name);
+                    index(depth, name) == i
+                })
                 .cloned()
                 .collect();
             let ti = partition_entries(
@@ -149,7 +147,7 @@ fn partition_entries<'a>(
 fn hash_long_inode(
     inode: &Inode,
     store: &mut ContextKeyValueStore,
-    tree_storage: &TreeStorage<KeyFragment, Rc<Node>>,
+    tree_storage: &TreeStorage,
 ) -> Result<HashId, HashingError> {
     let mut hasher = VarBlake2b::new(ENTRY_HASH_LEN)?;
 
@@ -173,10 +171,14 @@ fn hash_long_inode(
             // +-------------+--------------+--------+--------+
             // | \len(name)  |     name     |  kind  |  hash  |
 
-            for (name, node) in entries {
+            for (name, node_id) in entries {
+                let name = tree_storage.get_str(*name);
+
                 leb128::write::unsigned(&mut hasher, name.len() as u64)?;
                 hasher.update(name.as_bytes());
+
                 // \000 for nodes, and \001 for contents.
+                let node = tree_storage.get_node(*node_id).unwrap();
                 match node.node_kind() {
                     NodeKind::Leaf => hasher.update(&[1u8]),
                     NodeKind::NonLeaf => hasher.update(&[0u8]),
@@ -229,9 +231,9 @@ fn hash_long_inode(
 // - CHILD NODE - <NODE TYPE><length of string (1 byte)><string/path bytes><length of hash (8bytes)><hash bytes>
 // - NODE TYPE - leaf node(0xff0000000000000000) or internal node (0x0000000000000000)
 fn hash_short_inode(
-    tree: &Tree,
+    tree: Tree,
     store: &mut ContextKeyValueStore,
-    tree_storage: &TreeStorage<KeyFragment, Rc<Node>>,
+    tree_storage: &TreeStorage,
 ) -> Result<HashId, HashingError> {
     let mut hasher = VarBlake2b::new(ENTRY_HASH_LEN)?;
 
@@ -241,7 +243,7 @@ fn hash_short_inode(
     // +--------+--------------+-----+--------------+
     // |   \k   | prehash(e_1) | ... | prehash(e_k) |
 
-    let tree = tree_storage.get_tree(*tree).unwrap();
+    let tree = tree_storage.get_tree(tree).unwrap();
     hasher.update(&(tree.len() as u64).to_be_bytes());
 
     // Node entry:
@@ -251,8 +253,11 @@ fn hash_short_inode(
     // | kind  |  \len(name)  |    name     |  \32  |  hash  |
 
     for (k, v) in tree {
+        let v = tree_storage.get_node(*v).unwrap();
         hasher.update(encode_irmin_node_kind(&v.node_kind()));
         // Key length is written in LEB128 encoding
+
+        let k = tree_storage.get_str(*k);
         leb128::write::unsigned(&mut hasher, k.len() as u64)?;
         hasher.update(k.as_bytes());
         hasher.update(&(ENTRY_HASH_LEN as u64).to_be_bytes());
@@ -269,17 +274,15 @@ fn hash_short_inode(
 // Calculates hash of tree
 // uses BLAKE2 binary 256 length hash function
 pub(crate) fn hash_tree(
-    tree_id: &Tree,
+    tree_id: Tree,
     store: &mut ContextKeyValueStore,
-    tree_storage: &TreeStorage<KeyFragment, Rc<Node>>,
+    tree_storage: &TreeStorage,
 ) -> Result<HashId, HashingError> {
     // If there are >256 entries, we need to partition the tree and hash the resulting inode
-    let tree = tree_storage.get_tree(*tree_id).unwrap();
+    let tree = tree_storage.get_tree(tree_id).unwrap();
 
     if tree.len() > 256 {
-        let entries: Vec<(&KeyFragment, &Node)> =
-            tree.iter().map(|(s, n)| (s, n.as_ref())).collect();
-        let inode = partition_entries(0, &entries, store, tree_storage)?;
+        let inode = partition_entries(0, &tree, store, tree_storage)?;
         hash_long_inode(&inode, store, tree_storage)
     } else {
         hash_short_inode(tree_id, store, tree_storage)
@@ -290,10 +293,13 @@ pub(crate) fn hash_tree(
 // uses BLAKE2 binary 256 length hash function
 // hash is calculated as <length of data (8 bytes)><data>
 pub(crate) fn hash_blob(
-    blob: &ContextValue,
+    blob_id: BlobStorageId,
     store: &mut ContextKeyValueStore,
+    tree_storage: &TreeStorage,
 ) -> Result<HashId, HashingError> {
     let mut hasher = VarBlake2b::new(ENTRY_HASH_LEN)?;
+
+    let blob = tree_storage.get_blob(blob_id).unwrap();
     hasher.update(&(blob.len() as u64).to_be_bytes());
     hasher.update(blob);
 
@@ -351,301 +357,308 @@ pub(crate) fn hash_commit(
 pub(crate) fn hash_entry(
     entry: &Entry,
     store: &mut ContextKeyValueStore,
-    tree_storage: &TreeStorage<KeyFragment, Rc<Node>>,
+    tree_storage: &TreeStorage,
 ) -> Result<HashId, HashingError> {
     match entry {
         Entry::Commit(commit) => hash_commit(commit, store),
-        Entry::Tree(tree) => hash_tree(tree, store, tree_storage),
-        Entry::Blob(blob) => hash_blob(blob, store),
+        Entry::Tree(tree) => hash_tree(*tree, store, tree_storage),
+        Entry::Blob(blob_id) => hash_blob(*blob_id, store, tree_storage),
     }
 }
 
-// #[cfg(test)]
-// #[allow(unused_must_use)]
-// mod tests {
-//     use std::{
-//         cell::{Cell, RefCell},
-//         convert::TryInto,
-//         env,
-//         fs::File,
-//         io::Read,
-//         path::Path,
-//         rc::Rc,
-//     };
+#[cfg(test)]
+#[allow(unused_must_use)]
+mod tests {
+    use std::{
+        cell::{Cell, RefCell},
+        convert::TryInto,
+        env,
+        fs::File,
+        io::Read,
+        path::Path,
+        rc::Rc,
+    };
 
-//     use flate2::read::GzDecoder;
+    use flate2::read::GzDecoder;
 
-//     use crypto::hash::{ContextHash, HashTrait};
+    use crypto::hash::{ContextHash, HashTrait};
 
-//     use crate::{kv_store::in_memory::InMemory, working_tree::{Node, NodeBitfield, NodeKind, Tree}};
+    use crate::{kv_store::in_memory::InMemory, working_tree::{Node, NodeBitfield, NodeEntry, NodeKind, Tree}};
 
-//     use super::*;
+    use super::*;
 
-//     #[test]
-//     fn test_hash_of_commit() {
-//         let mut repo = InMemory::new();
+    #[test]
+    fn test_hash_of_commit() {
+        let mut repo = InMemory::new();
 
-//         // Calculates hash of commit
-//         // uses BLAKE2 binary 256 length hash function
-//         // hash is calculated as:
-//         // <hash length (8 bytes)><tree hash bytes>
-//         // <length of parent hash (8bytes)><parent hash bytes>
-//         // <time in epoch format (8bytes)
-//         // <commit author name length (8bytes)><commit author name bytes>
-//         // <commit message length (8bytes)><commit message bytes>
-//         let expected_commit_hash =
-//             "e6de3fd37b1dc2b3c9d072ea67c2c5be1b55eeed9f5377b2bfc1228e6f9cb69b";
+        // Calculates hash of commit
+        // uses BLAKE2 binary 256 length hash function
+        // hash is calculated as:
+        // <hash length (8 bytes)><tree hash bytes>
+        // <length of parent hash (8bytes)><parent hash bytes>
+        // <time in epoch format (8bytes)
+        // <commit author name length (8bytes)><commit author name bytes>
+        // <commit message length (8bytes)><commit message bytes>
+        let expected_commit_hash =
+            "e6de3fd37b1dc2b3c9d072ea67c2c5be1b55eeed9f5377b2bfc1228e6f9cb69b";
 
-//         let hash_id = repo.put_entry_hash(
-//             hex::decode("0d78b30e959c2a079e8ccb4ca19d428c95d29b2f02a35c1c58ef9c8972bc26aa")
-//                 .unwrap()
-//                 .try_into()
-//                 .unwrap(),
-//         );
+        let hash_id = repo.put_entry_hash(
+            hex::decode("0d78b30e959c2a079e8ccb4ca19d428c95d29b2f02a35c1c58ef9c8972bc26aa")
+                .unwrap()
+                .try_into()
+                .unwrap(),
+        );
 
-//         let dummy_commit = Commit {
-//             parent_commit_hash: None,
-//             root_hash: hash_id,
-//             time: 0,
-//             author: "Tezedge".to_string(),
-//             message: "persist changes".to_string(),
-//         };
+        let dummy_commit = Commit {
+            parent_commit_hash: None,
+            root_hash: hash_id,
+            time: 0,
+            author: "Tezedge".to_string(),
+            message: "persist changes".to_string(),
+        };
 
-//         // hexademical representation of above commit:
-//         //
-//         // hash length (8 bytes)           ->  00 00 00 00 00 00 00 20
-//         // tree hash bytes                 ->  0d78b30e959c2a079e8ccb4ca19d428c95d29b2f02a35c1c58ef9c8972bc26aa
-//         // parents count                   ->  00 00 00 00 00 00 00 00  (0)
-//         // commit time                     ->  00 00 00 00 00 00 00 00  (0)
-//         // commit author name length       ->  00 00 00 00 00 00 00 07  (7)
-//         // commit author name ('Tezedge')  ->  54 65 7a 65 64 67 65     (Tezedge)
-//         // commit message length           ->  00 00 00 00 00 00 00 0xf (15)
+        // hexademical representation of above commit:
+        //
+        // hash length (8 bytes)           ->  00 00 00 00 00 00 00 20
+        // tree hash bytes                 ->  0d78b30e959c2a079e8ccb4ca19d428c95d29b2f02a35c1c58ef9c8972bc26aa
+        // parents count                   ->  00 00 00 00 00 00 00 00  (0)
+        // commit time                     ->  00 00 00 00 00 00 00 00  (0)
+        // commit author name length       ->  00 00 00 00 00 00 00 07  (7)
+        // commit author name ('Tezedge')  ->  54 65 7a 65 64 67 65     (Tezedge)
+        // commit message length           ->  00 00 00 00 00 00 00 0xf (15)
 
-//         let mut bytes = String::new();
-//         let hash_length = "0000000000000020"; // 32
-//         let tree_hash = "0d78b30e959c2a079e8ccb4ca19d428c95d29b2f02a35c1c58ef9c8972bc26aa"; // tree hash bytes
-//         let parents_count = "0000000000000000"; // 0
-//         let commit_time = "0000000000000000"; // 0
-//         let commit_author_name_length = "0000000000000007"; // 7
-//         let commit_author_name = "54657a65646765"; // 'Tezedge'
-//         let commit_message_length = "000000000000000f"; // 15
-//         let commit_message = "70657273697374206368616e676573"; // 'persist changes'
+        let mut bytes = String::new();
+        let hash_length = "0000000000000020"; // 32
+        let tree_hash = "0d78b30e959c2a079e8ccb4ca19d428c95d29b2f02a35c1c58ef9c8972bc26aa"; // tree hash bytes
+        let parents_count = "0000000000000000"; // 0
+        let commit_time = "0000000000000000"; // 0
+        let commit_author_name_length = "0000000000000007"; // 7
+        let commit_author_name = "54657a65646765"; // 'Tezedge'
+        let commit_message_length = "000000000000000f"; // 15
+        let commit_message = "70657273697374206368616e676573"; // 'persist changes'
 
-//         println!("calculating hash of commit: \n\t{:?}\n", dummy_commit);
+        println!("calculating hash of commit: \n\t{:?}\n", dummy_commit);
 
-//         println!("[hex] hash_length : {}", hash_length);
-//         println!("[hex] tree_hash : {}", tree_hash);
-//         println!("[hex] parents_count : {}", parents_count);
-//         println!("[hex] commit_time : {}", commit_time);
-//         println!(
-//             "[hex] commit_author_name_length : {}",
-//             commit_author_name_length
-//         );
-//         println!("[hex] commit_author_name : {}", commit_author_name);
-//         println!("[hex] commit_message_length : {}", commit_message_length);
-//         println!("[hex] commit_message : {}", commit_message);
+        println!("[hex] hash_length : {}", hash_length);
+        println!("[hex] tree_hash : {}", tree_hash);
+        println!("[hex] parents_count : {}", parents_count);
+        println!("[hex] commit_time : {}", commit_time);
+        println!(
+            "[hex] commit_author_name_length : {}",
+            commit_author_name_length
+        );
+        println!("[hex] commit_author_name : {}", commit_author_name);
+        println!("[hex] commit_message_length : {}", commit_message_length);
+        println!("[hex] commit_message : {}", commit_message);
 
-//         bytes += &hash_length;
-//         bytes += &tree_hash;
-//         bytes += &parents_count;
-//         bytes += &commit_time;
-//         bytes += &commit_author_name_length;
-//         bytes += &commit_author_name;
-//         bytes += &commit_message_length;
-//         bytes += &commit_message;
+        bytes += &hash_length;
+        bytes += &tree_hash;
+        bytes += &parents_count;
+        bytes += &commit_time;
+        bytes += &commit_author_name_length;
+        bytes += &commit_author_name;
+        bytes += &commit_message_length;
+        bytes += &commit_message;
 
-//         println!(
-//             "manually calculated haxedemical representation of commit: {}",
-//             bytes
-//         );
+        println!(
+            "manually calculated haxedemical representation of commit: {}",
+            bytes
+        );
 
-//         let mut hasher = VarBlake2b::new(ENTRY_HASH_LEN).unwrap();
-//         hasher.update(hex::decode(bytes).unwrap());
-//         let calculated_commit_hash = hasher.finalize_boxed();
+        let mut hasher = VarBlake2b::new(ENTRY_HASH_LEN).unwrap();
+        hasher.update(hex::decode(bytes).unwrap());
+        let calculated_commit_hash = hasher.finalize_boxed();
 
-//         println!(
-//             "calculated hash of the commit: {}",
-//             hex::encode(calculated_commit_hash.as_ref())
-//         );
+        println!(
+            "calculated hash of the commit: {}",
+            hex::encode(calculated_commit_hash.as_ref())
+        );
 
-//         let hash_id = hash_commit(&dummy_commit, &mut repo).unwrap();
+        let hash_id = hash_commit(&dummy_commit, &mut repo).unwrap();
 
-//         assert_eq!(
-//             calculated_commit_hash.as_ref(),
-//             repo.get_hash(hash_id).unwrap().unwrap()
-//         );
-//         assert_eq!(
-//             expected_commit_hash,
-//             hex::encode(calculated_commit_hash.as_ref())
-//         );
-//     }
+        assert_eq!(
+            calculated_commit_hash.as_ref(),
+            repo.get_hash(hash_id).unwrap().unwrap()
+        );
+        assert_eq!(
+            expected_commit_hash,
+            hex::encode(calculated_commit_hash.as_ref())
+        );
+    }
 
-//     #[test]
-//     fn test_hash_of_small_tree() {
-//         // Calculates hash of tree
-//         // uses BLAKE2 binary 256 length hash function
-//         // hash is calculated as:
-//         // <number of child nodes (8 bytes)><CHILD NODE>
-//         // where:
-//         // - CHILD NODE - <NODE TYPE><length of string (1 byte)><string/path bytes><length of hash (8bytes)><hash bytes>
-//         // - NODE TYPE - leaf node(0xff00000000000000) or internal node (0x0000000000000000)
-//         let mut repo = InMemory::new();
-//         let expected_tree_hash = "d49a53323107f2ae40b01eaa4e9bec4d02801daf60bab82dc2529e40d40fa917";
-//         let mut dummy_tree = Tree::new();
+    #[test]
+    fn test_hash_of_small_tree() {
+        // Calculates hash of tree
+        // uses BLAKE2 binary 256 length hash function
+        // hash is calculated as:
+        // <number of child nodes (8 bytes)><CHILD NODE>
+        // where:
+        // - CHILD NODE - <NODE TYPE><length of string (1 byte)><string/path bytes><length of hash (8bytes)><hash bytes>
+        // - NODE TYPE - leaf node(0xff00000000000000) or internal node (0x0000000000000000)
+        let mut repo = InMemory::new();
+        let expected_tree_hash = "d49a53323107f2ae40b01eaa4e9bec4d02801daf60bab82dc2529e40d40fa917";
+        let mut dummy_tree = Tree::empty();
 
-//         let node = Node {
-//             bitfield: Cell::new(NodeBitfield::new_with(NodeKind::Leaf, hash_blob(&vec![1], &mut repo).unwrap())),
-//             // node_kind: NodeKind::Leaf,
-//             // entry_hash: Cell::new(Some(hash_blob(&vec![1], &mut repo).unwrap())), // 407f958990678e2e9fb06758bc6520dae46d838d39948a4c51a5b19bd079293d
-//             entry: RefCell::new(None),
-//             // commited: Cell::new(false),
-//         };
-//         dummy_tree = dummy_tree.insert("a".into(), Rc::new(node));
+        let mut storage = TreeStorage::new();
 
-//         // hexademical representation of above tree:
-//         //
-//         // number of child nodes           ->  00 00 00 00 00 00 00 01  (1)
-//         // node type                       ->  ff 00 00 00 00 00 00 00  (leaf node)
-//         // length of string                ->  01                       (1)
-//         // string                          ->  61                       ('a')
-//         // length of hash                  ->  00 00 00 00 00 00 00 20  (32)
-//         // hash                            ->  407f958990678e2e9fb06758bc6520dae46d838d39948a4c51a5b19bd079293d
+        let blob_id = storage.add_blob(vec![1]);
 
-//         let mut bytes = String::new();
-//         let child_nodes = "0000000000000001";
-//         let leaf_node = "ff00000000000000";
-//         let string_length = "01";
-//         let string_value = "61";
-//         let hash_length = "0000000000000020";
-//         let hash = "407f958990678e2e9fb06758bc6520dae46d838d39948a4c51a5b19bd079293d";
+        let node = Node {
+            bitfield: Cell::new(NodeBitfield::new_with(NodeKind::Leaf, hash_blob(blob_id, &mut repo, &mut storage).unwrap())),
+            // node_kind: NodeKind::Leaf,
+            // entry_hash: Cell::new(Some(hash_blob(&vec![1], &mut repo).unwrap())), // 407f958990678e2e9fb06758bc6520dae46d838d39948a4c51a5b19bd079293d
+            entry: Cell::new(NodeEntry::new_none()),
+            // commited: Cell::new(false),
+        };
 
-//         println!("calculating hash of tree: \n\t{:?}\n", dummy_tree);
-//         println!("[hex] child nodes count: {}", child_nodes);
-//         println!("[hex] leaf_node        : {}", leaf_node);
-//         println!("[hex] string_length    : {}", string_length);
-//         println!("[hex] string_value     : {}", string_value);
-//         println!("[hex] hash_length      : {}", hash_length);
-//         println!("[hex] hash             : {}", hash);
+        let dummy_tree = storage.insert(dummy_tree, "a", node);
 
-//         bytes += &child_nodes;
-//         bytes += &leaf_node;
-//         bytes += &string_length;
-//         bytes += &string_value;
-//         bytes += &hash_length;
-//         bytes += &hash;
+        // hexademical representation of above tree:
+        //
+        // number of child nodes           ->  00 00 00 00 00 00 00 01  (1)
+        // node type                       ->  ff 00 00 00 00 00 00 00  (leaf node)
+        // length of string                ->  01                       (1)
+        // string                          ->  61                       ('a')
+        // length of hash                  ->  00 00 00 00 00 00 00 20  (32)
+        // hash                            ->  407f958990678e2e9fb06758bc6520dae46d838d39948a4c51a5b19bd079293d
 
-//         println!(
-//             "manually calculated haxedemical representation of tree: {}",
-//             bytes
-//         );
+        let mut bytes = String::new();
+        let child_nodes = "0000000000000001";
+        let leaf_node = "ff00000000000000";
+        let string_length = "01";
+        let string_value = "61";
+        let hash_length = "0000000000000020";
+        let hash = "407f958990678e2e9fb06758bc6520dae46d838d39948a4c51a5b19bd079293d";
 
-//         let mut hasher = VarBlake2b::new(ENTRY_HASH_LEN).unwrap();
-//         hasher.update(hex::decode(bytes).unwrap());
-//         let calculated_tree_hash = hasher.finalize_boxed();
+        println!("calculating hash of tree: \n\t{:?}\n", dummy_tree);
+        println!("[hex] child nodes count: {}", child_nodes);
+        println!("[hex] leaf_node        : {}", leaf_node);
+        println!("[hex] string_length    : {}", string_length);
+        println!("[hex] string_value     : {}", string_value);
+        println!("[hex] hash_length      : {}", hash_length);
+        println!("[hex] hash             : {}", hash);
 
-//         println!(
-//             "calculated hash of the tree: {}",
-//             hex::encode(calculated_tree_hash.as_ref())
-//         );
+        bytes += &child_nodes;
+        bytes += &leaf_node;
+        bytes += &string_length;
+        bytes += &string_value;
+        bytes += &hash_length;
+        bytes += &hash;
 
-//         let hash_id = hash_tree(&dummy_tree, &mut repo).unwrap();
+        println!(
+            "manually calculated haxedemical representation of tree: {}",
+            bytes
+        );
 
-//         assert_eq!(
-//             calculated_tree_hash.as_ref(),
-//             repo.get_hash(hash_id).unwrap().unwrap()
-//         );
-//         assert_eq!(
-//             calculated_tree_hash.as_ref(),
-//             hex::decode(expected_tree_hash).unwrap()
-//         );
-//     }
+        let mut hasher = VarBlake2b::new(ENTRY_HASH_LEN).unwrap();
+        hasher.update(hex::decode(bytes).unwrap());
+        let calculated_tree_hash = hasher.finalize_boxed();
 
-//     // Tests from Tarides json dataset
+        println!(
+            "calculated hash of the tree: {}",
+            hex::encode(calculated_tree_hash.as_ref())
+        );
 
-//     #[derive(serde::Deserialize)]
-//     struct NodeHashTest {
-//         hash: String,
-//         bindings: Vec<NodeHashBinding>,
-//     }
+        let hash_id = hash_tree(dummy_tree, &mut repo, &mut storage).unwrap();
 
-//     #[derive(serde::Deserialize)]
-//     struct NodeHashBinding {
-//         name: String,
-//         kind: String,
-//         hash: String,
-//     }
+        assert_eq!(
+            calculated_tree_hash.as_ref(),
+            repo.get_hash(hash_id).unwrap().unwrap()
+        );
+        assert_eq!(
+            calculated_tree_hash.as_ref(),
+            hex::decode(expected_tree_hash).unwrap()
+        );
+    }
 
-//     #[test]
-//     fn test_node_hashes() {
-//         test_type_hashes("nodes.json.gz");
-//     }
+    // Tests from Tarides json dataset
 
-//     #[test]
-//     fn test_inode_hashes() {
-//         test_type_hashes("inodes.json.gz");
-//     }
+    #[derive(serde::Deserialize)]
+    struct NodeHashTest {
+        hash: String,
+        bindings: Vec<NodeHashBinding>,
+    }
 
-//     fn test_type_hashes(json_gz_file_name: &str) {
-//         let mut json_file = open_hashes_json_gz(json_gz_file_name);
-//         let mut bytes = Vec::new();
+    #[derive(serde::Deserialize)]
+    struct NodeHashBinding {
+        name: String,
+        kind: String,
+        hash: String,
+    }
 
-//         let mut repo = InMemory::new();
+    #[test]
+    fn test_node_hashes() {
+        test_type_hashes("nodes.json.gz");
+    }
 
-//         // NOTE: reading from a stream is very slow with serde, thats why
-//         // the whole file is being read here before parsing.
-//         // See: https://github.com/serde-rs/json/issues/160#issuecomment-253446892
-//         json_file.read_to_end(&mut bytes).unwrap();
+    #[test]
+    fn test_inode_hashes() {
+        test_type_hashes("inodes.json.gz");
+    }
 
-//         let test_cases: Vec<NodeHashTest> = serde_json::from_slice(&bytes).unwrap();
+    fn test_type_hashes(json_gz_file_name: &str) {
+        let mut json_file = open_hashes_json_gz(json_gz_file_name);
+        let mut bytes = Vec::new();
 
-//         for test_case in test_cases {
-//             let bindings_count = test_case.bindings.len();
-//             let mut tree = Tree::new();
+        let mut repo = InMemory::new();
+        let mut storage = TreeStorage::new();
 
-//             for binding in test_case.bindings {
-//                 let node_kind = match binding.kind.as_str() {
-//                     "Tree" => NodeKind::NonLeaf,
-//                     "Contents" => NodeKind::Leaf,
-//                     other => panic!("Got unexpected binding kind: {}", other),
-//                 };
-//                 let entry_hash = ContextHash::from_base58_check(&binding.hash).unwrap();
+        // NOTE: reading from a stream is very slow with serde, thats why
+        // the whole file is being read here before parsing.
+        // See: https://github.com/serde-rs/json/issues/160#issuecomment-253446892
+        json_file.read_to_end(&mut bytes).unwrap();
 
-//                 let hash_id =
-//                     repo.put_entry_hash(entry_hash.as_ref().as_slice().try_into().unwrap());
+        let test_cases: Vec<NodeHashTest> = serde_json::from_slice(&bytes).unwrap();
 
-//                 let node = Node {
-//                     bitfield: Cell::new(NodeBitfield::new_with(node_kind, hash_id)),
-//                     // node_kind,
-//                     // entry_hash: Cell::new(Some(hash_id)),
-//                     entry: RefCell::new(None),
-//                     // commited: Cell::new(false),
-//                 };
-//                 tree = tree.insert(binding.name.as_str().into(), Rc::new(node));
-//             }
+        for test_case in test_cases {
+            let bindings_count = test_case.bindings.len();
+            let mut tree = Tree::empty();
 
-//             let expected_hash = ContextHash::from_base58_check(&test_case.hash).unwrap();
-//             let computed_hash = hash_tree(&tree, &mut repo).unwrap();
-//             let computed_hash = repo.get_hash(computed_hash).unwrap().unwrap();
-//             let computed_hash = ContextHash::try_from_bytes(computed_hash).unwrap();
+            for binding in test_case.bindings {
+                let node_kind = match binding.kind.as_str() {
+                    "Tree" => NodeKind::NonLeaf,
+                    "Contents" => NodeKind::Leaf,
+                    other => panic!("Got unexpected binding kind: {}", other),
+                };
+                let entry_hash = ContextHash::from_base58_check(&binding.hash).unwrap();
 
-//             assert_eq!(
-//                 expected_hash.to_base58_check(),
-//                 computed_hash.to_base58_check(),
-//                 "Expected hash {} but got {} (bindings: {})",
-//                 expected_hash.to_base58_check(),
-//                 computed_hash.to_base58_check(),
-//                 bindings_count
-//             );
-//         }
-//     }
+                let hash_id =
+                    repo.put_entry_hash(entry_hash.as_ref().as_slice().try_into().unwrap());
 
-//     fn open_hashes_json_gz(file_name: &str) -> GzDecoder<File> {
-//         let path = Path::new(&env::var("CARGO_MANIFEST_DIR").unwrap())
-//             .join("tests")
-//             .join("resources")
-//             .join(file_name);
-//         let file = File::open(path)
-//             .unwrap_or_else(|_| panic!("Couldn't open file: tests/resources/{}", file_name));
-//         GzDecoder::new(file)
-//     }
-// }
+                let node = Node {
+                    bitfield: Cell::new(NodeBitfield::new_with(node_kind, hash_id)),
+                    // node_kind,
+                    // entry_hash: Cell::new(Some(hash_id)),
+                    entry: Cell::new(NodeEntry::new_none()),
+                    // commited: Cell::new(false),
+                };
+                tree = storage.insert(tree, binding.name.as_str(), node);
+                // tree = tree.insert(binding.name.as_str().into(), Rc::new(node));
+            }
+
+            let expected_hash = ContextHash::from_base58_check(&test_case.hash).unwrap();
+            let computed_hash = hash_tree(tree, &mut repo, &mut storage).unwrap();
+            let computed_hash = repo.get_hash(computed_hash).unwrap().unwrap();
+            let computed_hash = ContextHash::try_from_bytes(computed_hash).unwrap();
+
+            assert_eq!(
+                expected_hash.to_base58_check(),
+                computed_hash.to_base58_check(),
+                "Expected hash {} but got {} (bindings: {})",
+                expected_hash.to_base58_check(),
+                computed_hash.to_base58_check(),
+                bindings_count
+            );
+        }
+    }
+
+    fn open_hashes_json_gz(file_name: &str) -> GzDecoder<File> {
+        let path = Path::new(&env::var("CARGO_MANIFEST_DIR").unwrap())
+            .join("tests")
+            .join("resources")
+            .join(file_name);
+        let file = File::open(path)
+            .unwrap_or_else(|_| panic!("Couldn't open file: tests/resources/{}", file_name));
+        GzDecoder::new(file)
+    }
+}

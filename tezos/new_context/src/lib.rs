@@ -80,7 +80,7 @@ where
     Self: Sized,
 {
     // set key-value
-    fn add(&self, key: &ContextKey, value: ContextValue) -> Result<Self, ContextError>;
+    fn add(&self, key: &ContextKey, value: &[u8]) -> Result<Self, ContextError>;
     // delete key-value
     fn delete(&self, key_prefix_to_delete: &ContextKey) -> Result<Self, ContextError>;
     // TODO: remove `copy`, not part of the API anymore (replaced by `find_tree` + `add_tree`)
@@ -104,7 +104,7 @@ where
         offset: Option<usize>,
         length: Option<usize>,
         key: &ContextKey,
-    ) -> Result<Vec<(KeyFragment, WorkingTree)>, ContextError>;
+    ) -> Result<Vec<(String, WorkingTree)>, ContextError>;
     fn fold_iter(
         &self,
         depth: Option<FoldDepth>,

@@ -25,8 +25,9 @@ use tezos_spsc::Consumer;
 use super::{entries::Entries, HashIdError};
 use super::{HashId, VacantEntryHash};
 
+#[derive(Debug)]
 #[allow(dead_code)]
-pub struct StorageMemoryUsage {
+pub struct RepositoryMemoryUsage {
     /// Number of bytes for all values Arc<[u8]>
     values_bytes: usize,
     /// Number of values in the store (when it's a `Some(Arc<[u8]>)`, not a `None`)
@@ -66,8 +67,8 @@ impl HashValueStore {
         }
     }
 
-    pub fn get_memory_usage(&self) -> StorageMemoryUsage {
-        StorageMemoryUsage {
+    pub fn get_memory_usage(&self) -> RepositoryMemoryUsage {
+        RepositoryMemoryUsage {
             values_bytes: self.values_bytes,
             values_occupied: self.values_occupied,
             values_capacity: self.values.capacity(),
@@ -221,7 +222,7 @@ impl KeyValueStoreBackend for InMemory {
         Ok(())
     }
 
-    fn memory_usage(&self) -> StorageMemoryUsage {
+    fn memory_usage(&self) -> RepositoryMemoryUsage {
         self.hashes.get_memory_usage()
     }
 }
@@ -350,5 +351,11 @@ impl InMemory {
             .map(|v| v.push(hashed));
 
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn put_entry_hash(&mut self, entry_hash: EntryHash) -> HashId {
+        let vacant = self.get_vacant_entry_hash().unwrap();
+        vacant.write_with(|entry| *entry = entry_hash)
     }
 }

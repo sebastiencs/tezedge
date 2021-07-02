@@ -98,7 +98,7 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
         Ok(())
     }
 
-    fn memory_usage(&self) -> StorageMemoryUsage {
+    fn memory_usage(&self) -> RepositoryMemoryUsage {
         self.hashes.get_memory_usage()
     }
 }
@@ -126,7 +126,7 @@ use slog::{warn, Logger};
 use strum_macros::IntoStaticStr;
 
 use super::{
-    in_memory::{HashValueStore, StorageMemoryUsage},
+    in_memory::{HashValueStore, RepositoryMemoryUsage},
     HashId, VacantEntryHash,
 };
 

@@ -1,9 +1,28 @@
-use std::{borrow::Borrow, convert::TryInto, num::NonZeroU32};
+use std::{borrow::Borrow, cell::RefCell, convert::{TryFrom, TryInto}, num::NonZeroU32};
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
+use static_assertions::assert_eq_size;
+
+use crate::kv_store::entries::Entries;
+
+use super::{Node, NodeEntry, string_interner::{StringId, StringInterner, StringsMemoryUsage}};
+
+#[derive(Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TreeStorageId {
-    start: u32,
-    end: NonZeroU32,
+    /// | 14 bits | 30 bits | 20 bits |
+    /// | empty   | start   | length  |
+    bits: u64,
+}
+
+impl std::fmt::Debug for TreeStorageId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (start, end) = self.get();
+
+        f.debug_struct("TreeStorageId")
+         .field("bits", &format!("{:064b}", self.bits))
+         .field("start", &start)
+         .field("end", &end)
+         .finish()
+    }
 }
 
 impl Default for TreeStorageId {
@@ -14,17 +33,25 @@ impl Default for TreeStorageId {
 
 impl TreeStorageId {
     fn new(start: usize, end: usize) -> Self {
-        Self {
-            start: start.try_into().unwrap(),
-            end: NonZeroU32::new(end.checked_add(1).unwrap().try_into().unwrap()).unwrap(),
-        }
+        let length = end.checked_sub(start).unwrap();
+
+        assert_eq!(start & !0x3FFFFFFF, 0);
+        assert_eq!(length & !0xFFFFF, 0);
+
+        let tree_id = Self {
+            bits: (start as u64) << 20 | length as u64
+        };
+
+        debug_assert_eq!(tree_id.get(), (start, end));
+
+        tree_id
     }
 
     fn get(self) -> (usize, usize) {
-        (
-            self.start as usize,
-            self.end.get().checked_sub(1).unwrap() as usize,
-        )
+        let start = (self.bits >> 20) as usize;
+        let length = (self.bits & 0xFFFFF) as usize;
+
+        (start, start + length)
     }
 
     pub fn empty() -> Self {
@@ -32,68 +59,213 @@ impl TreeStorageId {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.start == self.end.get() - 1
+        let length = self.bits & 0xFFFFF;
+        length == 0
     }
 }
 
-pub struct TreeStorage<K, V>
-where
-    K: Ord,
-{
-    trees: Vec<(K, V)>,
-    temp_vec: Vec<(K, V)>,
+impl Into<u64> for TreeStorageId {
+    fn into(self) -> u64 {
+        self.bits
+    }
 }
 
-impl<K, V> Default for TreeStorage<K, V>
-where
-    K: Ord + Clone,
-    V: Clone,
+impl From<NodeEntry> for TreeStorageId {
+    fn from(entry: NodeEntry) -> Self {
+        Self { bits: entry.entry_id() }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct BlobStorageId {
+    /// | 14 bits | 28 bits | 22 bits |
+    /// | empty   | start   | length  |
+    bits: u64,
+}
+
+impl Into<u64> for BlobStorageId {
+    fn into(self) -> u64 {
+        self.bits
+    }
+}
+
+impl From<NodeEntry> for BlobStorageId {
+    fn from(entry: NodeEntry) -> Self {
+        Self { bits: entry.entry_id() }
+    }
+}
+
+impl BlobStorageId {
+    fn new(start: usize, end: usize) -> Self {
+        let length = end.checked_sub(start).unwrap();
+
+        assert_eq!(start & !0xFFFFFFF, 0);
+        assert_eq!(length & !0x3FFFFF, 0);
+
+        let blob_id = Self {
+            bits: (start as u64) << 22 | length as u64
+        };
+
+        debug_assert_eq!(blob_id.get(), (start, end));
+
+        blob_id
+    }
+
+    fn get(self) -> (usize, usize) {
+        let start = (self.bits >> 22) as usize;
+        let length = (self.bits & 0x3FFFFF) as usize;
+
+        (start, start + length)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NodeId(u32);
+
+#[derive(Debug)]
+pub struct NodeIdError;
+
+impl TryInto<usize> for NodeId {
+    type Error = NodeIdError;
+
+    fn try_into(self) -> Result<usize, Self::Error> {
+        Ok(self.0 as usize)
+    }
+}
+
+impl TryFrom<usize> for NodeId {
+    type Error = NodeIdError;
+
+    fn try_from(value: usize) -> Result<Self, Self::Error> {
+        let value: u32 = value.try_into().map_err(|_| NodeIdError)?;
+        Ok(NodeId(value))
+    }
+}
+
+#[derive(Debug)]
+pub struct StorageMemoryUsage {
+    node_cap: usize,
+    trees_cap: usize,
+    temp_vec_cap: usize,
+    temp_vec_mod_cap: usize,
+    values_cap: usize,
+    strings: StringsMemoryUsage,
+}
+
+pub struct TreeStorage
+{
+    nodes: Entries<NodeId, Node>,
+    trees: Vec<(StringId, NodeId)>,
+    temp_vec: Vec<(StringId, Node)>,
+    temp_vec_mod: Vec<(StringId, NodeId)>,
+    values: Vec<u8>,
+    strings: StringInterner,
+}
+
+assert_eq_size!([u32; 2], (StringId, NodeId));
+
+impl Default for TreeStorage
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<K, V> TreeStorage<K, V>
-where
-    K: Ord + Clone,
-    V: Clone,
+impl TreeStorage
 {
     pub fn new() -> Self {
         Self {
             trees: Vec::with_capacity(1024),
             temp_vec: Vec::with_capacity(128),
+            temp_vec_mod: Vec::with_capacity(128),
+            values: Vec::with_capacity(2048),
+            strings: Default::default(),
+            nodes: Entries::with_capacity(2048),
         }
+    }
+
+    pub fn memory_usage(&self) -> StorageMemoryUsage {
+        StorageMemoryUsage {
+            node_cap: self.nodes.capacity(),
+            trees_cap: self.trees.capacity(),
+            temp_vec_cap: self.temp_vec.capacity(),
+            temp_vec_mod_cap: self.temp_vec_mod.capacity(),
+            values_cap: self.values.capacity(),
+            strings: self.strings.memory_usage(),
+        }
+    }
+
+    pub fn get_string_id(&mut self, s: &str) -> StringId {
+        self.strings.get_string_id(s)
+    }
+
+    pub fn get_str(&self, string_id: StringId) -> &str {
+        self.strings.get(string_id).unwrap()
+    }
+
+    pub fn add_blob(&mut self, mut value: Vec<u8>) -> BlobStorageId {
+        let start = self.values.len();
+        self.values.append(&mut value);
+        let end = self.values.len();
+
+        BlobStorageId::new(start, end)
+    }
+
+    pub fn add_blob_by_ref(&mut self, value: &[u8]) -> BlobStorageId {
+        let start = self.values.len();
+        self.values.extend_from_slice(value);
+        let end = self.values.len();
+
+        BlobStorageId::new(start, end)
+    }
+
+    pub fn get_blob(&self, value_id: BlobStorageId) -> Option<&[u8]> {
+        let (start, end) = value_id.get();
+        self.values.get(start..end)
     }
 
     pub fn new_tree(&self) -> TreeStorageId {
         TreeStorageId::new(0, 0)
     }
 
-    pub fn get_tree(&self, tree_id: TreeStorageId) -> Option<&[(K, V)]> {
-        let (start, end) = tree_id.get();
+    pub fn get_node(&self, node_id: NodeId) -> Option<&Node> {
+        self.nodes.get(node_id).ok()?
+    }
 
+    #[cfg(test)]
+    pub fn get_own_tree(&self, tree_id: TreeStorageId) -> Option<Vec<(String, Node)>> {
+        let (start, end) = tree_id.get();
+        let tree = self.trees.get(start..end)?;
+
+        Some(tree.iter().flat_map(|t| {
+            let key = self.strings.get(t.0)?;
+            let node = self.nodes.get(t.1).ok()??;
+            Some((key.to_string(), node.clone()))
+        }).collect())
+    }
+
+    pub fn get_tree<'a>(&'a self, tree_id: TreeStorageId) -> Option<&[(StringId, NodeId)]> {
+        let (start, end) = tree_id.get();
         self.trees.get(start..end)
     }
 
-    pub fn get<BK>(&self, tree_id: TreeStorageId, key: &BK) -> Option<&V>
-    where
-        BK: Ord + ?Sized,
-        K: Borrow<BK>,
+    pub fn get_tree_node_id<'a>(&'a self, tree_id: TreeStorageId, key: &str) -> Option<NodeId>
     {
         let tree = self.get_tree(tree_id)?;
 
-        let key = key.borrow();
         let index = tree
-            .binary_search_by(|value| value.0.borrow().cmp(key))
+            .binary_search_by(|value| {
+                let value = self.get_str(value.0);
+                value.cmp(key)
+            })
             .ok()?;
 
-        tree.get(index).map(|v| &v.1)
+        Some(tree[index].1)
     }
 
     fn add_tree_with<F>(&mut self, fun: F) -> TreeStorageId
     where
-        F: FnOnce(&mut Vec<(K, V)>),
+    F: FnOnce(&mut Vec<(StringId, NodeId)>),
     {
         let start = self.trees.len();
         fun(&mut self.trees);
@@ -104,10 +276,16 @@ where
 
     pub fn add_tree_with_result<F, E>(&mut self, fun: F) -> Result<TreeStorageId, E>
     where
-        F: FnOnce(&mut Vec<(K, V)>) -> Result<(), E>,
+        F: FnOnce(&mut StringInterner, &mut Vec<(StringId, Node)>) -> Result<(), E>,
     {
+        self.temp_vec.clear();
+        let result = fun(&mut self.strings, &mut self.temp_vec);
+
         let start = self.trees.len();
-        let result = fun(&mut self.trees);
+        for (string_id, node) in &self.temp_vec {
+            let node_id = self.nodes.push(node.clone()).unwrap();
+            self.trees.push((*string_id, node_id));
+        }
         let end = self.trees.len();
 
         let tree_id = TreeStorageId::new(start, end);
@@ -117,43 +295,45 @@ where
     /// Use `self.temp_vec` to avoid 1 allocation in insert/remove
     fn with_temporary_tree<F, R>(&mut self, fun: F) -> R
     where
-        F: FnOnce(&mut Self, &mut Vec<(K, V)>) -> R,
+    F: FnOnce(&mut Self, &mut Vec<(StringId, NodeId)>) -> R,
     {
-        let mut new_tree = std::mem::take(&mut self.temp_vec);
+        let mut new_tree = std::mem::take(&mut self.temp_vec_mod);
         new_tree.clear();
 
         let result = fun(self, &mut new_tree);
 
-        self.temp_vec = new_tree;
+        self.temp_vec_mod = new_tree;
         result
     }
 
-    pub fn insert<Key>(&mut self, tree_id: TreeStorageId, key: Key, value: V) -> TreeStorageId
-    where
-        Key: Into<K>,
+    pub fn insert(&mut self, tree_id: TreeStorageId, key_str: &str, value: Node) -> TreeStorageId
     {
-        let key = key.into();
+        let key = self.get_string_id(key_str);
+        let node_id = self.nodes.push(value).unwrap();
 
         self.with_temporary_tree(|this, new_tree| {
             let tree = match this.get_tree(tree_id) {
                 Some(tree) if !tree.is_empty() => tree,
                 _ => {
                     return this.add_tree_with(|trees| {
-                        trees.push((key, value));
+                        trees.push((key, node_id));
                     });
                 }
             };
 
-            let index = tree.binary_search_by(|value| value.0.cmp(&key));
+            let index = tree.binary_search_by(|value| {
+                let value = this.get_str(value.0);
+                value.cmp(&key_str)
+            });
 
             match index {
                 Ok(found) => {
                     new_tree.extend_from_slice(tree);
-                    new_tree[found].1 = value;
+                    new_tree[found].1 = node_id;
                 }
                 Err(index) => {
                     new_tree.extend_from_slice(&tree[..index]);
-                    new_tree.push((key, value));
+                    new_tree.push((key, node_id));
                     new_tree.extend_from_slice(&tree[index..]);
                 }
             }
@@ -164,10 +344,7 @@ where
         })
     }
 
-    pub fn remove<BK>(&mut self, tree_id: TreeStorageId, key: &BK) -> TreeStorageId
-    where
-        BK: Ord + ?Sized,
-        K: Borrow<BK>,
+    pub fn remove(&mut self, tree_id: TreeStorageId, key: &str) -> TreeStorageId
     {
         self.with_temporary_tree(|this, new_tree| {
             let tree = match this.get_tree(tree_id) {
@@ -177,8 +354,10 @@ where
                 }
             };
 
-            let key = key.borrow();
-            let index = match tree.binary_search_by(|value| value.0.borrow().cmp(&key)) {
+            let index = match tree.binary_search_by(|value| {
+                let value = this.get_str(value.0);
+                value.cmp(key)
+            }) {
                 Ok(index) => index,
                 Err(_) => {
                     return tree_id;
@@ -199,94 +378,62 @@ where
     }
 
     pub fn clear(&mut self) {
-        *self = Self::new()
-    }
+        // let now = std::time::Instant::now();
+        self.strings.clear();
+        // let elapsed = now.elapsed();
 
-    pub fn iter(&self, tree_id: TreeStorageId) -> TreeIter<K, V> {
-        self.get_tree(tree_id)
-            .map(|tree| TreeIter { tree, current: 0 })
-            .unwrap()
-    }
+        // self.time_clear += elapsed;
+        // println!("TIME_CLEAR_STRING={:?}", self.time_clear);
 
-    pub fn values(&self, tree_id: TreeStorageId) -> TreeValues<K, V> {
-        self.get_tree(tree_id)
-            .map(|tree| TreeValues { tree, current: 0 })
-            .unwrap()
-    }
+        // unsafe {
+        //     self.values.set_len(0);
+        //     self.nodes.clear();
+        //     self.trees.set_len(0);
+        // }
 
-    pub fn consuming_iter(&self, tree_id: TreeStorageId) -> TreeConsumingIter<K, V> {
-        self.get_tree(tree_id)
-            .map(|tree| TreeConsumingIter {
-                tree: tree.to_vec(),
-                current: 0,
-            })
-            .unwrap()
-    }
-}
+        if self.values.capacity() > 2048 {
+            self.values = Vec::with_capacity(2048);
+        } else {
+            self.values.clear();
+        }
 
-pub struct TreeIter<'a, K, V>
-where
-    K: Ord,
-{
-    tree: &'a [(K, V)],
-    current: usize,
-}
+        if self.nodes.capacity() > 4096 {
+            self.nodes = Entries::with_capacity(4096);
+        } else {
+            self.nodes.clear();
+        }
 
-impl<'a, K, V> Iterator for TreeIter<'a, K, V>
-where
-    K: Ord,
-{
-    type Item = &'a (K, V);
+        if self.trees.capacity() > 16384 {
+            self.trees = Vec::with_capacity(16384);
+        } else {
+            self.trees.clear();
+        }
 
-    fn next(&mut self) -> Option<Self::Item> {
-        let current = self.tree.get(self.current);
-        self.current += 1;
-        current
-    }
-}
+        // self.values.clear();
+        // self.nodes.clear();
+        // self.trees.clear();
 
-pub struct TreeConsumingIter<K, V> {
-    tree: Vec<(K, V)>,
-    current: usize,
-}
+        // self.trees.clear();
+        // self.temp_vec.clear();
+        // self.temp_vec_mod.clear();
+        // self.values.clear();
+        // self.nodes.clear();
 
-impl<K, V> Iterator for TreeConsumingIter<K, V>
-where
-    K: Clone + Ord,
-    V: Clone,
-{
-    type Item = (K, V);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let current = self.tree.get(self.current).cloned();
-        self.current += 1;
-        current
-    }
-}
-
-pub struct TreeValues<'a, K, V>
-where
-    K: Ord,
-{
-    tree: &'a [(K, V)],
-    current: usize,
-}
-
-impl<'a, K, V> Iterator for TreeValues<'a, K, V>
-where
-    K: Ord,
-{
-    type Item = &'a V;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let current = self.tree.get(self.current).map(|v| &v.1);
-        self.current += 1;
-        current
+        // *self = Self {
+        //     trees: Vec::with_capacity(2048),
+        //     temp_vec: Vec::with_capacity(2048),
+        //     temp_vec_mod: Vec::with_capacity(2048),
+        //     values: Vec::with_capacity(2048),
+        //     nodes: Entries::with_capacity(2048),
+        //     strings: std::mem::take(&mut self.strings),
+        // };
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::working_tree::{Entry, NodeKind::Leaf};
+
     use super::*;
 
     #[test]
@@ -303,16 +450,23 @@ mod tests {
 
         let mut tree_storage = TreeStorage::new();
 
+        let blob_id = tree_storage.add_blob_by_ref(&[1]);
+        let entry = Entry::Blob(blob_id);
+
+        let blob2_id = tree_storage.add_blob_by_ref(&[2]);
+        let entry2 = Entry::Blob(blob2_id);
+
+        let node1 = Node::new(Leaf, entry.clone());
+        let node2 = Node::new(Leaf, entry2.clone());
+
         let tree_id = tree_storage.new_tree();
-        let tree_id = tree_storage.insert(tree_id, "a", 1);
-        let tree_id = tree_storage.insert(tree_id, "b", 2);
-        let tree_id = tree_storage.insert(tree_id, "0", 3);
+        let tree_id = tree_storage.insert(tree_id, "a", node1.clone());
+        let tree_id = tree_storage.insert(tree_id, "b", node2.clone());
+        let tree_id = tree_storage.insert(tree_id, "0", node1.clone());
 
         assert_eq!(
-            tree_storage.get_tree(tree_id).unwrap(),
-            &[("0", 3), ("a", 1), ("b", 2),]
+            tree_storage.get_own_tree(tree_id).unwrap(),
+            &[("0".to_string(), node1.clone()), ("a".to_string(), node1.clone()), ("b".to_string(), node2.clone()),]
         );
-
-        println!("TREE={:?}", tree_storage.get_tree(tree_id));
     }
 }
