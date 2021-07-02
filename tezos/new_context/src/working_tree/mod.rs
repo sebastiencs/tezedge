@@ -12,7 +12,7 @@ use crate::hash::{hash_entry, EntryHash, HashingError};
 use crate::ContextValue;
 use crate::{kv_store::HashId, ContextKeyValueStore};
 
-use self::{tree_storage::{BlobStorageId, TreeStorage, TreeStorageId}, working_tree::MerkleError};
+use self::{tree_storage::{Blob, BlobStorageId, TreeStorage, TreeStorageId}, working_tree::MerkleError};
 
 pub mod map;
 pub mod serializer;
@@ -116,6 +116,7 @@ impl NodeBitfield {
 pub enum NodeEntryKind {
     Tree,
     Blob,
+    // SmallValue,
     None,
 }
 
@@ -141,6 +142,9 @@ impl NodeEntry {
             NodeEntryKind::Blob => {
                 Some(Entry::Blob(BlobStorageId::from(self)))
             }
+            // NodeEntryKind::SmallValue => {
+            //     todo!()
+            // }
             NodeEntryKind::None => {
                 None
             }
@@ -272,14 +276,22 @@ impl Node {
     pub fn set_entry(&self, entry: &Entry) -> Result<(), MerkleError> {
         let node_entry = match entry {
             Entry::Tree(tree_id) => {
-                NodeEntry::new()
+                let id = NodeEntry::new()
                     .with_entry_kind(NodeEntryKind::Tree)
-                    .with_entry_id((*tree_id).into())
+                    .with_entry_id((*tree_id).into());
+
+                assert_eq!(&TreeStorageId::from(id), tree_id);
+
+                id
             }
             Entry::Blob(blob_id) => {
-                NodeEntry::new()
+                let id = NodeEntry::new()
                     .with_entry_kind(NodeEntryKind::Blob)
-                    .with_entry_id((*blob_id).into())
+                    .with_entry_id((*blob_id).into());
+
+                assert_eq!(&BlobStorageId::from(id), blob_id);
+
+                id
             }
             Entry::Commit(_) => {
                 panic!()

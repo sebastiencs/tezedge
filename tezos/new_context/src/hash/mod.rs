@@ -13,8 +13,7 @@ use failure::Fail;
 
 use ocaml::ocaml_hash_string;
 
-use crate::{ContextKeyValueStore, kv_store::HashId, persistent::DBError, working_tree::{Commit, Entry, Node, NodeKind, Tree, string_interner::StringId, tree_storage::{BlobStorageId, NodeId, TreeStorage}}};
-use crate::working_tree::KeyFragment;
+use crate::{ContextKeyValueStore, kv_store::HashId, persistent::DBError, working_tree::{Commit, Entry, NodeKind, Tree, string_interner::StringId, tree_storage::{BlobStorageId, NodeId, TreeStorage}}};
 
 mod ocaml;
 
@@ -501,7 +500,7 @@ mod tests {
 
         let mut storage = TreeStorage::new();
 
-        let blob_id = storage.add_blob(vec![1]);
+        let blob_id = storage.add_blob_by_ref(&[1]);
 
         let node = Node {
             bitfield: Cell::new(NodeBitfield::new_with(NodeKind::Leaf, hash_blob(blob_id, &mut repo, &mut storage).unwrap())),

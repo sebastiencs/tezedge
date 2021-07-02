@@ -546,11 +546,12 @@ ocaml_export! {
         let ocaml_context = rt.get(context);
         let context: &TezedgeContextFFI = ocaml_context.borrow();
         let context = context.0.borrow().clone();
-        let value: ContextValue = value.to_rust(rt);
+        let value = rt.get(value);
+        // let value: ContextValue = value.to_rust(rt);
 
         let value_id = {
             let mut storage = context.index.storage.borrow_mut();
-            storage.add_blob(value)
+            storage.add_blob_by_ref(value.as_bytes())
         };
 
         // let mut storage = context.index.storage.borrow_mut();

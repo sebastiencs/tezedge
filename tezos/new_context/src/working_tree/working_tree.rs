@@ -810,9 +810,9 @@ impl WorkingTree {
     /// Set key/val to the working tree.
     pub fn add(&self, key: &ContextKey, value: &[u8]) -> Result<Self, MerkleError> {
         let mut tree_storage = self.index.storage.borrow_mut();
-        let value_id = tree_storage.add_blob_by_ref(value);
+        let blob_id = tree_storage.add_blob_by_ref(value);
 
-        let node = Self::get_leaf(Entry::Blob(value_id));
+        let node = Self::get_leaf(Entry::Blob(blob_id));
         let entry = &self._add(key, node, &mut tree_storage)?;
         let tree = self.entry_tree(entry)?.clone();
 
@@ -971,11 +971,17 @@ impl WorkingTree {
         tree_storage: &TreeStorage,
     ) -> Result<(), MerkleError> {
         // Add entry to batch
-        data.add_serialized_entry(entry_hash, entry, tree_storage)?;
 
         match entry {
-            Entry::Blob(_) => Ok(()),
+            Entry::Blob(blob_id) => {
+                if !blob_id.is_inline() {
+                    data.add_serialized_entry(entry_hash, entry, tree_storage)?;
+                }
+                Ok(())
+            },
             Entry::Tree(tree) => {
+                data.add_serialized_entry(entry_hash, entry, tree_storage)?;
+
                 // Go through all descendants and gather errors. Remap error if there is a failure
                 // anywhere in the recursion paths. TODO: is revert possible?
                 // let tree_storage = self.index.trees.borrow();
@@ -990,6 +996,28 @@ impl WorkingTree {
                             return Ok(());
                         }
                         child_node.set_commited(true);
+
+                        // if tree.len() == 1 {
+                        //     if let Some(Entry::Blob(blob_id)) = child_node.get_entry() {
+                        //         let blob = tree_storage.get_blob(blob_id).unwrap();
+                        //         if blob.len() < 8 {
+                        //             println!("HERE 1 child small blob");
+                        //         } else {
+                        //             println!("HERE 1 child big blobs");
+                        //         }
+                        //     };
+                        // } else {
+                        //     for (_, v) in tree {
+                        //         let v = tree_storage.get_node(*v).unwrap();
+                        //         if let Some(Entry::Blob(blob_id)) = v.get_entry() {
+                        //             let blob = tree_storage.get_blob(blob_id).unwrap();
+                        //             if blob.len() < 8 {
+                        //                 println!("HERE {:?} child small blob", tree.len());
+                        //             }
+                        //         }
+                        //     }
+                        //     println!("LA");
+                        // }
 
                         match child_node.get_entry().as_ref() {
                             None => Ok(()),
@@ -1009,6 +1037,8 @@ impl WorkingTree {
                     .unwrap_or(Ok(()))
             }
             Entry::Commit(commit) => {
+                data.add_serialized_entry(entry_hash, entry, tree_storage)?;
+
                 let entry = match root {
                     Some(root) => Entry::Tree(root.clone()),
                     None => self.get_entry_from_hash_id(commit.root_hash, data.store)?,

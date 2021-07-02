@@ -3,9 +3,9 @@ use std::{
     str::Utf8Error, string::FromUtf8Error,
 };
 
-use crate::{kv_store::HashId, working_tree::{Commit, NodeKind}};
+use crate::{kv_store::HashId, working_tree::{Commit, NodeEntryKind, NodeKind, tree_storage::BlobStorageId}};
 
-use super::{tree_storage::TreeStorage, Entry, Node, NodeBitfield};
+use super::{Entry, Node, NodeBitfield, NodeEntry, tree_storage::{Blob, TreeStorage}};
 
 const ID_TREE: u8 = 0;
 const ID_BLOB: u8 = 1;
@@ -28,6 +28,17 @@ impl From<TryFromIntError> for SerializationError {
     fn from(_: TryFromIntError) -> Self {
         Self::TryFromIntError
     }
+}
+
+fn get_inline_blob(storage: &TreeStorage, node_entry: NodeEntry) -> Option<Blob> {
+    if let Some(Entry::Blob(blob_id)) = node_entry.get_entry() {
+        if let Some(blob) = storage.get_blob(blob_id) {
+            if blob.len() < 8 {
+                return Some(blob)
+            }
+        }
+    }
+    None
 }
 
 pub fn serialize_entry(
@@ -53,17 +64,31 @@ pub fn serialize_entry(
                 let node = storage.get_node(*node_id).unwrap();
                 let node_bitfield = node.bitfield.get();
 
-                let kind: u8 = node_bitfield.node_kind().into();
                 let hash_id: u32 = node_bitfield.entry_hash_id();
 
-                output.write(&[kind])?;
-                output.write(&hash_id.to_ne_bytes())?;
+                if let Some(blob) = get_inline_blob(storage, node.entry.get()) {
+                    let kind: u8 = node_bitfield.node_kind().into();
+                    let hash_id: u32 = node_bitfield.entry_hash_id();
+
+                    let blob_len: u8 = blob.len().try_into().unwrap();
+                    let kind_len: u8 = (1 << 7) | (kind << 6) | blob_len;
+
+                    output.write(&[kind_len])?;
+                    output.write(&hash_id.to_ne_bytes())?;
+                    output.write(blob.as_ref())?;
+                } else {
+                    let kind: u8 = node_bitfield.node_kind().into();
+
+                    output.write(&[kind])?;
+                    output.write(&hash_id.to_ne_bytes())?;
+                }
             }
         }
         Entry::Blob(blob_id) => {
             output.write(&[ID_BLOB])?;
             let blob = storage.get_blob(*blob_id).unwrap();
-            output.write(blob)?;
+            // println!("SERIALIZE ID={:?} BLOB={:?}", blob_id, blob.as_ref());
+            output.write(blob.as_ref())?;
         }
         Entry::Commit(commit) => {
             output.write(&[ID_COMMIT])?;
@@ -143,23 +168,50 @@ pub fn deserialize(
                     pos = pos + 2 + key_length;
 
                     let kind_hash_id = data.get(pos..pos + 5).ok_or(UnexpectedEOF)?;
-                    let kind = NodeKind::from(kind_hash_id[0]);
+                    let kind = kind_hash_id[0];
                     let hash_id = u32::from_ne_bytes(kind_hash_id[1..].try_into()?);
-
                     assert_ne!(hash_id, 0);
 
-                    let bitfield = NodeBitfield::new_with(kind, HashId::new_u32(hash_id).unwrap())
-                        .with_commited(true);
+                    if kind >> 7 != 0 {
+                        let blob_len = (kind & 0b11111) as usize;
+                        let kind = NodeKind::from((kind >> 6) & 1);
 
-                    pos += 5;
+                        let blob = data.get(pos + 5..pos + 5 + blob_len).ok_or(UnexpectedEOF)?;
+                        let blob_id = BlobStorageId::new_inline(blob);
 
-                    trees.push((
-                        key,
-                        Node {
-                            bitfield: Cell::new(bitfield),
-                            entry: Default::default(),
-                        },
-                    ));
+                        let bitfield = NodeBitfield::new_with(kind, HashId::new_u32(hash_id).unwrap())
+                            .with_commited(true);
+
+                        pos += 5 + blob_len;
+
+                        trees.push((
+                            key,
+                            Node {
+                                bitfield: Cell::new(bitfield),
+                                entry: Cell::new(
+                                    NodeEntry::new()
+                                        .with_entry_kind(NodeEntryKind::Blob)
+                                        .with_entry_id(blob_id.into())
+                                ),
+                            },
+                        ));
+
+                    } else {
+                        let kind = NodeKind::from(kind_hash_id[0]);
+
+                        let bitfield = NodeBitfield::new_with(kind, HashId::new_u32(hash_id).unwrap())
+                            .with_commited(true);
+
+                        pos += 5;
+
+                        trees.push((
+                            key,
+                            Node {
+                                bitfield: Cell::new(bitfield),
+                                entry: Default::default(),
+                            },
+                        ));
+                    }
                 }
                 Ok(())
             })?;
@@ -169,6 +221,7 @@ pub fn deserialize(
         ID_BLOB => {
             let blob = data.get(pos..).ok_or(UnexpectedEOF)?;
             let blob_id = tree_storage.add_blob_by_ref(blob);
+            // println!("DESERIALIZE ID={:?} BLOB={:?}", blob_id, tree_storage.get_blob(blob_id));
             Ok(Entry::Blob(blob_id))
         },
         ID_COMMIT => {
@@ -250,9 +303,18 @@ impl<'a> Iterator for HashIdIterator<'a> {
         pos += 2 + key_length;
 
         let kind_hash_id = self.data.get(pos..pos + 5)?;
+
+        let kind = kind_hash_id[0];
+
+        let offset = if kind >> 7 != 0 {
+            (kind & 0b11111) as usize
+        } else {
+            0
+        };
+
         let hash_id = u32::from_ne_bytes(kind_hash_id[1..].try_into().ok()?);
 
-        self.pos = pos + 5;
+        self.pos = pos + 5 + offset;
 
         HashId::new(hash_id as usize)
     }
@@ -325,14 +387,29 @@ mod tests {
         let iter = iter_hash_ids(&data);
         assert_eq!(iter.map(|h| h.as_usize()).collect::<Vec<_>>(), &[3, 1, 2]);
 
-        let blob_id = tree_storage.add_blob(vec![1, 2, 3, 4, 5]);
+        let blob_id = tree_storage.add_blob_by_ref(&[1, 2, 3, 4, 5]);
 
         let mut data = Vec::with_capacity(1024);
         serialize_entry(&Entry::Blob(blob_id), &mut data, &tree_storage).unwrap();
         let entry = deserialize(&data, &mut tree_storage).unwrap();
         if let Entry::Blob(entry) = entry {
             let blob = tree_storage.get_blob(entry).unwrap();
-            assert_eq!(blob, vec![1, 2, 3, 4, 5]);
+            assert_eq!(blob.as_ref(), &[1, 2, 3, 4, 5]);
+        } else {
+            panic!();
+        }
+        let iter = iter_hash_ids(&data);
+        assert_eq!(iter.count(), 0);
+
+        // Not inlined value
+        let blob_id = tree_storage.add_blob_by_ref(&[1, 2, 3, 4, 5, 6, 7, 8]);
+
+        let mut data = Vec::with_capacity(1024);
+        serialize_entry(&Entry::Blob(blob_id), &mut data, &tree_storage).unwrap();
+        let entry = deserialize(&data, &mut tree_storage).unwrap();
+        if let Entry::Blob(entry) = entry {
+            let blob = tree_storage.get_blob(entry).unwrap();
+            assert_eq!(blob.as_ref(), &[1, 2, 3, 4, 5, 6, 7, 8]);
         } else {
             panic!();
         }

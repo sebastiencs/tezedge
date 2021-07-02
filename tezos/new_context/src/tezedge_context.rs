@@ -558,6 +558,8 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
     }
 
     fn checkout(&self, context_hash: &ContextHash) -> Result<Option<TezedgeContext>, ContextError> {
+        // println!("CHECKOUT={:?}", context_hash.to_base58_check());
+
         let hash_id = {
             let repository = self.repository.read()?;
 
@@ -567,15 +569,26 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
             }
         };
 
+        // println!("HASH_ID={:?}", hash_id);
+
         let mut tree_storage = self.storage.borrow_mut();
-        let now = std::time::Instant::now();
+        // let now = std::time::Instant::now();
         tree_storage.clear();
-        let elapsed: u64 = now.elapsed().as_nanos().try_into().unwrap();
-        self.time_clear.fetch_add(elapsed, std::sync::atomic::Ordering::Relaxed);
+        // let elapsed: u64 = now.elapsed().as_nanos().try_into().unwrap();
+        // self.time_clear.fetch_add(elapsed, std::sync::atomic::Ordering::Relaxed);
+
+        // println!("LA");
 
         if let Some(commit) = self.find_commit(hash_id, &mut tree_storage)? {
+
+            // println!("COMMIT={:?}", commit);
+
             if let Some(tree) = self.find_tree(commit.root_hash, &mut tree_storage)? {
+
+                // println!("TREE={:?}", tree);
+
                 let tree = WorkingTree::new_with_tree(self.clone(), tree);
+
 
                 Ok(Some(TezedgeContext::new(
                     self.clone(),
@@ -836,10 +849,12 @@ impl ShellContextApi for TezedgeContext {
         let commit_hash = self.get_commit_hash(commit_hash_id, &*repository)?;
         repository.clear_entries()?;
 
-        std::mem::drop(repository);
-        let time = self.index.time_clear.load(std::sync::atomic::Ordering::Relaxed);
-        println!("TIME_CLEAR={:?}", std::time::Duration::from_nanos(time.try_into().unwrap()));
-        self.get_memory_usage();
+        // std::mem::drop(repository);
+        // let time = self.index.time_clear.load(std::sync::atomic::Ordering::Relaxed);
+        // println!("TIME_CLEAR={:?}", std::time::Duration::from_nanos(time.try_into().unwrap()));
+        // self.get_memory_usage();
+
+        // println!("COMMIT={:?}", commit_hash.to_base58_check());
 
         Ok(commit_hash)
     }
@@ -988,5 +1003,55 @@ impl TezedgeContext {
         };
         let commit_hash = ContextHash::try_from(&commit_hash[..])?;
         Ok(commit_hash)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tezos_api::ffi::{ContextKvStoreConfiguration, TezosContextTezEdgeStorageConfiguration};
+
+    use super::*;
+    use crate::initializer::initialize_tezedge_context;
+
+    #[test]
+    fn init_context() {
+        let context = initialize_tezedge_context(&TezosContextTezEdgeStorageConfiguration {
+            backend: ContextKvStoreConfiguration::InMem,
+            ipc_socket_path: None,
+        })
+        .unwrap();
+
+        // Context is immutable so on any modification, the methods return the new tree
+        let context = context.add(&["a", "b", "c"], &[1, 2, 3]).unwrap();
+        let context = context.add(&["m", "n", "o"], &[4, 5, 6]).unwrap();
+        assert_eq!(context.find(&["a", "b", "c"]).unwrap().unwrap(), &[1, 2, 3]);
+
+        let context2 = context.delete(&["m", "n", "o"]).unwrap();
+        assert!(context.mem(&["m", "n", "o"]).unwrap());
+        assert!(context2.mem(&["m", "n", "o"]).unwrap() == false);
+
+        assert!(context.mem_tree(&["a"]));
+
+        let tree_a = context.find_tree(&["a"]).unwrap().unwrap();
+        let context = context.add_tree(&["z"], &tree_a).unwrap();
+
+        assert_eq!(
+            context.find(&["a", "b", "c"]).unwrap().unwrap(),
+            context.find(&["z", "b", "c"]).unwrap().unwrap(),
+        );
+
+        let context = context.add(&["a", "b1", "c"], &[10, 20, 30]).unwrap();
+        let list = context.list(None, None, &["a"]).unwrap();
+
+        assert_eq!(&*list[0].0, "b");
+        assert_eq!(&*list[1].0, "b1");
+
+        assert_eq!(
+            context.get_merkle_root().unwrap(),
+            [
+                1, 217, 94, 141, 166, 51, 65, 3, 104, 220, 208, 35, 122, 106, 131, 147, 183, 133,
+                81, 239, 195, 111, 25, 29, 88, 1, 46, 251, 25, 205, 202, 229
+            ]
+        );
     }
 }

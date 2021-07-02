@@ -76,10 +76,25 @@ impl From<NodeEntry> for TreeStorageId {
     }
 }
 
+// #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
+// pub struct BlobStorageId {
+//     /// | 14 bits | 28 bits | 22 bits |
+//     /// | empty   | start   | length  |
+//     bits: u64,
+// }
+
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BlobStorageId {
-    /// | 14 bits | 28 bits | 22 bits |
-    /// | empty   | start   | length  |
+    /// | 2 bits  | 1 bit     | 61 bits |
+    /// | empty   | is_inline | value   |
+    ///
+    /// value inline:
+    /// | 5 bits | 56 bits |
+    /// | length | value   |
+    ///
+    /// value not inline:
+    /// | 32 bits | 29 bits |
+    /// | start   | length  |
     bits: u64,
 }
 
@@ -95,28 +110,90 @@ impl From<NodeEntry> for BlobStorageId {
     }
 }
 
-impl BlobStorageId {
-    fn new(start: usize, end: usize) -> Self {
-        let length = end.checked_sub(start).unwrap();
+#[derive(Debug, PartialEq, Eq)]
+enum BlobRef {
+    Inline {
+        length: u8,
+        value: [u8; 8],
+    },
+    Ref {
+        start: usize,
+        end: usize,
+    }
+}
 
-        assert_eq!(start & !0xFFFFFFF, 0);
-        assert_eq!(length & !0x3FFFFF, 0);
+impl BlobStorageId {
+    pub fn new_inline(value: &[u8]) -> Self {
+        debug_assert!(value.len() < 8);
+
+        let len = value.len();
+        let mut new_value: [u8; 8] = [0; 8];
+
+        new_value[..len].copy_from_slice(value);
+        let new_value = u64::from_ne_bytes(new_value);
 
         let blob_id = Self {
-            bits: (start as u64) << 22 | length as u64
+            bits: (1 << 61) | (len as u64) << 56 | new_value
         };
 
-        debug_assert_eq!(blob_id.get(), (start, end));
+        debug_assert_eq!(blob_id.get(), BlobRef::Inline {
+            length: len.try_into().unwrap(),
+            value: new_value.to_ne_bytes()
+        });
 
         blob_id
     }
 
-    fn get(self) -> (usize, usize) {
-        let start = (self.bits >> 22) as usize;
-        let length = (self.bits & 0x3FFFFF) as usize;
+    fn new(start: usize, end: usize) -> Self {
+        let length = end.checked_sub(start).unwrap();
 
-        (start, start + length)
+        debug_assert_eq!(start & !0xFFFFFFF, 0);
+        debug_assert_eq!(length & !0x3FFFFF, 0);
+
+        let blob_id = Self {
+            bits: (start as u64) << 29 | length as u64
+        };
+
+        debug_assert_eq!(blob_id.get(), BlobRef::Ref {
+            start, end
+        });
+
+        blob_id
     }
+
+    fn get(self) -> BlobRef {
+        if self.bits >> 61 != 0 {
+            let length = ((self.bits >> 56) & 0x1F) as u8;
+
+            let value: u64 = self.bits & 0xFFFFFFFFFFFFFF;
+            //let value: u64 = self.bits & 0xFFFFFFFFFFFFF;
+            let value: [u8; 8] = value.to_ne_bytes();
+
+            BlobRef::Inline {
+                length,
+                value,
+            }
+        } else {
+            let start = (self.bits >> 29) as usize;
+            let length = (self.bits & 0x1FFFFFF) as usize;
+
+            BlobRef::Ref {
+                start,
+                end: start + length
+            }
+        }
+    }
+
+    pub fn is_inline(self) -> bool {
+        self.bits >> 61 != 0
+    }
+
+    // fn get(self) -> (usize, usize) {
+    //     let start = (self.bits >> 22) as usize;
+    //     let length = (self.bits & 0x3FFFFF) as usize;
+
+    //     (start, start + length)
+    // }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -160,7 +237,54 @@ pub struct TreeStorage
     temp_vec_mod: Vec<(StringId, NodeId)>,
     values: Vec<u8>,
     strings: StringInterner,
+    // inlined_blob: [u8; 8],
 }
+
+#[derive(Debug)]
+pub enum Blob<'a> {
+    Inline {
+        length: u8,
+        value: [u8; 8]
+    },
+    Ref {
+        blob: &'a [u8]
+    }
+}
+
+// impl<'a> std::fmt::Debug for Blob<'a> {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//         f.debug_struct("Blob")
+//          .field("data", &self.as_ref())
+//          .finish()
+//     }
+// }
+
+impl<'a> AsRef<[u8]> for Blob<'a> {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            Blob::Inline { length, value } => {
+                &value[..*length as usize]
+            }
+            Blob::Ref { blob } => {
+                blob
+            }
+        }
+    }
+}
+
+impl<'a> std::ops::Deref for Blob<'a> {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_ref()
+    }
+}
+
+// impl<'a> Blob<'a> {
+//     fn to_vec(&self) -> Vec<u8> {
+//         self.as_ref().to_vec()
+//     }
+// }
 
 assert_eq_size!([u32; 2], (StringId, NodeId));
 
@@ -203,25 +327,31 @@ impl TreeStorage
         self.strings.get(string_id).unwrap()
     }
 
-    pub fn add_blob(&mut self, mut value: Vec<u8>) -> BlobStorageId {
-        let start = self.values.len();
-        self.values.append(&mut value);
-        let end = self.values.len();
-
-        BlobStorageId::new(start, end)
-    }
-
     pub fn add_blob_by_ref(&mut self, value: &[u8]) -> BlobStorageId {
-        let start = self.values.len();
-        self.values.extend_from_slice(value);
-        let end = self.values.len();
+        if value.len() < 8 {
+            //println!("ADD_BLOB={:?}", value);
+            let inline = BlobStorageId::new_inline(value);
+            //println!("INLINED={:?}", inline.get());
+            inline
+        } else {
+            let start = self.values.len();
+            self.values.extend_from_slice(value);
+            let end = self.values.len();
 
-        BlobStorageId::new(start, end)
+            BlobStorageId::new(start, end)
+        }
     }
 
-    pub fn get_blob(&self, value_id: BlobStorageId) -> Option<&[u8]> {
-        let (start, end) = value_id.get();
-        self.values.get(start..end)
+    pub fn get_blob(&self, blob_id: BlobStorageId) -> Option<Blob> {
+        match blob_id.get() {
+            BlobRef::Inline { length, value } => {
+                Some(Blob::Inline { length, value })
+            }
+            BlobRef::Ref { start, end } => {
+                let blob = self.values.get(start..end)?;
+                Some(Blob::Ref { blob })
+            }
+        }
     }
 
     pub fn new_tree(&self) -> TreeStorageId {
@@ -468,5 +598,18 @@ mod tests {
             tree_storage.get_own_tree(tree_id).unwrap(),
             &[("0".to_string(), node1.clone()), ("a".to_string(), node1.clone()), ("b".to_string(), node2.clone()),]
         );
+    }
+
+    #[test]
+    fn test_blob_id() {
+        let mut tree_storage = TreeStorage::new();
+
+        let blob1 = tree_storage.add_blob_by_ref(&[1,2,3]);
+        let blob2 = tree_storage.add_blob_by_ref(&[1,2,3,4,5,6,7,8]);
+        let blob3 = tree_storage.add_blob_by_ref(&[115,115,115,115,115,115,115]);
+
+        assert_eq!(tree_storage.get_blob(blob1).unwrap().as_ref(), &[1,2,3]);
+        assert_eq!(tree_storage.get_blob(blob2).unwrap().as_ref(), &[1,2,3,4,5,6,7,8]);
+        assert_eq!(tree_storage.get_blob(blob3).unwrap().as_ref(), &[115,115,115,115,115,115,115]);
     }
 }
