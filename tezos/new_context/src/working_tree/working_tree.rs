@@ -973,10 +973,10 @@ impl WorkingTree {
         // Add entry to batch
 
         match entry {
-            Entry::Blob(blob_id) => {
-                if !blob_id.is_inline() {
-                    data.add_serialized_entry(entry_hash, entry, tree_storage)?;
-                }
+            Entry::Blob(_blob_id) => {
+                // if !blob_id.is_inline() {
+                //     data.add_serialized_entry(entry_hash, entry, tree_storage)?;
+                // }
                 Ok(())
             },
             Entry::Tree(tree) => {

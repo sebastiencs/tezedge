@@ -406,10 +406,15 @@ impl TreeStorage
 
     pub fn add_tree_with_result<F, E>(&mut self, fun: F) -> Result<TreeStorageId, E>
     where
-        F: FnOnce(&mut StringInterner, &mut Vec<(StringId, Node)>) -> Result<(), E>,
+        F: FnOnce(&mut Self, &mut Vec<(StringId, Node)>) -> Result<(), E>,
     {
         self.temp_vec.clear();
-        let result = fun(&mut self.strings, &mut self.temp_vec);
+
+        let mut temp_vec = std::mem::take(&mut self.temp_vec);
+
+        let result = fun(self, &mut temp_vec);
+
+        self.temp_vec = std::mem::take(&mut temp_vec);
 
         let start = self.trees.len();
         for (string_id, node) in &self.temp_vec {
@@ -421,6 +426,24 @@ impl TreeStorage
         let tree_id = TreeStorageId::new(start, end);
         result.map(|_| tree_id)
     }
+
+    // pub fn add_tree_with_result<F, E>(&mut self, fun: F) -> Result<TreeStorageId, E>
+    // where
+    //     F: FnOnce(&mut StringInterner, &mut Vec<(StringId, Node)>) -> Result<(), E>,
+    // {
+    //     self.temp_vec.clear();
+    //     let result = fun(&mut self.strings, &mut self.temp_vec);
+
+    //     let start = self.trees.len();
+    //     for (string_id, node) in &self.temp_vec {
+    //         let node_id = self.nodes.push(node.clone()).unwrap();
+    //         self.trees.push((*string_id, node_id));
+    //     }
+    //     let end = self.trees.len();
+
+    //     let tree_id = TreeStorageId::new(start, end);
+    //     result.map(|_| tree_id)
+    // }
 
     /// Use `self.temp_vec` to avoid 1 allocation in insert/remove
     fn with_temporary_tree<F, R>(&mut self, fun: F) -> R
