@@ -5,7 +5,7 @@ use std::{
 
 use modular_bitfield::prelude::*;
 
-use crate::{kv_store::HashId, working_tree::{Commit, NodeEntryKind, NodeKind, tree_storage::BlobStorageId}};
+use crate::{kv_store::HashId, working_tree::{Commit, NodeEntryKind, NodeKind, string_interner::{STRING_INTERN_THRESHOLD, StringId}, tree_storage::BlobStorageId}};
 
 use super::{Entry, Node, NodeBitfield, NodeEntry, tree_storage::{Blob, TreeStorage}};
 
@@ -69,25 +69,46 @@ pub struct NodeDescriptor {
     inline_length: B3,
 }
 
+#[derive(BitfieldSpecifier)]
+#[bits = 2]
+#[derive(Clone, Debug, Eq, PartialEq, Copy)]
+enum KeyLength {
+    Inlined,
+    KeyId,
+    TwoBytes,
+}
+
+#[bitfield]
+#[derive(Clone, Debug, Eq, PartialEq, Copy)]
+pub struct KeyDescriptor {
+    length: KeyLength,
+    kind: NodeKind,
+    inline_length: B5
+}
+
 pub fn serialize_entry(
     entry: &Entry,
     output: &mut Vec<u8>,
     storage: &TreeStorage,
-) -> Result<(), SerializationError> {
+) -> Result<(usize, u32, usize, usize), SerializationError> {
     use SerializationError::*;
 
     output.clear();
+
+    let mut hash_ids_len = 0;
+    let mut keys_len = 0;
+    let mut highest_hash_id = 0;
+    let mut nchild = 0;
 
     match entry {
         Entry::Tree(tree) => {
             output.write(&[ID_TREE])?;
             let tree = storage.get_tree(*tree).ok_or(TreeNotFound)?;
 
+            nchild = tree.len();
+
             for (key_id, node_id) in tree {
                 let key = storage.get_str(*key_id);
-                let key_length: u16 = key.len().try_into()?;
-                output.write(&key_length.to_ne_bytes())?;
-                output.write(key.as_bytes())?;
 
                 let node = storage.get_node(*node_id).unwrap();
                 let node_bitfield = node.bitfield.get();
@@ -95,78 +116,131 @@ pub fn serialize_entry(
                 let hash_id: u32 = node_bitfield.entry_hash_id();
                 let kind = node_bitfield.node_kind();
 
-                if let Some(blob) = get_blob(storage, node.entry.get()) {
-
-                    match blob.len() {
-                        len if len < 8 => {
-                            let byte: [u8; 1] = NodeDescriptor::new()
-                                .with_kind(kind)
-                                .with_blob_length(BlobLength::Inlined)
-                                .with_inline_length(len as u8)
-                                .into_bytes();
-
-                            output.write(&byte[..])?;
-                            output.write(&hash_id.to_ne_bytes())?;
-                            output.write(blob.as_ref())?;
-                        },
-                        len if len <= 0xFF => {
-                            let byte: [u8; 1] = NodeDescriptor::new()
-                                .with_kind(kind)
-                                .with_blob_length(BlobLength::OneByte)
-                                .with_inline_length(0)
-                                .into_bytes();
-
-                            let length: u8 = len.try_into().unwrap();
-
-                            output.write(&byte[..])?;
-                            output.write(&hash_id.to_ne_bytes())?;
-                            output.write(&length.to_ne_bytes())?;
-                            output.write(blob.as_ref())?;
-                        },
-                        len if len <= 0xFFFF => {
-                            let byte: [u8; 1] = NodeDescriptor::new()
-                                .with_kind(kind)
-                                .with_blob_length(BlobLength::TwoBytes)
-                                .with_inline_length(0)
-                                .into_bytes();
-
-                            let length: u16 = len.try_into().unwrap();
-
-                            output.write(&byte[..])?;
-                            output.write(&hash_id.to_ne_bytes())?;
-                            output.write(&length.to_ne_bytes())?;
-                            output.write(blob.as_ref())?;
-                        },
-                        len if len <= 0xFFFFFFFF => {
-                            let byte: [u8; 1] = NodeDescriptor::new()
-                                .with_kind(kind)
-                                .with_blob_length(BlobLength::FourBytes)
-                                .with_inline_length(0)
-                                .into_bytes();
-
-                            let length: u32 = len.try_into().unwrap();
-
-                            output.write(&byte[..])?;
-                            output.write(&hash_id.to_ne_bytes())?;
-                            output.write(&length.to_ne_bytes())?;
-                            output.write(blob.as_ref())?;
-                        },
-                        _ => {
-                            panic!()
-                        }
+                match key.len() {
+                    len if len < 4 => {
+                        let byte: [u8; 1] = KeyDescriptor::new()
+                            .with_length(KeyLength::Inlined)
+                            .with_kind(kind)
+                            .with_inline_length(len as u8)
+                            .into_bytes();
+                        output.write(&byte[..])?;
+                        output.write(key.as_bytes())?;
+                        keys_len += len;
                     }
-                } else {
-                    let byte: [u8; 1] = NodeDescriptor::new()
-                        .with_kind(kind)
-                        .with_blob_length(BlobLength::None)
-                        .with_inline_length(0)
-                        .into_bytes();
-                    output.write(&byte[..])?;
+                    len if len < STRING_INTERN_THRESHOLD => {
+                        let byte: [u8; 1] = KeyDescriptor::new()
+                            .with_length(KeyLength::KeyId)
+                            .with_kind(kind)
+                            .with_inline_length(0)
+                            .into_bytes();
+                        output.write(&byte[..])?;
+
+                        let key_id: u32 = key_id.as_u32();
+                        output.write(&key_id.to_ne_bytes())?;
+                        keys_len += 4;
+                    }
+                    _ => {
+                        let byte: [u8; 1] = KeyDescriptor::new()
+                            .with_length(KeyLength::TwoBytes)
+                            .with_kind(kind)
+                            .with_inline_length(0)
+                            .into_bytes();
+                        output.write(&byte[..])?;
+
+                        let key_length: u16 = key.len().try_into()?;
+                        output.write(&key_length.to_ne_bytes())?;
+                        output.write(key.as_bytes())?;
+                        keys_len += 2 + key.len();
+                    }
+                }
+
+                hash_ids_len += 4;
+
+                if hash_id > highest_hash_id {
+                    highest_hash_id = hash_id;
+                }
+
+                // if let Some(blob) = get_blob(storage, node.entry.get()) {
+
+                //     match blob.len() {
+                //         len if len < 8 => {
+                //             let byte: [u8; 1] = NodeDescriptor::new()
+                //                 .with_kind(kind)
+                //                 .with_blob_length(BlobLength::Inlined)
+                //                 .with_inline_length(len as u8)
+                //                 .into_bytes();
+
+                //             output.write(&byte[..])?;
+                //             output.write(&hash_id.to_ne_bytes())?;
+                //             output.write(blob.as_ref())?;
+                //         },
+                //         len if len <= 0xFF => {
+                //             let byte: [u8; 1] = NodeDescriptor::new()
+                //                 .with_kind(kind)
+                //                 .with_blob_length(BlobLength::OneByte)
+                //                 .with_inline_length(0)
+                //                 .into_bytes();
+
+                //             let length: u8 = len.try_into().unwrap();
+
+                //             output.write(&byte[..])?;
+                //             output.write(&hash_id.to_ne_bytes())?;
+                //             output.write(&length.to_ne_bytes())?;
+                //             output.write(blob.as_ref())?;
+                //         },
+                //         len if len <= 0xFFFF => {
+                //             let byte: [u8; 1] = NodeDescriptor::new()
+                //                 .with_kind(kind)
+                //                 .with_blob_length(BlobLength::TwoBytes)
+                //                 .with_inline_length(0)
+                //                 .into_bytes();
+
+                //             let length: u16 = len.try_into().unwrap();
+
+                //             output.write(&byte[..])?;
+                //             output.write(&hash_id.to_ne_bytes())?;
+                //             output.write(&length.to_ne_bytes())?;
+                //             output.write(blob.as_ref())?;
+                //         },
+                //         len if len <= 0xFFFFFFFF => {
+                //             let byte: [u8; 1] = NodeDescriptor::new()
+                //                 .with_kind(kind)
+                //                 .with_blob_length(BlobLength::FourBytes)
+                //                 .with_inline_length(0)
+                //                 .into_bytes();
+
+                //             let length: u32 = len.try_into().unwrap();
+
+                //             output.write(&byte[..])?;
+                //             output.write(&hash_id.to_ne_bytes())?;
+                //             output.write(&length.to_ne_bytes())?;
+                //             output.write(blob.as_ref())?;
+                //         },
+                //         _ => {
+                //             panic!()
+                //         }
+                //     }
+                // } else {
+                    // let byte: [u8; 1] = NodeDescriptor::new()
+                    //     .with_kind(kind)
+                    //     .with_blob_length(BlobLength::None)
+                    //     .with_inline_length(0)
+                    //     .into_bytes();
+                    // output.write(&byte[..])?;
 
                     // let kind: u8 = node_bitfield.node_kind().into();
 
                     // output.write(&[kind])?;
-                    output.write(&hash_id.to_ne_bytes())?;
+                    // output.write(&hash_id.to_ne_bytes())?;
+                // }
+
+                if hash_id & 0x7FFFFF == hash_id {
+                    let hash_id = hash_id.to_be_bytes();
+                    let slice: [u8; 3] = [(1 << 7) | hash_id[1], hash_id[2], hash_id[3]];
+
+                    output.write(&slice[..])?;
+                } else {
+                    output.write(&hash_id.to_be_bytes())?;
                 }
 
                 // if let Some(blob) = get_inline_blob(storage, node.entry.get()) {
@@ -187,12 +261,12 @@ pub fn serialize_entry(
                 // }
             }
         }
-        Entry::Blob(_blob_id) => {
-            panic!()
-            // output.write(&[ID_BLOB])?;
-            // let blob = storage.get_blob(*blob_id).unwrap();
-            // // println!("SERIALIZE ID={:?} BLOB={:?}", blob_id, blob.as_ref());
-            // output.write(blob.as_ref())?;
+        Entry::Blob(blob_id) => {
+            // panic!()
+            output.write(&[ID_BLOB])?;
+            let blob = storage.get_blob(*blob_id).unwrap();
+            // println!("SERIALIZE ID={:?} BLOB={:?}", blob_id, blob.as_ref());
+            output.write(blob.as_ref())?;
         }
         Entry::Commit(commit) => {
             output.write(&[ID_COMMIT])?;
@@ -211,7 +285,7 @@ pub fn serialize_entry(
             output.write(commit.message.as_bytes())?;
         }
     }
-    Ok(())
+    Ok((keys_len, highest_hash_id, nchild, hash_ids_len))
 }
 
 #[derive(Debug)]
@@ -259,87 +333,144 @@ pub fn deserialize(
             // todo!()
             let tree_id = tree_storage.add_tree_with_result::<_, Error>(|storage, trees| {
                 while pos < data_length {
-                    let key_length = data.get(pos..pos + 2).ok_or(UnexpectedEOF)?;
-                    let key_length = u16::from_ne_bytes(key_length.try_into()?);
-                    let key_length = key_length as usize;
+                    let key_descriptor = data.get(pos..pos + 1).ok_or(UnexpectedEOF)?;
+                    let key_descriptor = KeyDescriptor::from_bytes([key_descriptor[0]; 1]);
 
-                    let key_bytes = data
-                        .get(pos + 2..pos + 2 + key_length)
-                        .ok_or(UnexpectedEOF)?;
-                    let key_str = std::str::from_utf8(key_bytes)?;
-                    let key = storage.get_string_id(key_str);
+                    pos += 1;
 
-                    pos = pos + 2 + key_length;
+                    let key_id = match key_descriptor.length() {
+                        KeyLength::Inlined => {
+                            let length = key_descriptor.inline_length() as usize;
+                            let key_bytes = data.get(pos..pos + length).ok_or(UnexpectedEOF)?;
+                            let key_str = std::str::from_utf8(key_bytes)?;
+                            pos += length;
+                            storage.get_string_id(key_str)
+                        }
+                        KeyLength::KeyId => {
+                            let key_id = data.get(pos..pos + 4).ok_or(UnexpectedEOF)?;
+                            pos += 4;
+                            let key_id = u32::from_ne_bytes(key_id.try_into()?);
+                            StringId::new(key_id)
+                        }
+                        KeyLength::TwoBytes => {
+                            let key_length = data.get(pos..pos + 2).ok_or(UnexpectedEOF)?;
+                            let key_length = u16::from_ne_bytes(key_length.try_into()?);
+                            let key_length = key_length as usize;
 
-                    let kind_hash_id = data.get(pos..pos + 5).ok_or(UnexpectedEOF)?;
-
-                    let descriptor = NodeDescriptor::from_bytes([kind_hash_id[0]; 1]);
-                    let kind = descriptor.kind();
-                    let hash_id = u32::from_ne_bytes(kind_hash_id[1..].try_into()?);
-                    assert_ne!(hash_id, 0);
-
-                    let bitfield = NodeBitfield::new_with(kind, HashId::new_u32(hash_id).unwrap())
-                        .with_commited(true);
-
-                    pos += 5;
-
-                    let entry = match kind {
-                        NodeKind::Leaf => {
-                            match descriptor.blob_length() {
-                                BlobLength::None => {
-                                    NodeEntry::new_none()
-                                }
-                                BlobLength::Inlined => {
-                                    let blob_length = descriptor.inline_length() as usize;
-                                    let blob = data.get(pos..pos + blob_length).ok_or(UnexpectedEOF)?;
-                                    pos = pos + blob_length;
-                                    let blob_id = BlobStorageId::new_inline(blob);
-                                    NodeEntry::new()
-                                        .with_entry_kind(NodeEntryKind::Blob)
-                                        .with_entry_id(blob_id.into())
-                                },
-                                BlobLength::OneByte => {
-                                    let blob_length = data.get(pos..pos + 1).ok_or(UnexpectedEOF)?;
-                                    let blob_length = u8::from_ne_bytes(blob_length.try_into()?);
-                                    let blob_length = blob_length as usize;
-                                    let blob = data.get(pos + 1..pos + 1 + blob_length).ok_or(UnexpectedEOF)?;
-                                    pos = pos + 1 + blob_length;
-                                    let blob_id = storage.add_blob_by_ref(blob);
-                                    NodeEntry::new()
-                                        .with_entry_kind(NodeEntryKind::Blob)
-                                        .with_entry_id(blob_id.into())
-                                },
-                                BlobLength::TwoBytes => {
-                                    let blob_length = data.get(pos..pos + 2).ok_or(UnexpectedEOF)?;
-                                    let blob_length = u16::from_ne_bytes(blob_length.try_into()?);
-                                    let blob_length = blob_length as usize;
-                                    let blob = data.get(pos + 2..pos + 2 + blob_length).ok_or(UnexpectedEOF)?;
-                                    pos = pos + 2 + blob_length;
-                                    let blob_id = storage.add_blob_by_ref(blob);
-                                    NodeEntry::new()
-                                        .with_entry_kind(NodeEntryKind::Blob)
-                                        .with_entry_id(blob_id.into())
-                                },
-                                BlobLength::FourBytes => {
-                                    let blob_length = data.get(pos..pos + 4).ok_or(UnexpectedEOF)?;
-                                    let blob_length = u32::from_ne_bytes(blob_length.try_into()?);
-                                    let blob_length = blob_length as usize;
-                                    let blob = data.get(pos + 4..pos + 4 + blob_length).ok_or(UnexpectedEOF)?;
-                                    pos = pos + 4 + blob_length;
-                                    let blob_id = storage.add_blob_by_ref(blob);
-                                    NodeEntry::new()
-                                        .with_entry_kind(NodeEntryKind::Blob)
-                                        .with_entry_id(blob_id.into())
-                                },
-                            }
-                        },
-                        NodeKind::NonLeaf => {
-                            NodeEntry::new_none()
+                            let key_bytes = data
+                                .get(pos + 2..pos + 2 + key_length)
+                                .ok_or(UnexpectedEOF)?;
+                            let key_str = std::str::from_utf8(key_bytes)?;
+                            pos += 2 + key_length;
+                            storage.get_string_id(key_str)
                         }
                     };
 
+                    let kind = key_descriptor.kind();
+                    let hash_id = data.get(pos..pos + 1).ok_or(UnexpectedEOF)?;
+
+                    let bitfield = if hash_id[0] & 1 << 7 != 0 {
+                        let hash_id = data.get(pos..pos + 3).ok_or(UnexpectedEOF)?;
+
+                        let hash_id: u32 = (hash_id[0] as u32) << 16 as u32 | (hash_id[1] as u32) << 8 | hash_id[2] as u32;
+                        let hash_id = hash_id & 0x7FFFFF;
+
+                        assert_ne!(hash_id, 0);
+
+                        pos += 3;
+
+                        NodeBitfield::new_with(kind, HashId::new_u32(hash_id).unwrap())
+                            .with_commited(true)
+                    } else {
+                        let hash_id = data.get(pos..pos + 4).ok_or(UnexpectedEOF)?;
+                        let hash_id = u32::from_be_bytes(hash_id[..].try_into()?);
+                        assert_ne!(hash_id, 0);
+
+                        pos += 4;
+
+                        NodeBitfield::new_with(kind, HashId::new_u32(hash_id).unwrap())
+                            .with_commited(true)
+                    };
+
+                    // let hash_id = data.get(pos..pos + 4).ok_or(UnexpectedEOF)?;
+
+                    // // let descriptor = NodeDescriptor::from_bytes([kind_hash_id[0]; 1]);
+                    // // let kind = descriptor.kind();
+                    // let hash_id = u32::from_ne_bytes(hash_id[..].try_into()?);
+                    // assert_ne!(hash_id, 0);
+
+                    // let bitfield = NodeBitfield::new_with(kind, HashId::new_u32(hash_id).unwrap())
+                    //     .with_commited(true);
+
+                    // pos += 4;
+
+                // if hash_id & 0x7FFFFFFF == hash_id {
+                //     let hash_id = hash_id.to_ne_bytes();
+                //     let slice: [u8; 3] = [(1 << 7) | hash_id[1], hash_id[2], hash_id[3]];
+                //     output.write(&slice[..])?;
+                // } else {
+                //     output.write(&hash_id.to_ne_bytes())?;
+                // }
+
+                    // let entry = match kind {
+                    //     NodeKind::Leaf => {
+                    //         match descriptor.blob_length() {
+                    //             BlobLength::None => {
+                    //                 NodeEntry::new_none()
+                    //             }
+                    //             BlobLength::Inlined => {
+                    //                 let blob_length = descriptor.inline_length() as usize;
+                    //                 let blob = data.get(pos..pos + blob_length).ok_or(UnexpectedEOF)?;
+                    //                 pos = pos + blob_length;
+                    //                 let blob_id = BlobStorageId::new_inline(blob);
+                    //                 NodeEntry::new()
+                    //                     .with_entry_kind(NodeEntryKind::Blob)
+                    //                     .with_entry_id(blob_id.into())
+                    //             },
+                    //             BlobLength::OneByte => {
+                    //                 let blob_length = data.get(pos..pos + 1).ok_or(UnexpectedEOF)?;
+                    //                 let blob_length = u8::from_ne_bytes(blob_length.try_into()?);
+                    //                 let blob_length = blob_length as usize;
+                    //                 let blob = data.get(pos + 1..pos + 1 + blob_length).ok_or(UnexpectedEOF)?;
+                    //                 pos = pos + 1 + blob_length;
+                    //                 let blob_id = storage.add_blob_by_ref(blob);
+                    //                 NodeEntry::new()
+                    //                     .with_entry_kind(NodeEntryKind::Blob)
+                    //                     .with_entry_id(blob_id.into())
+                    //             },
+                    //             BlobLength::TwoBytes => {
+                    //                 let blob_length = data.get(pos..pos + 2).ok_or(UnexpectedEOF)?;
+                    //                 let blob_length = u16::from_ne_bytes(blob_length.try_into()?);
+                    //                 let blob_length = blob_length as usize;
+                    //                 let blob = data.get(pos + 2..pos + 2 + blob_length).ok_or(UnexpectedEOF)?;
+                    //                 pos = pos + 2 + blob_length;
+                    //                 let blob_id = storage.add_blob_by_ref(blob);
+                    //                 NodeEntry::new()
+                    //                     .with_entry_kind(NodeEntryKind::Blob)
+                    //                     .with_entry_id(blob_id.into())
+                    //             },
+                    //             BlobLength::FourBytes => {
+                    //                 let blob_length = data.get(pos..pos + 4).ok_or(UnexpectedEOF)?;
+                    //                 let blob_length = u32::from_ne_bytes(blob_length.try_into()?);
+                    //                 let blob_length = blob_length as usize;
+                    //                 let blob = data.get(pos + 4..pos + 4 + blob_length).ok_or(UnexpectedEOF)?;
+                    //                 pos = pos + 4 + blob_length;
+                    //                 let blob_id = storage.add_blob_by_ref(blob);
+                    //                 NodeEntry::new()
+                    //                     .with_entry_kind(NodeEntryKind::Blob)
+                    //                     .with_entry_id(blob_id.into())
+                    //             },
+                    //         }
+                    //     },
+                    //     NodeKind::NonLeaf => {
+                    //         NodeEntry::new_none()
+                    //     }
+                    // };
+
+                    let entry = NodeEntry::new_none();
+
                     trees.push((
-                        key,
+                        key_id,
                         Node {
                             bitfield: Cell::new(bitfield),
                             entry: Cell::new(entry),
@@ -397,11 +528,11 @@ pub fn deserialize(
             Ok(Entry::Tree(tree_id))
         }
         ID_BLOB => {
-            panic!()
-            // let blob = data.get(pos..).ok_or(UnexpectedEOF)?;
-            // let blob_id = tree_storage.add_blob_by_ref(blob);
-            // // println!("DESERIALIZE ID={:?} BLOB={:?}", blob_id, tree_storage.get_blob(blob_id));
-            // Ok(Entry::Blob(blob_id))
+            // panic!()
+            let blob = data.get(pos..).ok_or(UnexpectedEOF)?;
+            let blob_id = tree_storage.add_blob_by_ref(blob);
+            // println!("DESERIALIZE ID={:?} BLOB={:?}", blob_id, tree_storage.get_blob(blob_id));
+            Ok(Entry::Blob(blob_id))
         },
         ID_COMMIT => {
             let parent_commit_hash = data.get(pos..pos + 8).ok_or(UnexpectedEOF)?;
@@ -475,46 +606,71 @@ impl<'a> Iterator for HashIdIterator<'a> {
             pos += 1;
         }
 
-        let key_length = self.data.get(pos..pos + 2)?;
-        let key_length = u16::from_ne_bytes(key_length.try_into().ok()?);
-        let key_length = key_length as usize;
+        let key_descriptor = self.data.get(pos..pos + 1)?;
+        let key_descriptor = KeyDescriptor::from_bytes([key_descriptor[0]; 1]);
 
-        pos += 2 + key_length;
+        pos += 1;
 
-        let kind_hash_id = self.data.get(pos..pos + 5)?;
-
-        let descriptor = NodeDescriptor::from_bytes([kind_hash_id[0]; 1]);
-        let hash_id = u32::from_ne_bytes(kind_hash_id[1..].try_into().ok()?);
-        let kind = descriptor.kind();
-
-        pos += 5;
-
-        let offset = match kind {
-            NodeKind::Leaf => {
-                match descriptor.blob_length() {
-                    BlobLength::None => 0,
-                    BlobLength::Inlined => descriptor.inline_length() as usize,
-                    BlobLength::OneByte => {
-                        let blob_length = self.data.get(pos..pos + 1)?;
-                        let blob_length = u8::from_ne_bytes(blob_length.try_into().ok()?);
-                        1 + (blob_length as usize)
-                    },
-                    BlobLength::TwoBytes => {
-                        let blob_length = self.data.get(pos..pos + 2)?;
-                        let blob_length = u16::from_ne_bytes(blob_length.try_into().ok()?);
-                        2 + (blob_length as usize)
-                    },
-                    BlobLength::FourBytes => {
-                        let blob_length = self.data.get(pos..pos + 4)?;
-                        let blob_length = u32::from_ne_bytes(blob_length.try_into().ok()?);
-                        4 + (blob_length as usize)
-                    },
-                }
+        let offset = match key_descriptor.length() {
+            KeyLength::Inlined => {
+                key_descriptor.inline_length() as usize
             },
-            NodeKind::NonLeaf => 0
+            KeyLength::KeyId => 4,
+            KeyLength::TwoBytes => {
+                let key_length = self.data.get(pos..pos + 2)?;
+                let key_length = u16::from_ne_bytes(key_length.try_into().ok()?);
+                2 + (key_length as usize)
+            }
         };
 
-        self.pos = pos + offset;
+        pos += offset;
+
+        let hash_id = self.data.get(pos..pos + 1)?;
+
+        let hash_id = if hash_id[0] & 1 << 7 != 0 {
+            let hash_id = self.data.get(pos..pos + 3)?;
+
+            self.pos = pos + 3;
+            let hash_id: u32 = (hash_id[0] as u32) << 16 as u32 | (hash_id[1] as u32) << 8 | hash_id[2] as u32;
+            hash_id & 0x7FFFFF
+        } else {
+            let hash_id = self.data.get(pos..pos + 4)?;
+
+            self.pos = pos + 4;
+            u32::from_be_bytes(hash_id[..].try_into().ok()?)
+        };
+
+        // let descriptor = NodeDescriptor::from_bytes([kind_hash_id[0]; 1]);
+        // let hash_id = u32::from_ne_bytes(hash_id.try_into().ok()?);
+        // let kind = descriptor.kind();
+
+
+        // let offset = match kind {
+        //     NodeKind::Leaf => {
+        //         match descriptor.blob_length() {
+        //             BlobLength::None => 0,
+        //             BlobLength::Inlined => descriptor.inline_length() as usize,
+        //             BlobLength::OneByte => {
+        //                 let blob_length = self.data.get(pos..pos + 1)?;
+        //                 let blob_length = u8::from_ne_bytes(blob_length.try_into().ok()?);
+        //                 1 + (blob_length as usize)
+        //             },
+        //             BlobLength::TwoBytes => {
+        //                 let blob_length = self.data.get(pos..pos + 2)?;
+        //                 let blob_length = u16::from_ne_bytes(blob_length.try_into().ok()?);
+        //                 2 + (blob_length as usize)
+        //             },
+        //             BlobLength::FourBytes => {
+        //                 let blob_length = self.data.get(pos..pos + 4)?;
+        //                 let blob_length = u32::from_ne_bytes(blob_length.try_into().ok()?);
+        //                 4 + (blob_length as usize)
+        //             },
+        //         }
+        //     },
+        //     NodeKind::NonLeaf => 0
+        // };
+
+        // self.pos = pos + offset;
 
         HashId::new(hash_id as usize)
     }
@@ -587,34 +743,34 @@ mod tests {
         let iter = iter_hash_ids(&data);
         assert_eq!(iter.map(|h| h.as_usize()).collect::<Vec<_>>(), &[3, 1, 2]);
 
-        let blob_id = tree_storage.add_blob_by_ref(&[1, 2, 3, 4, 5]);
+        // let blob_id = tree_storage.add_blob_by_ref(&[1, 2, 3, 4, 5]);
 
-        let mut data = Vec::with_capacity(1024);
-        serialize_entry(&Entry::Blob(blob_id), &mut data, &tree_storage).unwrap();
-        let entry = deserialize(&data, &mut tree_storage).unwrap();
-        if let Entry::Blob(entry) = entry {
-            let blob = tree_storage.get_blob(entry).unwrap();
-            assert_eq!(blob.as_ref(), &[1, 2, 3, 4, 5]);
-        } else {
-            panic!();
-        }
-        let iter = iter_hash_ids(&data);
-        assert_eq!(iter.count(), 0);
+        // let mut data = Vec::with_capacity(1024);
+        // serialize_entry(&Entry::Blob(blob_id), &mut data, &tree_storage).unwrap();
+        // let entry = deserialize(&data, &mut tree_storage).unwrap();
+        // if let Entry::Blob(entry) = entry {
+        //     let blob = tree_storage.get_blob(entry).unwrap();
+        //     assert_eq!(blob.as_ref(), &[1, 2, 3, 4, 5]);
+        // } else {
+        //     panic!();
+        // }
+        // let iter = iter_hash_ids(&data);
+        // assert_eq!(iter.count(), 0);
 
-        // Not inlined value
-        let blob_id = tree_storage.add_blob_by_ref(&[1, 2, 3, 4, 5, 6, 7, 8]);
+        // // Not inlined value
+        // let blob_id = tree_storage.add_blob_by_ref(&[1, 2, 3, 4, 5, 6, 7, 8]);
 
-        let mut data = Vec::with_capacity(1024);
-        serialize_entry(&Entry::Blob(blob_id), &mut data, &tree_storage).unwrap();
-        let entry = deserialize(&data, &mut tree_storage).unwrap();
-        if let Entry::Blob(entry) = entry {
-            let blob = tree_storage.get_blob(entry).unwrap();
-            assert_eq!(blob.as_ref(), &[1, 2, 3, 4, 5, 6, 7, 8]);
-        } else {
-            panic!();
-        }
-        let iter = iter_hash_ids(&data);
-        assert_eq!(iter.count(), 0);
+        // let mut data = Vec::with_capacity(1024);
+        // serialize_entry(&Entry::Blob(blob_id), &mut data, &tree_storage).unwrap();
+        // let entry = deserialize(&data, &mut tree_storage).unwrap();
+        // if let Entry::Blob(entry) = entry {
+        //     let blob = tree_storage.get_blob(entry).unwrap();
+        //     assert_eq!(blob.as_ref(), &[1, 2, 3, 4, 5, 6, 7, 8]);
+        // } else {
+        //     panic!();
+        // }
+        // let iter = iter_hash_ids(&data);
+        // assert_eq!(iter.count(), 0);
 
         let mut data = Vec::with_capacity(1024);
 

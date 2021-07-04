@@ -340,6 +340,10 @@ struct SerializingData<'a> {
     referenced_older_entries: Vec<HashId>,
     store: &'a mut ContextKeyValueStore,
     serialized: Vec<u8>,
+    nbytes: usize,
+    nbytes_keys: usize,
+    highest_hash_id: u32,
+    hash_ids_len: usize,
 }
 
 impl<'a> SerializingData<'a> {
@@ -349,6 +353,10 @@ impl<'a> SerializingData<'a> {
             referenced_older_entries: Vec::with_capacity(2048),
             store,
             serialized: Vec::with_capacity(2048),
+            nbytes: 0,
+            nbytes_keys: 0,
+            highest_hash_id: 0,
+            hash_ids_len: 0,
         }
     }
 
@@ -360,7 +368,16 @@ impl<'a> SerializingData<'a> {
     ) -> Result<(), MerkleError> {
         //println!("HASH_ID={:?} SER={:?}", entry_hash, entry);
 
-        serialize_entry(entry, &mut self.serialized, tree_storage)?;
+        let (keys_len, highest_hash_id, _nchild, hash_ids_len) = serialize_entry(entry, &mut self.serialized, tree_storage)?;
+
+        self.nbytes_keys += keys_len;
+        self.nbytes += self.serialized.len();
+        self.hash_ids_len += hash_ids_len;
+
+        if highest_hash_id > self.highest_hash_id {
+            self.highest_hash_id = highest_hash_id;
+        }
+
         self.batch
             .push((entry_hash, Arc::from(self.serialized.as_slice())));
         Ok(())
@@ -795,6 +812,8 @@ impl WorkingTree {
             )?;
         }
 
+        println!("TOTAL_SERIALIZED={:?} KEYS={:?} HASH_IDS={:?} HIGHEST_HASH_ID={:?}", data.nbytes, data.nbytes_keys, data.hash_ids_len, data.highest_hash_id);
+
         Ok((commit_hash, data.batch, data.referenced_older_entries))
     }
 
@@ -975,7 +994,7 @@ impl WorkingTree {
         match entry {
             Entry::Blob(_blob_id) => {
                 // if !blob_id.is_inline() {
-                //     data.add_serialized_entry(entry_hash, entry, tree_storage)?;
+                    data.add_serialized_entry(entry_hash, entry, tree_storage)?;
                 // }
                 Ok(())
             },

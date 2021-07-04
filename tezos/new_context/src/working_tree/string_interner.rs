@@ -1,5 +1,9 @@
 use std::{collections::{HashMap, hash_map::DefaultHasher}, convert::TryInto, hash::Hasher};
 
+use static_assertions::const_assert;
+
+pub(crate) const STRING_INTERN_THRESHOLD: usize = 30;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StringId {
     /// [1 bit] => is_local
@@ -12,6 +16,10 @@ pub struct StringId {
     /// [31 bits] => index in strings_local
     bits: u32
 }
+
+// The number of bits for the string length in the
+// the bitfield is 5
+const_assert!(STRING_INTERN_THRESHOLD < (1 << 5));
 
 impl StringId {
     pub(crate) fn new(bits: u32) -> Self {
@@ -98,7 +106,7 @@ impl StringInterner {
     }
 
     pub fn get_string_id(&mut self, s: &str) -> StringId {
-        if s.len() >= 30 {
+        if s.len() >= STRING_INTERN_THRESHOLD {
             // let index: u32 = self.strings_local.len().try_into().unwrap();
             // self.strings_local.push(Box::from(s));
 
@@ -169,7 +177,7 @@ mod tests {
         assert_eq!(interner.get(a), Some("a"));
         assert_eq!(interner.get(a), interner.get(b));
 
-        let long_str = std::iter::repeat("a").take(30).collect::<String>();
+        let long_str = std::iter::repeat("a").take(STRING_INTERN_THRESHOLD).collect::<String>();
 
         let a = interner.get_string_id(&long_str);
         let b = interner.get_string_id(&long_str);

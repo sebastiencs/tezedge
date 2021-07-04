@@ -849,10 +849,10 @@ impl ShellContextApi for TezedgeContext {
         let commit_hash = self.get_commit_hash(commit_hash_id, &*repository)?;
         repository.clear_entries()?;
 
-        // std::mem::drop(repository);
+        std::mem::drop(repository);
         // let time = self.index.time_clear.load(std::sync::atomic::Ordering::Relaxed);
         // println!("TIME_CLEAR={:?}", std::time::Duration::from_nanos(time.try_into().unwrap()));
-        // self.get_memory_usage();
+        self.get_memory_usage();
 
         // println!("COMMIT={:?}", commit_hash.to_base58_check());
 
