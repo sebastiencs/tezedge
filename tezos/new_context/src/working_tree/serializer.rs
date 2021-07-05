@@ -235,6 +235,7 @@ pub fn serialize_entry(
                 // }
 
                 if hash_id & 0x7FFFFF == hash_id {
+                    // The HashId fits in 23 bits
                     let hash_id = hash_id.to_be_bytes();
                     let slice: [u8; 3] = [(1 << 7) | hash_id[1], hash_id[2], hash_id[3]];
 
@@ -370,6 +371,7 @@ pub fn deserialize(
                     let hash_id = data.get(pos..pos + 1).ok_or(UnexpectedEOF)?;
 
                     let bitfield = if hash_id[0] & 1 << 7 != 0 {
+                        // The HashId is in 3 bytes
                         let hash_id = data.get(pos..pos + 3).ok_or(UnexpectedEOF)?;
 
                         let hash_id: u32 = (hash_id[0] as u32) << 16 as u32 | (hash_id[1] as u32) << 8 | hash_id[2] as u32;
@@ -703,7 +705,7 @@ mod tests {
         );
         let tree_id = tree_storage.insert(
             tree_id,
-            "b",
+            "bab",
             Node {
                 bitfield: Cell::new(
                     NodeBitfield::new()
@@ -715,7 +717,7 @@ mod tests {
         );
         let tree_id = tree_storage.insert(
             tree_id,
-            "0",
+            "0aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             Node {
                 bitfield: Cell::new(
                     NodeBitfield::new()
@@ -733,8 +735,8 @@ mod tests {
 
         if let Entry::Tree(entry) = entry {
             assert_eq!(
-                tree_storage.get_own_tree(tree_id).unwrap(),
-                tree_storage.get_own_tree(entry).unwrap()
+                tree_storage.get_owned_tree(tree_id).unwrap(),
+                tree_storage.get_owned_tree(entry).unwrap()
             )
         } else {
             panic!();
@@ -743,34 +745,34 @@ mod tests {
         let iter = iter_hash_ids(&data);
         assert_eq!(iter.map(|h| h.as_usize()).collect::<Vec<_>>(), &[3, 1, 2]);
 
-        // let blob_id = tree_storage.add_blob_by_ref(&[1, 2, 3, 4, 5]);
+        let blob_id = tree_storage.add_blob_by_ref(&[1, 2, 3, 4, 5]);
 
-        // let mut data = Vec::with_capacity(1024);
-        // serialize_entry(&Entry::Blob(blob_id), &mut data, &tree_storage).unwrap();
-        // let entry = deserialize(&data, &mut tree_storage).unwrap();
-        // if let Entry::Blob(entry) = entry {
-        //     let blob = tree_storage.get_blob(entry).unwrap();
-        //     assert_eq!(blob.as_ref(), &[1, 2, 3, 4, 5]);
-        // } else {
-        //     panic!();
-        // }
-        // let iter = iter_hash_ids(&data);
-        // assert_eq!(iter.count(), 0);
+        let mut data = Vec::with_capacity(1024);
+        serialize_entry(&Entry::Blob(blob_id), &mut data, &tree_storage).unwrap();
+        let entry = deserialize(&data, &mut tree_storage).unwrap();
+        if let Entry::Blob(entry) = entry {
+            let blob = tree_storage.get_blob(entry).unwrap();
+            assert_eq!(blob.as_ref(), &[1, 2, 3, 4, 5]);
+        } else {
+            panic!();
+        }
+        let iter = iter_hash_ids(&data);
+        assert_eq!(iter.count(), 0);
 
-        // // Not inlined value
-        // let blob_id = tree_storage.add_blob_by_ref(&[1, 2, 3, 4, 5, 6, 7, 8]);
+        // Not inlined value
+        let blob_id = tree_storage.add_blob_by_ref(&[1, 2, 3, 4, 5, 6, 7, 8]);
 
-        // let mut data = Vec::with_capacity(1024);
-        // serialize_entry(&Entry::Blob(blob_id), &mut data, &tree_storage).unwrap();
-        // let entry = deserialize(&data, &mut tree_storage).unwrap();
-        // if let Entry::Blob(entry) = entry {
-        //     let blob = tree_storage.get_blob(entry).unwrap();
-        //     assert_eq!(blob.as_ref(), &[1, 2, 3, 4, 5, 6, 7, 8]);
-        // } else {
-        //     panic!();
-        // }
-        // let iter = iter_hash_ids(&data);
-        // assert_eq!(iter.count(), 0);
+        let mut data = Vec::with_capacity(1024);
+        serialize_entry(&Entry::Blob(blob_id), &mut data, &tree_storage).unwrap();
+        let entry = deserialize(&data, &mut tree_storage).unwrap();
+        if let Entry::Blob(entry) = entry {
+            let blob = tree_storage.get_blob(entry).unwrap();
+            assert_eq!(blob.as_ref(), &[1, 2, 3, 4, 5, 6, 7, 8]);
+        } else {
+            panic!();
+        }
+        let iter = iter_hash_ids(&data);
+        assert_eq!(iter.count(), 0);
 
         let mut data = Vec::with_capacity(1024);
 

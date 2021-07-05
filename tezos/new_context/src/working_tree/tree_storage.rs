@@ -324,7 +324,12 @@ impl TreeStorage
     }
 
     pub fn get_str(&self, string_id: StringId) -> &str {
-        self.strings.get(string_id).unwrap()
+        match self.strings.get(string_id) {
+            Some(s) => s,
+            None => {
+                panic!("STRING_ID={:?}", string_id);
+            }
+        }
     }
 
     pub fn add_blob_by_ref(&mut self, value: &[u8]) -> BlobStorageId {
@@ -363,7 +368,7 @@ impl TreeStorage
     }
 
     #[cfg(test)]
-    pub fn get_own_tree(&self, tree_id: TreeStorageId) -> Option<Vec<(String, Node)>> {
+    pub fn get_owned_tree(&self, tree_id: TreeStorageId) -> Option<Vec<(String, Node)>> {
         let (start, end) = tree_id.get();
         let tree = self.trees.get(start..end)?;
 
@@ -618,7 +623,7 @@ mod tests {
         let tree_id = tree_storage.insert(tree_id, "0", node1.clone());
 
         assert_eq!(
-            tree_storage.get_own_tree(tree_id).unwrap(),
+            tree_storage.get_owned_tree(tree_id).unwrap(),
             &[("0".to_string(), node1.clone()), ("a".to_string(), node1.clone()), ("b".to_string(), node2.clone()),]
         );
     }
