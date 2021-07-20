@@ -13,16 +13,7 @@ use failure::Fail;
 
 use ocaml::ocaml_hash_string;
 
-use crate::{
-    kv_store::HashId,
-    persistent::DBError,
-    working_tree::{
-        storage::{Blob, BlobStorageId, NodeId, Storage, StorageIdError},
-        string_interner::StringId,
-        Commit, Entry, NodeKind, Tree,
-    },
-    ContextKeyValueStore,
-};
+use crate::{ContextKeyValueStore, kv_store::HashId, persistent::DBError, working_tree::{Commit, Entry, NodeKind, Tree, storage::{Blob, BlobStorageId, Inode, NodeId, Storage, StorageIdError}, string_interner::StringId}};
 
 mod ocaml;
 
@@ -94,16 +85,16 @@ impl From<StorageIdError> for HashingError {
     }
 }
 
-/// Inode representation used for hashing directories with >256 entries.
-enum Inode {
-    Empty,
-    Value(Vec<(StringId, NodeId)>),
-    Tree {
-        depth: u32,
-        children: usize,
-        pointers: Vec<(u8, HashId)>,
-    },
-}
+// /// Inode representation used for hashing directories with >256 entries.
+// enum Inode {
+//     Empty,
+//     Value(Vec<(StringId, NodeId)>),
+//     Tree {
+//         depth: u32,
+//         children: usize,
+//         pointers: Vec<(u8, HashId)>,
+//     },
+// }
 
 fn encode_irmin_node_kind(kind: &NodeKind) -> [u8; 8] {
     match kind {
@@ -112,55 +103,147 @@ fn encode_irmin_node_kind(kind: &NodeKind) -> [u8; 8] {
     }
 }
 
-fn index(depth: u32, name: &str) -> u32 {
+pub(crate) fn index(depth: u32, name: &str) -> u32 {
     ocaml_hash_string(depth, name.as_bytes()) % 32
 }
 
-// IMPORTANT: entries must be sorted in lexicographic order of the name
-// Because we use `OrdMap`, this holds true when we iterate the items, but this is
-// something to keep in mind if the representation of `Tree` changes.
-fn partition_entries(
-    depth: u32,
-    entries: &[(StringId, NodeId)],
-    store: &mut ContextKeyValueStore,
-    storage: &Storage,
-) -> Result<Inode, HashingError> {
-    if entries.is_empty() {
-        Ok(Inode::Empty)
-    } else if entries.len() <= 32 {
-        Ok(Inode::Value(entries.to_vec()))
-    } else {
-        let children = entries.len();
-        let mut pointers = Vec::with_capacity(32);
+// // IMPORTANT: entries must be sorted in lexicographic order of the name
+// // Because we use `OrdMap`, this holds true when we iterate the items, but this is
+// // something to keep in mind if the representation of `Tree` changes.
+// fn partition_entries(
+//     depth: u32,
+//     entries: &[(StringId, NodeId)],
+//     store: &mut ContextKeyValueStore,
+//     storage: &Storage,
+// ) -> Result<Inode, HashingError> {
+//     if entries.is_empty() {
+//         Ok(Inode::Empty)
+//     } else if entries.len() <= 32 {
+//         Ok(Inode::Value(entries.to_vec()))
+//     } else {
+//         let children = entries.len();
+//         let mut pointers = Vec::with_capacity(32);
 
-        // pointers = {p(i) | i <- [0..31], t(i) != Empty}
-        for i in 0..=31 {
-            let entries_at_depth_and_index_i: Vec<(StringId, NodeId)> = entries
-                .iter()
-                .filter(|(name, _)| {
-                    let name = match storage.get_str(*name) {
-                        Ok(name) => name,
-                        Err(_) => return false,
-                    };
-                    index(depth, name) == i
-                })
-                .cloned()
-                .collect();
-            let ti = partition_entries(depth + 1, &entries_at_depth_and_index_i, store, storage)?;
+//         // pointers = {p(i) | i <- [0..31], t(i) != Empty}
+//         for i in 0..=31 {
+//             let entries_at_depth_and_index_i: Vec<(StringId, NodeId)> = entries
+//                 .iter()
+//                 .filter(|(name, _)| {
+//                     let name = match storage.get_str(*name) {
+//                         Ok(name) => name,
+//                         Err(_) => return false,
+//                     };
+//                     index(depth, name) == i
+//                 })
+//                 .cloned()
+//                 .collect();
 
-            match ti {
-                Inode::Empty => (),
-                non_empty => pointers.push((i as u8, hash_long_inode(&non_empty, store, storage)?)),
-            }
-        }
+//             println!(
+//                 "DEPTH={:?} INDEX={:?} ENTRIES={:?}",
+//                 depth, i, entries_at_depth_and_index_i
+//             );
 
-        Ok(Inode::Tree {
-            depth,
-            children,
-            pointers,
-        })
-    }
-}
+//             // let ti = partition_entries(depth + 1, &entries_at_depth_and_index_i, store, storage)?;
+
+//             match partition_entries(depth + 1, &entries_at_depth_and_index_i, store, storage)? {
+//                 Inode::Empty => (),
+//                 non_empty => pointers.push((i as u8, hash_long_inode(&non_empty, store, storage)?)),
+//             }
+//         }
+
+//         Ok(Inode::Tree {
+//             depth,
+//             children,
+//             pointers,
+//         })
+//     }
+// }
+
+// fn hash_long_inode(
+//     inode: &Inode,
+//     store: &mut ContextKeyValueStore,
+//     storage: &Storage,
+// ) -> Result<HashId, HashingError> {
+//     let mut hasher = VarBlake2b::new(ENTRY_HASH_LEN)?;
+
+//     match inode {
+//         Inode::Empty => return Err(HashingError::UnexpectedEmptyInode),
+//         Inode::Value(entries) => {
+//             // Inode value:
+//             //
+//             // |   1   |   1  |     n_1      |  ...  |      n_k      |
+//             // +-------+------+--------------+-------+---------------+
+//             // | \000  |  \n  | prehash(e_1) |  ...  | prehash(e_k)  |
+//             //
+//             // where n_i = len(prehash(e_i))
+
+//             hasher.update(&[0u8]); // type tag
+//             hasher.update(&[entries.len() as u8]);
+
+//             // Inode value entry:
+//             //
+//             // |   (LEB128)  |  len(name)   |   1    |   32   |
+//             // +-------------+--------------+--------+--------+
+//             // | \len(name)  |     name     |  kind  |  hash  |
+
+//             for (name, node_id) in entries {
+//                 let name = storage.get_str(*name)?;
+
+//                 leb128::write::unsigned(&mut hasher, name.len() as u64)?;
+//                 hasher.update(name.as_bytes());
+
+//                 // \000 for nodes, and \001 for contents.
+//                 let node = storage.get_node(*node_id)?;
+//                 match node.node_kind() {
+//                     NodeKind::Leaf => hasher.update(&[1u8]),
+//                     NodeKind::NonLeaf => hasher.update(&[0u8]),
+//                 };
+//                 hasher.update(node.entry_hash(store, storage)?.as_ref());
+//             }
+//         }
+//         Inode::Tree {
+//             depth,
+//             children,
+//             pointers,
+//         } => {
+//             println!(
+//                 "DEPTH={:?} CHILDREN={:?} POINTER={:?}",
+//                 depth, children, pointers
+//             );
+
+//             // Inode tree:
+//             //
+//             // |   1    | (LEB128) |   (LEB128)    |    1   |  33  | ... |  33  |
+//             // +--------+----------+---------------+--------+------+-----+------+
+//             // |  \001  |  depth   | len(children) |   \k   | s_1  | ... | s_k  |
+
+//             hasher.update(&[1u8]); // type tag
+//             leb128::write::unsigned(&mut hasher, *depth as u64)?;
+//             leb128::write::unsigned(&mut hasher, *children as u64)?;
+//             hasher.update(&[pointers.len() as u8]);
+
+//             // Inode pointer:
+//             //
+//             // |    1    |   32   |
+//             // +---------+--------+
+//             // |  index  |  hash  |
+
+//             for (index, hash) in pointers {
+//                 hasher.update(&[*index]);
+//                 let hash = store
+//                     .get_hash(*hash)?
+//                     .ok_or_else(|| HashingError::HashIdNotFound { hash_id: *hash })?;
+//                 hasher.update(hash.as_ref());
+//             }
+//         }
+//     }
+
+//     let hash_id = store
+//         .get_vacant_entry_hash()?
+//         .write_with(|entry| hasher.finalize_variable(|r| entry.copy_from_slice(r)));
+
+//     Ok(hash_id)
+// }
 
 fn hash_long_inode(
     inode: &Inode,
@@ -179,6 +262,8 @@ fn hash_long_inode(
             // | \000  |  \n  | prehash(e_1) |  ...  | prehash(e_k)  |
             //
             // where n_i = len(prehash(e_i))
+
+            // println!("HERE VALUES LENGTH={:?} {:?}", entries.len(), entries);
 
             hasher.update(&[0u8]); // type tag
             hasher.update(&[entries.len() as u8]);
@@ -209,6 +294,11 @@ fn hash_long_inode(
             children,
             pointers,
         } => {
+            // println!(
+            //     "DEPTH={:?} CHILDREN={:?} POINTER={:#?}",
+            //     depth, children, pointers.iter().map(|p| p.0).collect::<Vec<_>>()
+            // );
+
             // Inode tree:
             //
             // |   1    | (LEB128) |   (LEB128)    |    1   |  33  | ... |  33  |
@@ -226,11 +316,14 @@ fn hash_long_inode(
             // +---------+--------+
             // |  index  |  hash  |
 
-            for (index, hash) in pointers {
+            for (index, inode) in pointers {
                 hasher.update(&[*index]);
+
+                let hash_id = hash_long_inode(inode, store, storage)?;
+
                 let hash = store
-                    .get_hash(*hash)?
-                    .ok_or_else(|| HashingError::HashIdNotFound { hash_id: *hash })?;
+                    .get_hash(hash_id)?
+                    .ok_or_else(|| HashingError::HashIdNotFound { hash_id })?;
                 hasher.update(hash.as_ref());
             }
         }
@@ -299,6 +392,15 @@ fn hash_short_inode(
     Ok(hash_id)
 }
 
+fn hash_inode(
+    tree_id: Tree,
+    store: &mut ContextKeyValueStore,
+    storage: &Storage,
+) -> Result<HashId, HashingError> {
+    let inode = storage.get_inode(tree_id)?;
+    hash_long_inode(&inode, store, storage)
+}
+
 // Calculates hash of tree
 // uses BLAKE2 binary 256 length hash function
 pub(crate) fn hash_tree(
@@ -307,12 +409,18 @@ pub(crate) fn hash_tree(
     storage: &Storage,
 ) -> Result<HashId, HashingError> {
     // If there are >256 entries, we need to partition the tree and hash the resulting inode
-    let tree = storage.get_tree(tree_id)?;
 
-    if tree.len() > 256 {
-        let inode = partition_entries(0, &tree, store, storage)?;
-        hash_long_inode(&inode, store, storage)
-    } else {
+    if tree_id.is_inode() {
+        hash_inode(tree_id, store, storage)
+    }
+
+    // let tree = storage.get_tree(tree_id)?;
+
+    // if tree.len() > 256 {
+    //     let inode = partition_entries(0, &tree, store, storage)?;
+    //     hash_long_inode(&inode, store, storage)
+    //}
+    else {
         hash_short_inode(tree_id, store, storage)
     }
 }
@@ -416,7 +524,7 @@ pub(crate) fn hash_entry(
 #[cfg(test)]
 #[allow(unused_must_use)]
 mod tests {
-    use std::{convert::TryInto, env, fs::File, io::Read, path::Path};
+    use std::{collections::HashSet, convert::TryInto, env, fs::File, io::Read, path::Path};
 
     use flate2::read::GzDecoder;
 
@@ -650,7 +758,9 @@ mod tests {
             let bindings_count = test_case.bindings.len();
             let mut tree = Tree::empty();
 
-            for binding in test_case.bindings {
+            let mut names = HashSet::new();
+
+            for binding in test_case.bindings.iter().skip(0) {
                 let node_kind = match binding.kind.as_str() {
                     "Tree" => NodeKind::NonLeaf,
                     "Contents" => NodeKind::Leaf,
@@ -663,13 +773,35 @@ mod tests {
 
                 let node = Node::new_commited(node_kind, Some(hash_id), None);
 
+                // count += 1;
+                names.insert(binding.name.clone());
+
                 tree = storage.insert(tree, binding.name.as_str(), node).unwrap();
+
+                // println!("LAA LENGTH={:?} IS_INODE={:?}", count, tree.is_inode());
             }
 
             let expected_hash = ContextHash::from_base58_check(&test_case.hash).unwrap();
             let computed_hash = hash_tree(tree, &mut repo, &mut storage).unwrap();
             let computed_hash = repo.get_hash(computed_hash).unwrap().unwrap();
             let computed_hash = ContextHash::try_from_bytes(computed_hash).unwrap();
+
+            // let inode = storage.get_inode(tree).unwrap();
+            // println!("INODE={:#?}", inode);
+
+            // println!("UNIQ NAMES={:?}", names.len());
+
+            // if let Inode::Tree { depth, children, pointers } = inode {
+            //     println!("ROOT DEPTH={:?}", depth);
+            //     println!("ROOT CHILDREN={:?}", children);
+            //     for p in pointers {
+            //         println!("ROOT INDEX={:?} INODE={:?}", p.0, match p.1 {
+            //             Inode::Tree { children, depth, .. } => format!("TREE CHILDREN={:?} DEPTH={:?}", children, depth),
+            //             Inode::Value(v) => format!("VALUES {:?}", v.len()),
+            //             Inode::Empty => "Empty".to_string(),
+            //         });
+            //     }
+            // };
 
             assert_eq!(
                 expected_hash.to_base58_check(),
@@ -679,6 +811,8 @@ mod tests {
                 computed_hash.to_base58_check(),
                 bindings_count
             );
+
+            // println!("DONNNE", );
         }
     }
 

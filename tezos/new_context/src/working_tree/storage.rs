@@ -11,21 +11,62 @@ use modular_bitfield::prelude::*;
 use static_assertions::assert_eq_size;
 use tezos_timing::StorageMemoryUsage;
 
-use crate::kv_store::entries::Entries;
+use crate::kv_store::{HashId, entries::Entries};
+use crate::hash::index as index_of_key;
 
 use super::{
     string_interner::{StringId, StringInterner},
     Node,
 };
 
-#[bitfield]
+// #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
+// pub struct BlobStorageId {
+//     /// Note: Must fit in NodeInner.entry_id (61 bits)
+//     ///
+//     /// | 3 bits  | 1 bit     | 60 bits |
+//     /// |---------|-----------|---------|
+//     /// | empty   | is_inline | value   |
+//     ///
+//     /// value inline:
+//     /// | 4 bits | 56 bits |
+//     /// |--------|---------|
+//     /// | length | value   |
+//     ///
+//     /// value not inline:
+//     /// | 32 bits | 28 bits |
+//     /// |---------|---------|
+//     /// | start   | length  |
+//     bits: u64,
+// }
+
+// #[bitfield]
+// #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+// pub struct TreeStorageId {
+//     /// Note: Must fit in NodeInner.entry_id (61 bits)
+//     #[skip]
+//     __: B14,
+//     start: B30,
+//     length: B20,
+// }
+
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TreeStorageId {
     /// Note: Must fit in NodeInner.entry_id (61 bits)
-    #[skip]
-    __unused: B14,
-    start: B30,
-    length: B20,
+    ///
+    /// | 3 bits |  1 bit   | 60 bits |
+    /// |--------|----------|---------|
+    /// | empty  | is_inode | value   |
+    ///
+    /// value not inode:
+    /// | 32 bits | 28 bits |
+    /// |---------|---------|
+    /// | start   | length  |
+    ///
+    /// value inode:
+    /// | 60 bits |
+    /// |---------|
+    /// | index   |
+    bits: u64
 }
 
 impl Default for TreeStorageId {
@@ -40,30 +81,53 @@ impl TreeStorageId {
             .checked_sub(start)
             .ok_or(StorageIdError::TreeInvalidStartEnd)?;
 
-        if start & !0x3FFFFFFF != 0 {
-            // Must fit in 30 bits
+        if start & !0xFFFFFFFF != 0 {
+            // Must fit in 32 bits
             return Err(StorageIdError::TreeStartTooBig);
         }
 
-        if length & !0xFFFFF != 0 {
-            // Must fit in 20 bits
+        if length & !0xFFFFFFF != 0 {
+            // Must fit in 28 bits
             return Err(StorageIdError::TreeLengthTooBig);
         }
 
-        let tree_id = Self::new()
-            .with_start(start as u32)
-            .with_length(length as u32);
+        let tree_id = Self {
+            bits: (start as u64) << 28 | length as u64
+        };
+
+        // let tree_id = Self::new()
+        //     .with_start(start as u32)
+        //     .with_length(length as u32);
 
         debug_assert_eq!(tree_id.get(), (start as usize, end));
 
         Ok(tree_id)
     }
 
+    fn try_new_inode(index: usize) -> Result<Self, StorageIdError> {
+        if index & !0xFFFFFFFFFFFFFFF != 0 {
+            // Must fit in 60 bits
+            return Err(StorageIdError::InodeIndexTooBig);
+        }
+
+        Ok(Self {
+            bits: 1 << 60 | index as u64
+        })
+    }
+
+    pub fn is_inode(&self) -> bool {
+        self.bits >> 60 != 0
+    }
+
     fn get(self) -> (usize, usize) {
-        let start = self.start() as usize;
-        let length = self.length() as usize;
+        let start = (self.bits as usize) >> 28;
+        let length = (self.bits as usize) & 0xFFFFFFF;
 
         (start, start + length)
+    }
+
+    fn get_inode_index(self) -> usize {
+        (self.bits & 0xFFFFFFFFFFFFFFF) as usize
     }
 
     pub fn empty() -> Self {
@@ -72,20 +136,24 @@ impl TreeStorageId {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.length() == 0
+        let length = (self.bits as usize) & 0xFFFFFFF;
+
+        length == 0
     }
 }
 
 impl From<TreeStorageId> for u64 {
     fn from(tree_id: TreeStorageId) -> Self {
-        let bytes = tree_id.into_bytes();
-        u64::from_ne_bytes(bytes)
+        tree_id.bits
+        // let bytes = tree_id.into_bytes();
+        // u64::from_ne_bytes(bytes)
     }
 }
 
 impl From<u64> for TreeStorageId {
     fn from(entry_id: u64) -> Self {
-        Self::from_bytes(entry_id.to_ne_bytes())
+        Self { bits: entry_id }
+        // Self::from_bytes(entry_id.to_ne_bytes())
     }
 }
 
@@ -97,11 +165,13 @@ pub enum StorageIdError {
     TreeInvalidStartEnd,
     TreeStartTooBig,
     TreeLengthTooBig,
+    InodeIndexTooBig,
     NodeIdError,
     StringNotFound,
     TreeNotFound,
     BlobNotFound,
     NodeNotFound,
+    InodeNotFound,
 }
 
 impl From<NodeIdError> for StorageIdError {
@@ -247,6 +317,19 @@ impl TryFrom<usize> for NodeId {
     }
 }
 
+/// Inode representation used for hashing directories with >256 entries.
+#[derive(Clone, Debug)]
+pub enum Inode {
+    Empty,
+    Value(Vec<(StringId, NodeId)>),
+    Tree {
+        depth: u32,
+        children: usize,
+        pointers: Vec<(u8, Inode)>,
+        // pointers: Vec<(u8, HashId)>,
+    },
+}
+
 /// `Storage` contains all the data from the working tree.
 ///
 /// This is where all trees/blobs/strings are allocated.
@@ -275,6 +358,8 @@ pub struct Storage {
     /// Concatenation of all strings in the working tree.
     /// The working tree has `StringId` which refers to a data inside `StringInterner`.
     strings: StringInterner,
+
+    inodes: Vec<Inode>,
 }
 
 #[derive(Debug)]
@@ -316,6 +401,7 @@ impl Storage {
             blobs: Vec::with_capacity(2048),
             strings: Default::default(),
             nodes: Entries::with_capacity(2048),
+            inodes: Vec::with_capacity(256)
         }
     }
 
@@ -416,6 +502,22 @@ impl Storage {
         )
     }
 
+    // #[cfg(test)]
+    pub fn get_owned_tree_inodes(&self, tree: &[(StringId, NodeId)]) -> Option<Vec<(String, Node)>> {
+        // let (start, end) = tree_id.get();
+        // let tree = self.trees.get(start..end)?;
+
+        Some(
+            tree.iter()
+                .flat_map(|t| {
+                    let key = self.strings.get(t.0)?;
+                    let node = self.nodes.get(t.1).ok()??;
+                    Some((key.to_string(), node.clone()))
+                })
+                .collect(),
+        )
+    }
+
     fn find_in_tree(
         &self,
         tree: &[(StringId, NodeId)],
@@ -471,6 +573,125 @@ impl Storage {
         result
     }
 
+    fn create_inode(&self, depth: u32, tree: &[(StringId, NodeId)]) -> Result<Inode, StorageIdError> {
+        if tree.is_empty() {
+            Ok(Inode::Empty)
+        } else if tree.len() <= 32 {
+            Ok(Inode::Value(tree.to_vec()))
+        } else {
+            let children = tree.len();
+            let mut pointers = Vec::with_capacity(32);
+
+            for index in 0..32u8 {
+                let mut entries_at_depth_and_index = Vec::new();
+                for (key_id, node_id) in tree {
+                    let key = self.get_str(*key_id)?;
+                    if index_of_key(depth, key) as u8 == index {
+                        entries_at_depth_and_index.push((*key_id, *node_id));
+                    }
+                }
+
+                if entries_at_depth_and_index.is_empty() {
+                    continue;
+                }
+
+                let inode = self.create_inode(depth + 1, &entries_at_depth_and_index)?;
+                pointers.push((index, inode));
+            }
+
+            Ok(Inode::Tree {
+                depth,
+                children,
+                pointers,
+            })
+        }
+    }
+
+    fn insert_inode(
+        &self,
+        depth: u32,
+        inode: &Inode,
+        key: &str,
+        key_id: StringId,
+        node_id: NodeId
+    ) -> Result<Inode, StorageIdError> {
+        let index_at_depth = index_of_key(depth, key) as u8;
+
+        match inode {
+            Inode::Empty => {
+                self.create_inode(depth, &[(key_id, node_id)])
+            }
+            Inode::Value(value_tree) => {
+                let mut value_tree = value_tree.to_vec();
+
+                match self.find_in_tree(&value_tree, key)? {
+                    Ok(found) => {
+                        value_tree[found].1 = node_id;
+                    }
+                    Err(index) => {
+                        value_tree.insert(index, (key_id, node_id));
+                    }
+                }
+
+                self.create_inode(depth, &value_tree)
+            }
+            Inode::Tree { depth, children, pointers } => {
+                let mut pointers = pointers.to_vec();
+
+                match pointers.binary_search_by(|p| p.0.cmp(&index_at_depth)) {
+                    Ok(ptr_index) => {
+                        let inode = &pointers[ptr_index].1;
+                        let inode = self.insert_inode(depth + 1, inode, key, key_id, node_id)?;
+
+                        pointers[ptr_index] = (index_at_depth, inode);
+                    }
+                    Err(ptr_index) => {
+                        let inode = self.create_inode(*depth, &[(key_id, node_id)])?;
+
+                        pointers.insert(ptr_index, (index_at_depth, inode));
+                    }
+                };
+
+                let inode = Inode::Tree {
+                    depth: *depth,
+                    children: children + 1,
+                    pointers,
+                };
+
+                Ok(inode)
+            }
+        }
+    }
+
+    fn insert_in_inode(
+        &mut self,
+        inode: TreeStorageId,
+        key: &str,
+        key_id: StringId,
+        node_id: NodeId
+    ) -> Result<TreeStorageId, StorageIdError> {
+        let inode = self
+            .inodes
+            .get(inode.get_inode_index())
+            .ok_or(StorageIdError::InodeNotFound)?;
+
+        let inode = self.insert_inode(0, &inode, key, key_id, node_id)?;
+
+        let current = self.inodes.len();
+        self.inodes.push(inode);
+
+        TreeStorageId::try_new_inode(current)
+    }
+
+    pub fn get_inode(&self, tree_id: TreeStorageId) -> Result<Inode, StorageIdError> {
+        assert!(tree_id.is_inode());
+
+        self.inodes
+            .get(tree_id.get_inode_index())
+            .cloned()
+            .ok_or(StorageIdError::InodeNotFound)
+    }
+
     pub fn insert(
         &mut self,
         tree_id: TreeStorageId,
@@ -479,6 +700,10 @@ impl Storage {
     ) -> Result<TreeStorageId, StorageIdError> {
         let key_id = self.get_string_id(key_str);
         let node_id = self.nodes.push(value)?;
+
+        if tree_id.is_inode() {
+            return self.insert_in_inode(tree_id, key_str, key_id, node_id);
+        }
 
         self.with_new_tree(|this, new_tree| {
             let tree = match this.get_tree(tree_id) {
@@ -503,7 +728,15 @@ impl Storage {
                 }
             }
 
-            this.add_tree(new_tree)
+            if new_tree.len() > 256 {
+                let inode = this.create_inode(0, &new_tree)?;
+                let current = this.inodes.len();
+                this.inodes.push(inode);
+
+                TreeStorageId::try_new_inode(current)
+            } else {
+                this.add_tree(new_tree)
+            }
         })
     }
 
