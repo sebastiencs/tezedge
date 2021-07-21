@@ -265,6 +265,8 @@ fn hash_long_inode(
 
             // println!("HERE VALUES LENGTH={:?} {:?}", entries.len(), entries);
 
+            let entries = storage.get_tree(*entries)?;
+
             hasher.update(&[0u8]); // type tag
             hasher.update(&[entries.len() as u8]);
 
@@ -316,10 +318,18 @@ fn hash_long_inode(
             // +---------+--------+
             // |  index  |  hash  |
 
-            for (index, inode) in pointers {
-                hasher.update(&[*index]);
+            for pointer in pointers {
+                hasher.update(&[pointer.index]);
 
-                let hash_id = hash_long_inode(inode, store, storage)?;
+                let hash_id = match pointer.hash_id.get() {
+                    Some(hash_id) => hash_id,
+                    None => {
+                        let inode = storage.get_inode_priv(pointer.inode.get());
+                        let hash_id = hash_long_inode(inode, store, storage)?;
+                        pointer.hash_id.set(Some(hash_id));
+                        hash_id
+                    }
+                };
 
                 let hash = store
                     .get_hash(hash_id)?
