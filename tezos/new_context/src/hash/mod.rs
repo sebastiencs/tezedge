@@ -324,7 +324,7 @@ fn hash_long_inode(
                 let hash_id = match pointer.hash_id.get() {
                     Some(hash_id) => hash_id,
                     None => {
-                        let inode = storage.get_inode_priv(pointer.inode.get());
+                        let inode = storage.get_inode(pointer.inode.get()).unwrap();
                         let hash_id = hash_long_inode(inode, store, storage)?;
                         pointer.hash_id.set(Some(hash_id));
                         hash_id
@@ -407,7 +407,7 @@ fn hash_inode(
     store: &mut ContextKeyValueStore,
     storage: &Storage,
 ) -> Result<HashId, HashingError> {
-    let inode = storage.get_inode(tree_id)?;
+    let inode = storage.get_inode(tree_id.as_inode_id())?;
     hash_long_inode(&inode, store, storage)
 }
 

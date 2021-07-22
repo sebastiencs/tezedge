@@ -23,6 +23,7 @@ use super::{
 const ID_TREE: u8 = 0;
 const ID_BLOB: u8 = 1;
 const ID_COMMIT: u8 = 2;
+const ID_INODE: u8 = 3;
 
 const COMPACT_HASH_ID_BIT: u32 = 1 << 23;
 
@@ -84,7 +85,7 @@ pub fn serialize_entry(
     output.clear();
 
     match entry {
-        Entry::Tree(tree) => {
+        Entry::Tree(tree) if !tree.is_inode() => {
             output.write_all(&[ID_TREE])?;
             let tree = storage.get_tree(*tree)?;
 
@@ -169,6 +170,32 @@ pub fn serialize_entry(
                 nblobs_inlined,
                 blobs_length,
             );
+        }
+        Entry::Tree(tree) => {
+            assert!(tree.is_inode());
+
+            use crate::working_tree::storage::Inode;
+
+            let inode = storage.get_inode(tree.as_inode_id()).unwrap();
+
+            let (depth, children, pointers) = match inode {
+                Inode::Tree { depth, children, pointers } => (*depth, *children, pointers),
+                _ => unreachable!("The root of an Inode is always a Inode::Tree"),
+            };
+
+            let children: u32 = children.try_into()?;
+
+            output.write_all(&[ID_INODE])?;
+            output.write_all(&depth.to_ne_bytes())?;
+            output.write_all(&children.to_ne_bytes())?;
+
+            for pointer in pointers {
+                let hash_id = pointer.hash_id.get();
+                let hash_id = hash_id.map(|h| h.as_u32()).unwrap_or(0);
+
+                output.write_all(&pointer.index.to_ne_bytes())?;
+                output.write_all(&hash_id.to_ne_bytes())?;
+            }
         }
         Entry::Blob(blob_id) => {
             debug_assert!(!blob_id.is_inline());

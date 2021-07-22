@@ -115,6 +115,18 @@ impl TreeStorageId {
         self.bits >> 60 != 0
     }
 
+    pub fn as_inode_id(&self) -> InodeId {
+        assert!(self.is_inode());
+
+        InodeId(self.get_inode_index() as u32)
+    }
+
+    pub fn from_inode_id(inode_id: InodeId) -> Self {
+        Self {
+            bits: 1 << 60 | inode_id.0 as u64
+        }
+    }
+
     fn get(self) -> (usize, usize) {
         debug_assert!(!self.is_inode());
 
@@ -597,9 +609,9 @@ impl Storage {
         InodeId(current as u32)
     }
 
-    pub fn get_inode_priv(&self, inode_id: InodeId) -> &Inode {
-        self.inodes.get(inode_id.0 as usize).unwrap()
-    }
+    // pub fn get_inode_priv(&self, inode_id: InodeId) -> &Inode {
+    //     self.inodes.get(inode_id.0 as usize).unwrap()
+    // }
 
     // fn create_inode(&mut self, depth: u32, tree: &[(StringId, NodeId)]) -> Result<InodeId, StorageIdError> {
     fn create_inode(&mut self, depth: u32, tree_id: TreeStorageId) -> Result<InodeId, StorageIdError> {
@@ -674,7 +686,7 @@ impl Storage {
     ) -> Result<InodeId, StorageIdError> {
         let index_at_depth = index_of_key(depth, key) as u8;
 
-        let inode = self.get_inode_priv(inode_id);
+        let inode = self.get_inode(inode_id).unwrap();
 
         match inode {
             Inode::Empty => {
@@ -729,15 +741,16 @@ impl Storage {
 
     fn insert_in_inode(
         &mut self,
-        inode: TreeStorageId,
+        tree_id: TreeStorageId,
         key: &str,
         key_id: StringId,
         node: Node
     ) -> Result<TreeStorageId, StorageIdError> {
-        let inode = inode.get_inode_index();
-        let inode = InodeId(inode as u32);
+        let inode_id = tree_id.as_inode_id();
+        // let inode = inode.get_inode_index();
+        // let inode = InodeId(inode as u32);
 
-        let inode = self.insert_inode(0, inode, key, key_id, node)?;
+        let inode = self.insert_inode(0, inode_id, key, key_id, node)?;
 
         // let current = self.inodes.len();
         // self.inodes.push(inode);
@@ -745,12 +758,9 @@ impl Storage {
         TreeStorageId::try_new_inode(inode.0 as usize)
     }
 
-    pub fn get_inode(&self, tree_id: TreeStorageId) -> Result<Inode, StorageIdError> {
-        assert!(tree_id.is_inode());
-
+    pub fn get_inode(&self, inode_id: InodeId) -> Result<&Inode, StorageIdError> {
         self.inodes
-            .get(tree_id.get_inode_index())
-            .cloned()
+            .get(inode_id.0 as usize)
             .ok_or(StorageIdError::InodeNotFound)
     }
 
