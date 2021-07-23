@@ -307,10 +307,12 @@ fn hash_long_inode(
             // +--------+----------+---------------+--------+------+-----+------+
             // |  \001  |  depth   | len(children) |   \k   | s_1  | ... | s_k  |
 
+            let pointers_len = pointers.iter().filter(|p| p.is_some()).count();
+
             hasher.update(&[1u8]); // type tag
             leb128::write::unsigned(&mut hasher, *depth as u64)?;
             leb128::write::unsigned(&mut hasher, *children as u64)?;
-            hasher.update(&[pointers.len() as u8]);
+            hasher.update(&[pointers_len as u8]);
 
             // Inode pointer:
             //
@@ -318,23 +320,28 @@ fn hash_long_inode(
             // +---------+--------+
             // |  index  |  hash  |
 
-            for pointer in pointers {
-                hasher.update(&[pointer.index]);
+            for (index, pointer) in pointers.iter().enumerate() {
+                if let Some(pointer) = pointer.as_ref() {
+                    let index: u8 = index as u8;
 
-                let hash_id = match pointer.hash_id.get() {
-                    Some(hash_id) => hash_id,
-                    None => {
-                        let inode = storage.get_inode(pointer.inode.get()).unwrap();
-                        let hash_id = hash_long_inode(inode, store, storage)?;
-                        pointer.hash_id.set(Some(hash_id));
-                        hash_id
-                    }
+                    hasher.update(&[index]);
+
+                    let hash_id = match pointer.hash_id.get() {
+                        Some(hash_id) => hash_id,
+                        None => {
+                            let inode = storage.get_inode(pointer.inode.get()).unwrap();
+                            let hash_id = hash_long_inode(inode, store, storage)?;
+                            pointer.hash_id.set(Some(hash_id));
+                            hash_id
+                        }
+                    };
+
+                    let hash = store
+                        .get_hash(hash_id)?
+                        .ok_or_else(|| HashingError::HashIdNotFound { hash_id })?;
+
+                    hasher.update(hash.as_ref());
                 };
-
-                let hash = store
-                    .get_hash(hash_id)?
-                    .ok_or_else(|| HashingError::HashIdNotFound { hash_id })?;
-                hasher.update(hash.as_ref());
             }
         }
     }
@@ -402,15 +409,6 @@ fn hash_short_inode(
     Ok(hash_id)
 }
 
-fn hash_inode(
-    tree_id: Tree,
-    store: &mut ContextKeyValueStore,
-    storage: &Storage,
-) -> Result<HashId, HashingError> {
-    let inode = storage.get_inode(tree_id.as_inode_id())?;
-    hash_long_inode(&inode, store, storage)
-}
-
 // Calculates hash of tree
 // uses BLAKE2 binary 256 length hash function
 pub(crate) fn hash_tree(
@@ -420,9 +418,17 @@ pub(crate) fn hash_tree(
 ) -> Result<HashId, HashingError> {
     // If there are >256 entries, we need to partition the tree and hash the resulting inode
 
-    if tree_id.is_inode() {
-        hash_inode(tree_id, store, storage)
+    if let Some(inode_id) = tree_id.get_inode_id() {
+        let inode = storage.get_inode(inode_id)?;
+        hash_long_inode(&inode, store, storage)
+    } else {
+        hash_short_inode(tree_id, store, storage)
     }
+
+
+    // if tree_id.is_inode() {
+    //     hash_inode(tree_id, store, storage)
+    // }
 
     // let tree = storage.get_tree(tree_id)?;
 
@@ -430,9 +436,9 @@ pub(crate) fn hash_tree(
     //     let inode = partition_entries(0, &tree, store, storage)?;
     //     hash_long_inode(&inode, store, storage)
     //}
-    else {
-        hash_short_inode(tree_id, store, storage)
-    }
+    // else {
+    //     hash_short_inode(tree_id, store, storage)
+    // }
 }
 
 // Calculates hash of BLOB
@@ -534,7 +540,7 @@ pub(crate) fn hash_entry(
 #[cfg(test)]
 #[allow(unused_must_use)]
 mod tests {
-    use std::{collections::HashSet, convert::TryInto, env, fs::File, io::Read, path::Path};
+    use std::{collections::HashSet, convert::{TryFrom, TryInto}, env, fs::File, io::Read, path::Path};
 
     use flate2::read::GzDecoder;
 
@@ -796,20 +802,75 @@ mod tests {
             let computed_hash = repo.get_hash(computed_hash).unwrap().unwrap();
             let computed_hash = ContextHash::try_from_bytes(computed_hash).unwrap();
 
-            // let inode = storage.get_inode(tree).unwrap();
-            // println!("INODE={:#?}", inode);
+            // let inode = storage.get_inode(tree.get_inode_id().unwrap()).unwrap();
+            // // println!("INODE={:#?}", inode);
 
-            // println!("UNIQ NAMES={:?}", names.len());
+            // // println!("UNIQ NAMES={:?}", names.len());
 
             // if let Inode::Tree { depth, children, pointers } = inode {
             //     println!("ROOT DEPTH={:?}", depth);
             //     println!("ROOT CHILDREN={:?}", children);
-            //     for p in pointers {
-            //         println!("ROOT INDEX={:?} INODE={:?}", p.0, match p.1 {
-            //             Inode::Tree { children, depth, .. } => format!("TREE CHILDREN={:?} DEPTH={:?}", children, depth),
-            //             Inode::Value(v) => format!("VALUES {:?}", v.len()),
-            //             Inode::Empty => "Empty".to_string(),
-            //         });
+            //     for (index, p) in pointers.iter().enumerate() {
+            //         if let Some(p) = p {
+            //             let inode = p.inode.get();
+            //             let inode = storage.get_inode(inode).unwrap();
+
+            //             let hash_id = p.hash_id.get().unwrap();
+            //             let hash = repo.get_hash(hash_id).unwrap().unwrap();
+            //             let hash = ContextHash::try_from(&hash[..]).unwrap();
+            //             let hash = hash.to_base58_check();
+
+            //             match inode {
+            //                 Inode::Empty => {
+            //                     println!("ROOT INDEX={:?} Empty", index);
+            //                 }
+            //                 Inode::Value(v) => {
+            //                     println!("ROOT INDEX={:?} Values {:?} HASH={:?}", index, storage.tree_len(*v), hash);
+            //                 }
+            //                 Inode::Tree { depth, children, pointers } => {
+            //                     println!("ROOT INDEX={:?} TREE CHILDREN={:?} DEPTH={:?} HASH={:?}", index, children, depth, hash);
+            //                     for (index, p) in pointers.iter().enumerate() {
+            //                         if let Some(p) = p {
+            //                             let inode = p.inode.get();
+            //                             let inode = storage.get_inode(inode).unwrap();
+
+            //                             let hash_id = p.hash_id.get().unwrap();
+            //                             let hash = repo.get_hash(hash_id).unwrap().unwrap();
+            //                             let hash = ContextHash::try_from(&hash[..]).unwrap();
+            //                             let hash = hash.to_base58_check();
+
+            //                             match inode {
+            //                                 Inode::Empty => {
+            //                                     println!("Empty");
+            //                                 }
+            //                                 Inode::Value(v) => {
+            //                                     println!("INDEX={:?} Values {:?} HASH={:?}", index, storage.tree_len(*v), hash);
+            //                                 }
+            //                                 Inode::Tree { depth, children, pointers } => {
+            //                                     println!("INDEX={:?} TREE CHILDREN={:?} DEPTH={:?} HASH={:?}", index, children, depth, hash);
+            //                                 }
+            //                             }
+            //                         }
+            //                     }
+
+            //                 }
+            //             }
+
+            //             // println!("ROOT INDEX={:?} INODE={:?}", index, match inode {
+            //             //     Inode::Tree { children, depth, .. } => {
+            //             //         format!("TREE CHILDREN={:?} DEPTH={:?}", children, depth)
+            //             //     },
+            //             //     Inode::Value(v) => format!("VALUES {:?}", storage.tree_len(*v)),
+            //             //     Inode::Empty => "Empty".to_string(),
+            //             // });
+            //             // println!("ROOT INDEX={:?} INODE={:?}", index, match inode {
+            //             //     Inode::Tree { children, depth, .. } => {
+            //             //         format!("TREE CHILDREN={:?} DEPTH={:?}", children, depth)
+            //             //     },
+            //             //     Inode::Value(v) => format!("VALUES {:?}", storage.tree_len(*v)),
+            //             //     Inode::Empty => "Empty".to_string(),
+            //             // });
+            //         };
             //     }
             // };
 

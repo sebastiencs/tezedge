@@ -132,9 +132,6 @@ pub fn serialize_entry(
                     }
                 }
 
-                hash_ids_length += 4;
-                highest_hash_id = highest_hash_id.max(hash_id);
-
                 if let Some(blob_inline) = blob_inline {
                     nblobs_inlined += 1;
                     blobs_length += blob_inline.len();
@@ -176,7 +173,7 @@ pub fn serialize_entry(
 
             use crate::working_tree::storage::Inode;
 
-            let inode = storage.get_inode(tree.as_inode_id()).unwrap();
+            let inode = storage.get_inode(tree.get_inode_id().unwrap()).unwrap();
 
             let (depth, children, pointers) = match inode {
                 Inode::Tree { depth, children, pointers } => (*depth, *children, pointers),
@@ -189,12 +186,14 @@ pub fn serialize_entry(
             output.write_all(&depth.to_ne_bytes())?;
             output.write_all(&children.to_ne_bytes())?;
 
-            for pointer in pointers {
-                let hash_id = pointer.hash_id.get();
-                let hash_id = hash_id.map(|h| h.as_u32()).unwrap_or(0);
+            for (index, pointer) in pointers.iter().enumerate() {
+                if let Some(pointer) = pointer {
+                    let hash_id = pointer.hash_id.get();
+                    let hash_id = hash_id.map(|h| h.as_u32()).unwrap_or(0);
 
-                output.write_all(&pointer.index.to_ne_bytes())?;
-                output.write_all(&hash_id.to_ne_bytes())?;
+                    output.write_all(&index.to_ne_bytes())?;
+                    output.write_all(&hash_id.to_ne_bytes())?;
+                };
             }
         }
         Entry::Blob(blob_id) => {

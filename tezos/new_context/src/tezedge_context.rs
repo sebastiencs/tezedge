@@ -208,7 +208,7 @@ impl TezedgeIndex {
         let prefixed_tree = self.find_raw_tree(root_tree, prefix, storage)?;
         let delimiter = if prefix.is_empty() { "" } else { "/" };
 
-        let prefixed_tree = storage.get_tree(prefixed_tree)?.to_vec();
+        let prefixed_tree = storage.tree_to_vec_unsorted(prefixed_tree);
 
         for (key, child_node) in prefixed_tree.iter() {
             let entry = self.node_entry(*child_node, storage)?;
@@ -251,7 +251,7 @@ impl TezedgeIndex {
             Entry::Tree(tree) => {
                 let mut new_tree = StringTreeMap::new();
 
-                let tree = storage.get_tree(*tree)?.to_vec();
+                let tree = storage.tree_to_vec_unsorted(*tree);
 
                 for (key, child_node) in tree.iter() {
                     let key = storage.get_str(*key)?;
@@ -405,7 +405,7 @@ impl TezedgeIndex {
         let mut keyvalues: Vec<(ContextKeyOwned, ContextValue)> = Vec::new();
         let delimiter = if prefix.is_empty() { "" } else { "/" };
 
-        let prefixed_tree = storage.get_tree(prefixed_tree)?.to_vec();
+        let prefixed_tree = storage.tree_to_vec_unsorted(prefixed_tree);
 
         for (key, child_node) in prefixed_tree.iter() {
             let entry = self.node_entry(*child_node, storage)?;
@@ -440,7 +440,7 @@ impl TezedgeIndex {
                 Ok(())
             }
             Entry::Tree(tree) => {
-                let tree = storage.get_tree(*tree)?.to_vec();
+                let tree = storage.tree_to_vec_unsorted(*tree);
 
                 tree.iter()
                     .map(|(key, child_node)| {

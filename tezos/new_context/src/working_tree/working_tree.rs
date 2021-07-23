@@ -148,27 +148,22 @@ impl TreeWalkerLevel {
         let children_iter = if should_continue {
             if let WorkingTreeValue::Tree(tree) = &root.value {
                 let storage = root.index.storage.borrow();
-                let tree = match storage.get_tree(*tree) {
-                    Ok(tree) => tree,
-                    Err(e) => {
-                        // TODO: Handle this error in a better way
-                        eprintln!("TreeWalkerLevel error='{:?}' key='{:?}", e, key);
-                        &[]
-                    }
-                };
 
-                let mut tree_vec = Vec::with_capacity(tree.len());
-                for (key_id, node_id) in tree {
-                    let key = match storage.get_str(*key_id) {
+                let tree_len = storage.tree_len(*tree);
+                let mut tree_vec = Vec::with_capacity(tree_len);
+
+                storage.tree_iterate_unsorted(*tree, |&(key_id, node_id)| {
+                    let key = match storage.get_str(key_id) {
                         Ok(key) => key.to_string(),
                         Err(e) => {
                             // TODO: Handle this error in a better way
                             eprintln!("TreeWalkerLevel error='{:?}' key='{:?}", e, key);
-                            continue;
+                            return Ok(());
                         }
                     };
-                    tree_vec.push((key, *node_id));
-                }
+                    tree_vec.push((key, node_id));
+                    Ok(())
+                }).ok();
 
                 Some(tree_vec.into_iter())
             } else {
@@ -547,7 +542,8 @@ impl WorkingTree {
         let mut storage = self.index.storage.borrow_mut();
 
         let node = self.find_raw_tree(root, key, &mut storage)?;
-        let node = storage.get_tree(node)?.to_vec();
+        let node = storage.tree_to_vec_unsorted(node);
+        //let node = storage.get_tree(node)?.to_vec();
         let node_length = node.len();
 
         let length = length.unwrap_or(node_length).min(node_length);
@@ -722,7 +718,7 @@ impl WorkingTree {
                 Ok(())
             }
             Entry::Tree(tree) => {
-                let tree = storage.get_tree(*tree)?.to_vec();
+                let tree = storage.tree_to_vec_unsorted(*tree);
 
                 tree.iter()
                     .map(|(key, child_node)| {
@@ -777,7 +773,7 @@ impl WorkingTree {
         let mut keyvalues: Vec<(ContextKeyOwned, ContextValue)> = Vec::new();
         let delimiter = if prefix.is_empty() { "" } else { "/" };
 
-        let prefixed_tree = storage.get_tree(prefixed_tree)?.to_vec();
+        let prefixed_tree = storage.tree_to_vec_unsorted(prefixed_tree);
 
         for (key, child_node) in prefixed_tree.iter() {
             let entry = self.node_entry(*child_node, storage)?;
@@ -994,34 +990,56 @@ impl WorkingTree {
         match entry {
             Entry::Blob(_blob_id) => Ok(()),
             Entry::Tree(tree) => {
-                let tree = storage.get_tree(*tree)?;
 
-                tree.iter()
-                    .map(|(_, child_node)| {
-                        let child_node = storage.get_node(*child_node)?;
+                storage.tree_iterate_unsorted(*tree, |&(_, node_id)| {
+                    let child_node = storage.get_node(node_id)?;
 
-                        if child_node.is_commited() {
-                            data.add_older_entry(child_node, storage)?;
-                            return Ok(());
-                        }
-                        child_node.set_commited(true);
+                    if child_node.is_commited() {
+                        data.add_older_entry(child_node, storage)?;
+                        return Ok(());
+                    }
+                    child_node.set_commited(true);
 
-                        match child_node.get_entry().as_ref() {
-                            None => Ok(()),
-                            Some(entry) => self.get_entries_recursively(
-                                entry,
-                                child_node.entry_hash_id(data.store, storage)?,
-                                None,
-                                data,
-                                storage,
-                            ),
-                        }
-                    })
-                    .find_map(|res| match res {
-                        Ok(_) => None,
-                        Err(err) => Some(Err(err)),
-                    })
-                    .unwrap_or(Ok(()))
+                    match child_node.get_entry().as_ref() {
+                        None => Ok(()),
+                        Some(entry) => self.get_entries_recursively(
+                            entry,
+                            child_node.entry_hash_id(data.store, storage)?,
+                            None,
+                            data,
+                            storage,
+                        ),
+                    }
+                })
+
+                // let tree = storage.get_tree(*tree)?;
+
+                // tree.iter()
+                //     .map(|(_, child_node)| {
+                //         let child_node = storage.get_node(*child_node)?;
+
+                //         if child_node.is_commited() {
+                //             data.add_older_entry(child_node, storage)?;
+                //             return Ok(());
+                //         }
+                //         child_node.set_commited(true);
+
+                //         match child_node.get_entry().as_ref() {
+                //             None => Ok(()),
+                //             Some(entry) => self.get_entries_recursively(
+                //                 entry,
+                //                 child_node.entry_hash_id(data.store, storage)?,
+                //                 None,
+                //                 data,
+                //                 storage,
+                //             ),
+                //         }
+                //     })
+                //     .find_map(|res| match res {
+                //         Ok(_) => None,
+                //         Err(err) => Some(Err(err)),
+                //     })
+                //     .unwrap_or(Ok(()))
             }
             Entry::Commit(commit) => {
                 let entry = match root {
