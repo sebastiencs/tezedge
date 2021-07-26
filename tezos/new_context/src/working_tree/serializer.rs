@@ -175,12 +175,12 @@ pub fn serialize_entry(
 
             let inode = storage.get_inode(tree.get_inode_id().unwrap()).unwrap();
 
-            let (depth, children, pointers) = match inode {
-                Inode::Tree { depth, children, pointers } => (*depth, *children, pointers),
+            let (depth, nchildren, pointers) = match inode {
+                Inode::Tree { depth, nchildren, pointers } => (*depth, *nchildren, pointers),
                 _ => unreachable!("The root of an Inode is always a Inode::Tree"),
             };
 
-            let children: u32 = children.try_into()?;
+            let children: u32 = nchildren.try_into()?;
 
             output.write_all(&[ID_INODE])?;
             output.write_all(&depth.to_ne_bytes())?;
