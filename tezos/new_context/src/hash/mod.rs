@@ -13,7 +13,16 @@ use failure::Fail;
 
 use ocaml::ocaml_hash_string;
 
-use crate::{ContextKeyValueStore, kv_store::HashId, persistent::DBError, working_tree::{Commit, Entry, NodeKind, Tree, storage::{Blob, BlobStorageId, Inode, NodeId, Storage, StorageIdError}, string_interner::StringId}};
+use crate::{
+    kv_store::HashId,
+    persistent::DBError,
+    working_tree::{
+        storage::{Blob, BlobStorageId, Inode, NodeId, Storage, StorageIdError},
+        string_interner::StringId,
+        Commit, Entry, NodeKind, Tree,
+    },
+    ContextKeyValueStore,
+};
 
 mod ocaml;
 
@@ -425,7 +434,6 @@ pub(crate) fn hash_tree(
         hash_short_inode(tree_id, store, storage)
     }
 
-
     // if tree_id.is_inode() {
     //     hash_inode(tree_id, store, storage)
     // }
@@ -540,7 +548,14 @@ pub(crate) fn hash_entry(
 #[cfg(test)]
 #[allow(unused_must_use)]
 mod tests {
-    use std::{collections::HashSet, convert::{TryFrom, TryInto}, env, fs::File, io::Read, path::Path};
+    use std::{
+        collections::HashSet,
+        convert::{TryFrom, TryInto},
+        env,
+        fs::File,
+        io::Read,
+        path::Path,
+    };
 
     use flate2::read::GzDecoder;
 

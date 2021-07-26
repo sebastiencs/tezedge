@@ -152,18 +152,20 @@ impl TreeWalkerLevel {
                 let tree_len = storage.tree_len(*tree);
                 let mut tree_vec = Vec::with_capacity(tree_len);
 
-                storage.tree_iterate_unsorted(*tree, |&(key_id, node_id)| {
-                    let key = match storage.get_str(key_id) {
-                        Ok(key) => key.to_string(),
-                        Err(e) => {
-                            // TODO: Handle this error in a better way
-                            eprintln!("TreeWalkerLevel error='{:?}' key='{:?}", e, key);
-                            return Ok(());
-                        }
-                    };
-                    tree_vec.push((key, node_id));
-                    Ok(())
-                }).ok();
+                storage
+                    .tree_iterate_unsorted(*tree, |&(key_id, node_id)| {
+                        let key = match storage.get_str(key_id) {
+                            Ok(key) => key.to_string(),
+                            Err(e) => {
+                                // TODO: Handle this error in a better way
+                                eprintln!("TreeWalkerLevel error='{:?}' key='{:?}", e, key);
+                                return Ok(());
+                            }
+                        };
+                        tree_vec.push((key, node_id));
+                        Ok(())
+                    })
+                    .ok();
 
                 Some(tree_vec.into_iter())
             } else {
@@ -990,7 +992,6 @@ impl WorkingTree {
         match entry {
             Entry::Blob(_blob_id) => Ok(()),
             Entry::Tree(tree) => {
-
                 storage.tree_iterate_unsorted(*tree, |&(_, node_id)| {
                     let child_node = storage.get_node(node_id)?;
 
