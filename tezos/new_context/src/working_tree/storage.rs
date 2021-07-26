@@ -3,7 +3,6 @@
 
 use std::{cell::Cell, cmp::Ordering, convert::{TryFrom, TryInto}, mem::size_of, num::NonZeroU32};
 
-use modular_bitfield::prelude::*;
 use static_assertions::assert_eq_size;
 use tezos_timing::StorageMemoryUsage;
 
@@ -352,20 +351,11 @@ pub struct InodeId(u32);
 
 #[derive(Clone, Debug)]
 pub struct PointerToInode {
-    // pub index: u8,
     pub hash_id: Cell<Option<HashId>>,
     pub inode: Cell<InodeId>
 }
 
-#[derive(Clone, Debug)]
-pub struct PointerToInode2 {
-    pub hash_id: Cell<Option<HashId>>,
-    pub inode: NonZeroU32,
-}
-
-// assert_eq_size!([u8; 96], PointerToInode);
-assert_eq_size!([u8; 8], Option<PointerToInode2>);
-//assert_eq_size!([u8; 4], Cell<Option<HashId>>);
+assert_eq_size!([u8; 12], Option<PointerToInode>);
 
 /// Inode representation used for hashing directories with >256 entries.
 #[derive(Clone, Debug)]
@@ -373,15 +363,17 @@ pub enum Inode {
     Empty,
     /// Value is a list of (StringId, NodeId)
     Value(TreeStorageId),
-    //Value(Vec<(StringId, NodeId)>),
     Tree {
         depth: u32,
         children: usize,
         pointers: [Option<PointerToInode>; 32],
-        //pointers: Vec<PointerToInode>,
-        // pointers: Vec<(u8, Inode)>,
-        // pointers: Vec<(u8, HashId)>,
     },
+}
+
+#[derive(Debug)]
+struct TempInodeVec {
+    start: usize,
+    end: usize,
 }
 
 /// `Storage` contains all the data from the working tree.
@@ -414,7 +406,9 @@ pub struct Storage {
     strings: StringInterner,
 
     inodes: Vec<Inode>,
+    temp_inodes: Vec<(StringId, NodeId)>,
 }
+
 
 #[derive(Debug)]
 pub enum Blob<'a> {
@@ -455,7 +449,8 @@ impl Storage {
             blobs: Vec::with_capacity(2048),
             strings: Default::default(),
             nodes: Entries::with_capacity(2048),
-            inodes: Vec::with_capacity(256)
+            inodes: Vec::with_capacity(256),
+            temp_inodes: Vec::with_capacity(256),
         }
     }
 
@@ -640,38 +635,72 @@ impl Storage {
         InodeId(current as u32)
     }
 
-    fn create_inode(&mut self, depth: u32, tree_id: TreeStorageId) -> Result<InodeId, StorageIdError> {
-        if tree_id.is_empty() {
+    pub fn insert_mutable(
+        &mut self,
+        start: usize,
+        key_id: StringId,
+        node_id: NodeId,
+    ) -> Result<TreeStorageId, StorageIdError> {
+        let key_str = self.get_str(key_id)?;
+
+        let tree = &self.trees[start..];
+        let index = self.find_in_tree(tree, key_str)?;
+
+        match index {
+            Ok(found) => {
+                self.trees[start + found].1 = node_id;
+            }
+            Err(index) => {
+                self.trees.insert(start + index, (key_id, node_id));
+            }
+        }
+
+        TreeStorageId::try_new_tree(start, self.trees.len())
+    }
+
+    fn create_inode(&mut self, depth: u32, tree_inodes: TempInodeVec) -> Result<InodeId, StorageIdError> {
+        if tree_inodes.start == tree_inodes.end {
             let inode_id = self.add_inode(Inode::Empty);
 
             Ok(inode_id)
-        } else if self.tree_len(tree_id) <= 32 {
-            let inode_id = self.add_inode(Inode::Value(tree_id));
+        } else if (tree_inodes.end - tree_inodes.start) <= 32 {
+            let mut new_tree_id = TreeStorageId::empty();
+
+            let temp_inodes = std::mem::take(&mut self.temp_inodes);
+
+            let new_tree_start = self.trees.len();
+
+            for (key_id, node_id) in &temp_inodes[tree_inodes.start..tree_inodes.end] {
+                new_tree_id = self.insert_mutable(new_tree_start, *key_id, *node_id)?;
+            }
+
+            self.temp_inodes = temp_inodes;
+
+            let inode_id = self.add_inode(Inode::Value(new_tree_id));
 
             Ok(inode_id)
         } else {
-            let tree = self.tree_to_vec_unsorted(tree_id);
-
-            let children = tree.len();
+            let children = tree_inodes.end - tree_inodes.start;
             let mut pointers: [Option<PointerToInode>; 32] = Default::default();
-            let tree = &tree;
 
             for index in 0..32u8 {
-                let new_tree_id = self.with_new_tree(|this, new_tree| {
-                    for (key_id, node_id) in tree {
-                        let key = this.get_str(*key_id)?;
-                        if index_of_key(depth, key) as u8 == index {
-                            new_tree.push((*key_id, *node_id));
-                        }
-                    }
-                    this.add_tree(new_tree)
-                })?;
+                let start = self.temp_inodes.len();
 
-                if new_tree_id.is_empty() {
+                for i in tree_inodes.start..tree_inodes.end {
+                    let (key_id, node_id) = self.temp_inodes[i];
+                    let key = self.get_str(key_id)?;
+                    if index_of_key(depth, key) as u8 == index {
+                        self.temp_inodes.push((key_id, node_id));
+                    }
+                }
+
+                let end = self.temp_inodes.len();
+
+                if start == end {
                     continue;
                 }
 
-                let inode_id = self.create_inode(depth + 1, new_tree_id)?;
+                let inode_id = self.create_inode(depth + 1, TempInodeVec { start, end })?;
 
                 pointers[index as usize] = Some(PointerToInode {
                     hash_id: Cell::new(None),
@@ -693,13 +722,27 @@ impl Storage {
         &mut self,
         key_id: StringId,
         node: Node
-    ) -> Result<TreeStorageId, StorageIdError> {
+    ) -> Result<TempInodeVec, StorageIdError> {
         let node_id = self.nodes.push(node)?;
 
-        self.with_new_tree(|this, new_tree| {
-            new_tree.push((key_id, node_id));
-            this.add_tree(new_tree)
-        })
+        let start = self.temp_inodes.len();
+        self.temp_inodes.push((key_id, node_id));
+        let end = self.temp_inodes.len();
+
+        Ok(TempInodeVec { start, end })
+    }
+
+    fn move_tree_in_temp_inodes(
+        &mut self,
+        tree_id: TreeStorageId
+    ) -> Result<TempInodeVec, StorageIdError> {
+        let (tree_start, tree_end) = tree_id.get();
+
+        let start = self.temp_inodes.len();
+        self.temp_inodes.extend_from_slice(&self.trees[tree_start..tree_end]);
+        let end = self.temp_inodes.len();
+
+        Ok(TempInodeVec { start, end })
     }
 
     fn insert_inode(
@@ -718,10 +761,19 @@ impl Storage {
                 self.create_inode(depth, tree_id)
             }
             Inode::Value(tree_id) => {
-                let tree_id = *tree_id;
-                let new_tree_id = self.insert(tree_id, key, node)?;
 
-                self.create_inode(depth, new_tree_id)
+                let tree_id = *tree_id;
+
+                let node_id = self.add_node(node)?;
+
+                let info = self.move_tree_in_temp_inodes(tree_id)?;
+
+                self.temp_inodes.push((key_id, node_id));
+                let end = self.temp_inodes.len();
+
+                let info = TempInodeVec { start: info.start, end };
+
+                self.create_inode(depth, info)
             }
             Inode::Tree { depth, children, pointers } => {
                 let mut pointers = pointers.clone();
@@ -842,13 +894,9 @@ impl Storage {
         node: Node
     ) -> Result<TreeStorageId, StorageIdError> {
         let inode_id = tree_id.get_inode_id().unwrap();
-        // let inode = inode.get_inode_index();
-        // let inode = InodeId(inode as u32);
 
         let inode = self.insert_inode(0, inode_id, key, key_id, node)?;
-
-        // let current = self.inodes.len();
-        // self.inodes.push(inode);
+        self.temp_inodes.clear();
 
         TreeStorageId::try_new_inode(inode.0 as usize)
     }
@@ -863,17 +911,17 @@ impl Storage {
         &mut self,
         tree_id: TreeStorageId,
         key_str: &str,
-        value: Node,
+        node: Node,
     ) -> Result<TreeStorageId, StorageIdError> {
         let key_id = self.get_string_id(key_str);
 
         if tree_id.is_inode() {
-            return self.insert_in_inode(tree_id, key_str, key_id, value);
+            return self.insert_in_inode(tree_id, key_str, key_id, node);
         }
 
-        let node_id = self.nodes.push(value)?;
+        let node_id = self.nodes.push(node)?;
 
-        self.with_new_tree(|this, new_tree| {
+        let mut tree_id = self.with_new_tree(|this, new_tree| {
             let tree = match this.get_tree(tree_id) {
                 Ok(tree) if !tree.is_empty() => tree,
                 _ => {
@@ -896,17 +944,19 @@ impl Storage {
                 }
             }
 
-            if new_tree.len() > 256 {
-                let new_tree_id = this.add_tree(new_tree)?;
-                let inode_id = this.create_inode(0, new_tree_id)?;
-                // let current = this.inodes.len();
-                // this.inodes.push(inode);
+            this.add_tree(new_tree)
+        })?;
 
-                TreeStorageId::try_new_inode(inode_id.0 as usize)
-            } else {
-                this.add_tree(new_tree)
-            }
-        })
+        if tree_id.len() > 256 {
+            let info = self.move_tree_in_temp_inodes(tree_id)?;
+
+            let inode_id = self.create_inode(0, info)?;
+            self.temp_inodes.clear();
+
+            tree_id = TreeStorageId::try_new_inode(inode_id.0 as usize)?;
+        }
+
+        Ok(tree_id)
     }
 
     pub fn remove(
