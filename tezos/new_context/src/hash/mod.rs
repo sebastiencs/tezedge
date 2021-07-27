@@ -303,6 +303,7 @@ fn hash_long_inode(
         Inode::Tree {
             depth,
             nchildren,
+            npointers,
             pointers,
         } => {
             // println!(
@@ -316,12 +317,10 @@ fn hash_long_inode(
             // +--------+----------+---------------+--------+------+-----+------+
             // |  \001  |  depth   | len(children) |   \k   | s_1  | ... | s_k  |
 
-            let pointers_len = pointers.iter().filter(|p| p.is_some()).count();
-
             hasher.update(&[1u8]); // type tag
             leb128::write::unsigned(&mut hasher, *depth as u64)?;
             leb128::write::unsigned(&mut hasher, *nchildren as u64)?;
-            hasher.update(&[pointers_len as u8]);
+            hasher.update(&[*npointers as u8]);
 
             // Inode pointer:
             //
