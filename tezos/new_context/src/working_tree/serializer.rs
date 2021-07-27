@@ -1,10 +1,7 @@
 // Copyright (c) SimpleStaking, Viable Systems and Tezedge Contributors
 // SPDX-License-Identifier: MIT
 
-use std::{
-    array::TryFromSliceError, convert::TryInto, io::Write, num::TryFromIntError, str::Utf8Error,
-    string::FromUtf8Error,
-};
+use std::{array::TryFromSliceError, convert::TryInto, io::Write, num::TryFromIntError, str::Utf8Error, string::FromUtf8Error, sync::Arc};
 
 use modular_bitfield::prelude::*;
 use static_assertions::assert_eq_size;
@@ -15,15 +12,13 @@ use crate::{
     working_tree::{Commit, NodeKind},
 };
 
-use super::{
-    storage::{Blob, NodeIdError, Storage, StorageIdError},
-    Entry, Node,
-};
+use super::{Entry, Node, storage::{Blob, InodeId, NodeId, NodeIdError, Storage, StorageIdError}, string_interner::StringId};
 
 const ID_TREE: u8 = 0;
 const ID_BLOB: u8 = 1;
 const ID_COMMIT: u8 = 2;
-const ID_INODE: u8 = 3;
+const ID_INODE_TREE: u8 = 3;
+const ID_INODE_VALUES: u8 = 4;
 
 const COMPACT_HASH_ID_BIT: u32 = 1 << 23;
 
@@ -36,6 +31,7 @@ pub enum SerializationError {
     TryFromIntError,
     StorageIdError { error: StorageIdError },
     HashIdTooBig,
+    MissingHashId,
 }
 
 impl From<std::io::Error> for SerializationError {
@@ -76,6 +72,94 @@ pub struct KeyNodeDescriptor {
 // Must fit in 1 byte
 assert_eq_size!(KeyNodeDescriptor, u8);
 
+fn serialize_tree(
+    tree: &[(StringId, NodeId)],
+    output: &mut Vec<u8>,
+    storage: &Storage,
+    stats: &mut SerializeStats,
+) -> Result<(), SerializationError> {
+    let mut keys_length: usize = 0;
+    let mut hash_ids_length: usize = 0;
+    let mut highest_hash_id: u32 = 0;
+    let mut nblobs_inlined: usize = 0;
+    let mut blobs_length: usize = 0;
+
+    for (key_id, node_id) in tree {
+        let key = storage.get_str(*key_id)?;
+
+        let node = storage.get_node(*node_id)?;
+
+        let hash_id: u32 = node.hash_id().map(|h| h.as_u32()).unwrap_or(0);
+        let kind = node.node_kind();
+
+        let blob_inline = get_inline_blob(storage, &node);
+        let blob_inline_length = blob_inline.as_ref().map(|b| b.len()).unwrap_or(0);
+
+        match key.len() {
+            len if len != 0 && len < 16 => {
+                let byte: [u8; 1] = KeyNodeDescriptor::new()
+                    .with_kind(kind)
+                    .with_key_inline_length(len as u8)
+                    .with_blob_inline_length(blob_inline_length as u8)
+                    .into_bytes();
+                output.write_all(&byte[..])?;
+                output.write_all(key.as_bytes())?;
+                keys_length += len;
+            }
+            len => {
+                let byte: [u8; 1] = KeyNodeDescriptor::new()
+                    .with_kind(kind)
+                    .with_key_inline_length(0)
+                    .with_blob_inline_length(blob_inline_length as u8)
+                    .into_bytes();
+                output.write_all(&byte[..])?;
+
+                let key_length: u16 = len.try_into()?;
+                output.write_all(&key_length.to_ne_bytes())?;
+                output.write_all(key.as_bytes())?;
+                keys_length += 2 + key.len();
+            }
+        }
+
+        if let Some(blob_inline) = blob_inline {
+            nblobs_inlined += 1;
+            blobs_length += blob_inline.len();
+
+            output.write_all(&blob_inline)?;
+        } else if hash_id & 0x7FFFFF == hash_id {
+            // The HashId fits in 23 bits
+            hash_ids_length += 3;
+            highest_hash_id = highest_hash_id.max(hash_id);
+
+            // Set `COMPACT_HASH_ID_BIT` so the deserializer knows the `HashId` is in 3 bytes
+            let hash_id: u32 = hash_id | COMPACT_HASH_ID_BIT;
+            let hash_id: [u8; 4] = hash_id.to_be_bytes();
+
+            output.write_all(&hash_id[1..])?;
+        } else if hash_id & 0x7FFFFFFF == hash_id {
+            // HashId fits in 31 bits
+            hash_ids_length += 4;
+            highest_hash_id = highest_hash_id.max(hash_id);
+
+            output.write_all(&hash_id.to_be_bytes())?;
+        } else {
+            // The HashId must not be 32 bits because we use the
+            // MSB to determine if the HashId is compact or not
+            return Err(SerializationError::HashIdTooBig);
+        }
+    }
+
+    stats.add_tree(
+        hash_ids_length,
+        keys_length,
+        highest_hash_id,
+        nblobs_inlined,
+        blobs_length,
+    );
+
+    Ok(())
+}
+
 pub fn serialize_entry(
     entry: &Entry,
     output: &mut Vec<u8>,
@@ -89,91 +173,93 @@ pub fn serialize_entry(
             output.write_all(&[ID_TREE])?;
             let tree = storage.get_tree(*tree)?;
 
-            let mut keys_length: usize = 0;
-            let mut hash_ids_length: usize = 0;
-            let mut highest_hash_id: u32 = 0;
-            let mut nblobs_inlined: usize = 0;
-            let mut blobs_length: usize = 0;
+            serialize_tree(tree, output, storage, stats)?;
 
-            for (key_id, node_id) in tree {
-                let key = storage.get_str(*key_id)?;
+            // let mut keys_length: usize = 0;
+            // let mut hash_ids_length: usize = 0;
+            // let mut highest_hash_id: u32 = 0;
+            // let mut nblobs_inlined: usize = 0;
+            // let mut blobs_length: usize = 0;
 
-                let node = storage.get_node(*node_id)?;
+            // for (key_id, node_id) in tree {
+            //     let key = storage.get_str(*key_id)?;
 
-                let hash_id: u32 = node.hash_id().map(|h| h.as_u32()).unwrap_or(0);
-                let kind = node.node_kind();
+            //     let node = storage.get_node(*node_id)?;
 
-                let blob_inline = get_inline_blob(storage, &node);
-                let blob_inline_length = blob_inline.as_ref().map(|b| b.len()).unwrap_or(0);
+            //     let hash_id: u32 = node.hash_id().map(|h| h.as_u32()).unwrap_or(0);
+            //     let kind = node.node_kind();
 
-                match key.len() {
-                    len if len != 0 && len < 16 => {
-                        let byte: [u8; 1] = KeyNodeDescriptor::new()
-                            .with_kind(kind)
-                            .with_key_inline_length(len as u8)
-                            .with_blob_inline_length(blob_inline_length as u8)
-                            .into_bytes();
-                        output.write_all(&byte[..])?;
-                        output.write_all(key.as_bytes())?;
-                        keys_length += len;
-                    }
-                    len => {
-                        let byte: [u8; 1] = KeyNodeDescriptor::new()
-                            .with_kind(kind)
-                            .with_key_inline_length(0)
-                            .with_blob_inline_length(blob_inline_length as u8)
-                            .into_bytes();
-                        output.write_all(&byte[..])?;
+            //     let blob_inline = get_inline_blob(storage, &node);
+            //     let blob_inline_length = blob_inline.as_ref().map(|b| b.len()).unwrap_or(0);
 
-                        let key_length: u16 = len.try_into()?;
-                        output.write_all(&key_length.to_ne_bytes())?;
-                        output.write_all(key.as_bytes())?;
-                        keys_length += 2 + key.len();
-                    }
-                }
+            //     match key.len() {
+            //         len if len != 0 && len < 16 => {
+            //             let byte: [u8; 1] = KeyNodeDescriptor::new()
+            //                 .with_kind(kind)
+            //                 .with_key_inline_length(len as u8)
+            //                 .with_blob_inline_length(blob_inline_length as u8)
+            //                 .into_bytes();
+            //             output.write_all(&byte[..])?;
+            //             output.write_all(key.as_bytes())?;
+            //             keys_length += len;
+            //         }
+            //         len => {
+            //             let byte: [u8; 1] = KeyNodeDescriptor::new()
+            //                 .with_kind(kind)
+            //                 .with_key_inline_length(0)
+            //                 .with_blob_inline_length(blob_inline_length as u8)
+            //                 .into_bytes();
+            //             output.write_all(&byte[..])?;
 
-                if let Some(blob_inline) = blob_inline {
-                    nblobs_inlined += 1;
-                    blobs_length += blob_inline.len();
+            //             let key_length: u16 = len.try_into()?;
+            //             output.write_all(&key_length.to_ne_bytes())?;
+            //             output.write_all(key.as_bytes())?;
+            //             keys_length += 2 + key.len();
+            //         }
+            //     }
 
-                    output.write_all(&blob_inline)?;
-                } else if hash_id & 0x7FFFFF == hash_id {
-                    // The HashId fits in 23 bits
-                    hash_ids_length += 3;
-                    highest_hash_id = highest_hash_id.max(hash_id);
+            //     if let Some(blob_inline) = blob_inline {
+            //         nblobs_inlined += 1;
+            //         blobs_length += blob_inline.len();
 
-                    // Set `COMPACT_HASH_ID_BIT` so the deserializer knows the `HashId` is in 3 bytes
-                    let hash_id: u32 = hash_id | COMPACT_HASH_ID_BIT;
-                    let hash_id: [u8; 4] = hash_id.to_be_bytes();
+            //         output.write_all(&blob_inline)?;
+            //     } else if hash_id & 0x7FFFFF == hash_id {
+            //         // The HashId fits in 23 bits
+            //         hash_ids_length += 3;
+            //         highest_hash_id = highest_hash_id.max(hash_id);
 
-                    output.write_all(&hash_id[1..])?;
-                } else if hash_id & 0x7FFFFFFF == hash_id {
-                    // HashId fits in 31 bits
-                    hash_ids_length += 4;
-                    highest_hash_id = highest_hash_id.max(hash_id);
+            //         // Set `COMPACT_HASH_ID_BIT` so the deserializer knows the `HashId` is in 3 bytes
+            //         let hash_id: u32 = hash_id | COMPACT_HASH_ID_BIT;
+            //         let hash_id: [u8; 4] = hash_id.to_be_bytes();
 
-                    output.write_all(&hash_id.to_be_bytes())?;
-                } else {
-                    // The HashId must not be 32 bits because we use the
-                    // MSB to determine if the HashId is compact or not
-                    return Err(SerializationError::HashIdTooBig);
-                }
-            }
+            //         output.write_all(&hash_id[1..])?;
+            //     } else if hash_id & 0x7FFFFFFF == hash_id {
+            //         // HashId fits in 31 bits
+            //         hash_ids_length += 4;
+            //         highest_hash_id = highest_hash_id.max(hash_id);
 
-            stats.add_tree(
-                hash_ids_length,
-                keys_length,
-                highest_hash_id,
-                nblobs_inlined,
-                blobs_length,
-            );
+            //         output.write_all(&hash_id.to_be_bytes())?;
+            //     } else {
+            //         // The HashId must not be 32 bits because we use the
+            //         // MSB to determine if the HashId is compact or not
+            //         return Err(SerializationError::HashIdTooBig);
+            //     }
+            // }
+
+            // stats.add_tree(
+            //     hash_ids_length,
+            //     keys_length,
+            //     highest_hash_id,
+            //     nblobs_inlined,
+            //     blobs_length,
+            // );
         }
         Entry::Tree(tree) => {
             assert!(tree.is_inode());
 
             use crate::working_tree::storage::Inode;
 
-            let inode = storage.get_inode(tree.get_inode_id().unwrap()).unwrap();
+            let inode = storage.get_inode(tree.get_inode_id().unwrap())?;
 
             let (depth, nchildren, npointers, pointers) = match inode {
                 Inode::Tree {
@@ -185,7 +271,7 @@ pub fn serialize_entry(
                 _ => unreachable!("The root of an Inode is always a Inode::Tree"),
             };
 
-            output.write_all(&[ID_INODE])?;
+            output.write_all(&[ID_INODE_TREE])?;
             output.write_all(&depth.to_ne_bytes())?;
             output.write_all(&nchildren.to_ne_bytes())?;
             output.write_all(&npointers.to_ne_bytes())?;
@@ -230,6 +316,66 @@ pub fn serialize_entry(
     }
 
     stats.total_bytes += output.len();
+
+    Ok(())
+}
+
+fn serialize_inode(
+    inode_id: InodeId,
+    output: &mut Vec<u8>,
+    hash_id: HashId,
+    storage: &Storage,
+    stats: &mut SerializeStats,
+    batch: &mut Vec<(HashId, Arc<[u8]>)>,
+) -> Result<(), SerializationError> {
+    use crate::working_tree::storage::Inode;
+
+    output.clear();
+    let inode = storage.get_inode(inode_id).unwrap();
+
+    match inode {
+        Inode::Tree {
+            depth,
+            nchildren,
+            npointers,
+            pointers,
+        } => {
+            output.write_all(&[ID_INODE_TREE])?;
+            output.write_all(&depth.to_ne_bytes())?;
+            output.write_all(&nchildren.to_ne_bytes())?;
+            output.write_all(&npointers.to_ne_bytes())?;
+
+            for (index, pointer) in pointers.iter().enumerate() {
+                if let Some(pointer) = pointer {
+                    let index: u8 = index as u8;
+                    let hash_id = pointer.hash_id.get();
+                    let hash_id = hash_id.map(|h| h.as_u32()).unwrap_or(0);
+
+                    output.write_all(&index.to_ne_bytes())?;
+                    output.write_all(&hash_id.to_ne_bytes())?;
+                };
+            }
+
+            batch.push((hash_id, Arc::from(output.as_slice())));
+
+            for pointer in pointers.iter().filter_map(|p| p.as_ref()) {
+                let hash_id = pointer.hash_id.get().ok_or(SerializationError::MissingHashId)?;
+                let inode_id = pointer.inode.get();
+
+                serialize_inode(inode_id, output, hash_id, storage, stats, batch)?;
+            }
+        },
+        Inode::Empty => {
+            panic!()
+        }
+        Inode::Value(tree_id) => {
+            output.write_all(&[ID_INODE_VALUES])?;
+            let tree = storage.get_tree(*tree_id)?;
+            serialize_tree(tree, output, storage, stats)?;
+
+            batch.push((hash_id, Arc::from(output.as_slice())));
+        }
+    };
 
     Ok(())
 }
@@ -414,6 +560,45 @@ pub fn deserialize(data: &[u8], storage: &mut Storage) -> Result<Entry, Deserial
                 author: String::from_utf8(author)?,
                 message: String::from_utf8(message)?,
             })))
+        }
+        ID_INODE_TREE => {
+            // output.write_all(&[ID_INODE_TREE])?;
+            // output.write_all(&depth.to_ne_bytes())?;
+            // output.write_all(&nchildren.to_ne_bytes())?;
+            // output.write_all(&npointers.to_ne_bytes())?;
+
+            // for (index, pointer) in pointers.iter().enumerate() {
+            //     if let Some(pointer) = pointer {
+            //         let index: u8 = index as u8;
+            //         let hash_id = pointer.hash_id.get();
+            //         let hash_id = hash_id.map(|h| h.as_u32()).unwrap_or(0);
+            //         output.write_all(&index.to_ne_bytes())?;
+            //         output.write_all(&hash_id.to_ne_bytes())?;
+            //     };
+            // }
+
+            let depth = data.get(pos..pos + 4).ok_or(UnexpectedEOF)?;
+            let depth = u32::from_ne_bytes(depth.try_into()?);
+
+            let nchildren = data.get(pos + 4..pos + 8).ok_or(UnexpectedEOF)?;
+            let nchildren = u32::from_ne_bytes(nchildren.try_into()?);
+
+            let npointers = data.get(pos + 8..pos + 8 + 1).ok_or(UnexpectedEOF)?;
+            let npointers = u8::from_ne_bytes(npointers.try_into()?);
+
+            pos += 9;
+
+            let data_length = data.len();
+            while pos < data_length {
+                let index = data.get(pos..pos + 1).ok_or(UnexpectedEOF)?;
+                let index = u8::from_ne_bytes(index.try_into()?);
+
+                let hash_id = data.get(pos + 1..pos + 1 + 4).ok_or(UnexpectedEOF)?;
+                let hash_id = u32::from_ne_bytes(hash_id.try_into()?);
+
+            }
+
+            todo!()
         }
         _ => Err(UnknownID),
     }
