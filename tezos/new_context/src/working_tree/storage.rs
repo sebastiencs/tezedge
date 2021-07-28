@@ -1,14 +1,7 @@
 // Copyright (c) SimpleStaking, Viable Systems and Tezedge Contributors
 // SPDX-License-Identifier: MIT
 
-use std::{
-    cell::Cell,
-    cmp::Ordering,
-    convert::{TryFrom, TryInto},
-    mem::size_of,
-    num::NonZeroU32,
-    ops::Range,
-};
+use std::{cell::Cell, cmp::Ordering, convert::{TryFrom, TryInto}, mem::size_of, ops::Range};
 
 use static_assertions::assert_eq_size;
 use tezos_timing::StorageMemoryUsage;
@@ -163,6 +156,14 @@ impl From<TreeStorageId> for u64 {
 impl From<u64> for TreeStorageId {
     fn from(entry_id: u64) -> Self {
         Self { bits: entry_id }
+        // Self::from_bytes(entry_id.to_ne_bytes())
+    }
+}
+
+impl From<InodeId> for TreeStorageId {
+    fn from(inode_id: InodeId) -> Self {
+        Self::try_new_inode(inode_id.0 as usize).unwrap()
+
         // Self::from_bytes(entry_id.to_ne_bytes())
     }
 }
@@ -334,6 +335,15 @@ pub struct InodeId(u32);
 pub struct PointerToInode {
     pub hash_id: Cell<Option<HashId>>,
     pub inode: Cell<InodeId>,
+}
+
+impl PointerToInode {
+    pub fn new(hash_id: Option<HashId>, inode_id: InodeId) -> Self {
+        Self {
+            hash_id: Cell::new(hash_id),
+            inode: Cell::new(inode_id),
+        }
+    }
 }
 
 assert_eq_size!([u8; 12], Option<PointerToInode>);
@@ -588,7 +598,7 @@ impl Storage {
         result
     }
 
-    fn add_inode(&mut self, inode: Inode) -> Result<InodeId, StorageIdError> {
+    pub(super) fn add_inode(&mut self, inode: Inode) -> Result<InodeId, StorageIdError> {
         let current = self.inodes.len();
         self.inodes.push(inode);
 
@@ -745,12 +755,11 @@ impl Storage {
             Inode::Tree {
                 depth,
                 nchildren,
-                npointers,
+                mut npointers,
                 pointers,
             } => {
                 let mut pointers = pointers.clone();
                 let nchildren = *nchildren;
-                let mut npointers = *npointers;
                 let depth = *depth;
 
                 let index_at_depth = index_of_key(depth, key) as usize;
@@ -779,7 +788,11 @@ impl Storage {
         }
     }
 
-    fn iter_inodes_recursive<Fun>(&self, inode: &Inode, fun: &mut Fun) -> Result<(), MerkleError>
+    fn iter_inodes_recursive<Fun>(
+        &self,
+        inode: &Inode,
+        fun: &mut Fun
+    ) -> Result<(), MerkleError>
     where
         Fun: FnMut(&(StringId, NodeId)) -> Result<(), MerkleError>,
     {

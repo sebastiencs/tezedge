@@ -1,16 +1,13 @@
 // Copyright (c) SimpleStaking, Viable Systems and Tezedge Contributors
 // SPDX-License-Identifier: MIT
 
-use std::{array::TryFromSliceError, convert::TryInto, io::Write, num::TryFromIntError, str::Utf8Error, string::FromUtf8Error, sync::Arc};
+use std::{array::TryFromSliceError, cell::Cell, convert::TryInto, io::Write, num::TryFromIntError, str::Utf8Error, string::FromUtf8Error, sync::Arc};
 
 use modular_bitfield::prelude::*;
 use static_assertions::assert_eq_size;
 use tezos_timing::SerializeStats;
 
-use crate::{
-    kv_store::HashId,
-    working_tree::{Commit, NodeKind},
-};
+use crate::{ContextKeyValueStore, kv_store::HashId, working_tree::{Commit, NodeKind, storage::{Inode, PointerToInode, TreeStorageId}}};
 
 use super::{Entry, Node, storage::{Blob, InodeId, NodeId, NodeIdError, Storage, StorageIdError}, string_interner::StringId};
 
@@ -360,8 +357,8 @@ fn serialize_inode(
 
             for pointer in pointers.iter().filter_map(|p| p.as_ref()) {
                 let hash_id = pointer.hash_id.get().ok_or(SerializationError::MissingHashId)?;
-                let inode_id = pointer.inode.get();
 
+                let inode_id = pointer.inode.get();
                 serialize_inode(inode_id, output, hash_id, storage, stats, batch)?;
             }
         },
@@ -423,9 +420,106 @@ impl From<StorageIdError> for DeserializationError {
     }
 }
 
+fn deserialize_tree(data: &[u8], storage: &mut Storage) -> Result<TreeStorageId, DeserializationError> {
+    use DeserializationError as Error;
+    use DeserializationError::*;
+
+    let mut pos = 1;
+    let data_length = data.len();
+
+    let tree_id =
+        storage.with_new_tree::<_, Result<_, Error>>(|storage, new_tree| {
+            while pos < data_length {
+                let descriptor = data.get(pos..pos + 1).ok_or(UnexpectedEOF)?;
+                let descriptor = KeyNodeDescriptor::from_bytes([descriptor[0]; 1]);
+
+                pos += 1;
+
+                let key_id = match descriptor.key_inline_length() as usize {
+                    len if len > 0 => {
+                        // The key is in the next `len` bytes
+                        let key_bytes = data.get(pos..pos + len).ok_or(UnexpectedEOF)?;
+                        let key_str = std::str::from_utf8(key_bytes)?;
+                        pos += len;
+                        storage.get_string_id(key_str)
+                    }
+                    _ => {
+                        // The key length is in 2 bytes, followed by the key itself
+                        let key_length = data.get(pos..pos + 2).ok_or(UnexpectedEOF)?;
+                        let key_length = u16::from_ne_bytes(key_length.try_into()?);
+                        let key_length = key_length as usize;
+
+                        let key_bytes = data
+                            .get(pos + 2..pos + 2 + key_length)
+                            .ok_or(UnexpectedEOF)?;
+                        let key_str = std::str::from_utf8(key_bytes)?;
+                        pos += 2 + key_length;
+                        storage.get_string_id(key_str)
+                    }
+                };
+
+                let kind = descriptor.kind();
+                let blob_inline_length = descriptor.blob_inline_length() as usize;
+
+                let node = if blob_inline_length > 0 {
+                    // The blob is inlined
+
+                    let blob = data
+                        .get(pos..pos + blob_inline_length)
+                        .ok_or(UnexpectedEOF)?;
+                    let blob_id = storage.add_blob_by_ref(blob)?;
+
+                    pos += blob_inline_length;
+
+                    Node::new_commited(kind, None, Some(Entry::Blob(blob_id)))
+                } else {
+                    let byte_hash_id = data.get(pos).copied().ok_or(UnexpectedEOF)?;
+
+                    if byte_hash_id & 1 << 7 != 0 {
+                        // The HashId is in 3 bytes
+                        let hash_id = data.get(pos..pos + 3).ok_or(UnexpectedEOF)?;
+
+                        let hash_id: u32 = (hash_id[0] as u32) << 16
+                            | (hash_id[1] as u32) << 8
+                            | hash_id[2] as u32;
+
+                        // Clear `COMPACT_HASH_ID_BIT`
+                        let hash_id = hash_id & (COMPACT_HASH_ID_BIT - 1);
+                        let hash_id = HashId::new(hash_id).ok_or(MissingHash)?;
+
+                        pos += 3;
+
+                        Node::new_commited(kind, Some(hash_id), None)
+                    } else {
+                        // The HashId is in 4 bytes
+                        let hash_id = data.get(pos..pos + 4).ok_or(UnexpectedEOF)?;
+                        let hash_id = u32::from_be_bytes(hash_id.try_into()?);
+                        let hash_id = HashId::new(hash_id).ok_or(MissingHash)?;
+
+                        pos += 4;
+
+                        Node::new_commited(kind, Some(hash_id), None)
+                    }
+                };
+
+                let node_id = storage.add_node(node)?;
+
+                new_tree.push((key_id, node_id));
+            }
+
+            Ok(storage.add_tree(new_tree))
+        })??;
+
+    Ok(tree_id)
+}
+
 /// Extract values from `data` to store them in `storage`.
 /// Return an `Entry`, which can be ids (refering to data inside `storage`) or a `Commit`
-pub fn deserialize(data: &[u8], storage: &mut Storage) -> Result<Entry, DeserializationError> {
+pub fn deserialize(
+    data: &[u8],
+    storage: &mut Storage,
+    store: &ContextKeyValueStore
+) -> Result<Entry, DeserializationError> {
     let mut pos = 1;
 
     use DeserializationError as Error;
@@ -577,28 +671,119 @@ pub fn deserialize(data: &[u8], storage: &mut Storage) -> Result<Entry, Deserial
             //     };
             // }
 
-            let depth = data.get(pos..pos + 4).ok_or(UnexpectedEOF)?;
-            let depth = u32::from_ne_bytes(depth.try_into()?);
+            let inode = deserialize_inode_tree(&data[1..], storage, store)?;
+            let inode_id = storage.add_inode(inode)?;
 
-            let nchildren = data.get(pos + 4..pos + 8).ok_or(UnexpectedEOF)?;
-            let nchildren = u32::from_ne_bytes(nchildren.try_into()?);
+            Ok(Entry::Tree(inode_id.into()))
 
-            let npointers = data.get(pos + 8..pos + 8 + 1).ok_or(UnexpectedEOF)?;
-            let npointers = u8::from_ne_bytes(npointers.try_into()?);
+            //TreeStorageId::
 
-            pos += 9;
+            // let depth = data.get(pos..pos + 4).ok_or(UnexpectedEOF)?;
+            // let depth = u32::from_ne_bytes(depth.try_into()?);
 
-            let data_length = data.len();
-            while pos < data_length {
-                let index = data.get(pos..pos + 1).ok_or(UnexpectedEOF)?;
-                let index = u8::from_ne_bytes(index.try_into()?);
+            // let nchildren = data.get(pos + 4..pos + 8).ok_or(UnexpectedEOF)?;
+            // let nchildren = u32::from_ne_bytes(nchildren.try_into()?);
 
-                let hash_id = data.get(pos + 1..pos + 1 + 4).ok_or(UnexpectedEOF)?;
-                let hash_id = u32::from_ne_bytes(hash_id.try_into()?);
+            // let npointers = data.get(pos + 8..pos + 8 + 1).ok_or(UnexpectedEOF)?;
+            // let npointers = u8::from_ne_bytes(npointers.try_into()?);
 
-            }
+            // pos += 9;
 
-            todo!()
+            // let data_length = data.len();
+
+            // let mut pointers: [Option<PointerToInode>; 32] = Default::default();
+
+            // while pos < data_length {
+            //     let index = data.get(pos..pos + 1).ok_or(UnexpectedEOF)?;
+            //     let index = u8::from_ne_bytes(index.try_into()?);
+
+            //     let hash_id = data.get(pos + 1..pos + 1 + 4).ok_or(UnexpectedEOF)?;
+            //     let hash_id = u32::from_ne_bytes(hash_id.try_into()?);
+            //     let hash_id = HashId::new(hash_id).unwrap();
+
+            //     pointers[index as usize] = Some(PointerToInode::new(Some(hash_id), None));
+            // }
+
+            // let inode = Inode::Tree {
+            //     depth,
+            //     nchildren,
+            //     npointers,
+            //     pointers,
+            // };
+
+            // todo!()
+        }
+        _ => Err(UnknownID),
+    }
+}
+
+fn deserialize_inode_tree(
+    data: &[u8],
+    storage: &mut Storage,
+    store: &ContextKeyValueStore
+) -> Result<Inode, DeserializationError> {
+    use DeserializationError::*;
+
+    let mut pos = 0;
+
+    let depth = data.get(pos..pos + 4).ok_or(UnexpectedEOF)?;
+    let depth = u32::from_ne_bytes(depth.try_into()?);
+
+    let nchildren = data.get(pos + 4..pos + 8).ok_or(UnexpectedEOF)?;
+    let nchildren = u32::from_ne_bytes(nchildren.try_into()?);
+
+    let npointers = data.get(pos + 8..pos + 8 + 1).ok_or(UnexpectedEOF)?;
+    let npointers = u8::from_ne_bytes(npointers.try_into()?);
+
+    pos += 9;
+
+    let data_length = data.len();
+
+    let mut pointers: [Option<PointerToInode>; 32] = Default::default();
+
+    while pos < data_length {
+        let index = data.get(pos..pos + 1).ok_or(UnexpectedEOF)?;
+        let index = u8::from_ne_bytes(index.try_into()?);
+
+        let hash_id = data.get(pos + 1..pos + 1 + 4).ok_or(UnexpectedEOF)?;
+        let hash_id = u32::from_ne_bytes(hash_id.try_into()?);
+        let hash_id = HashId::new(hash_id).unwrap();
+
+        let inode_id = match store.get_value(hash_id) {
+            Ok(data) => deserialize_inode(data.unwrap().as_ref(), storage, store)?,
+            Err(_) => panic!()
+        };
+
+        pointers[index as usize] = Some(PointerToInode::new(Some(hash_id), inode_id));
+    }
+
+    Ok(Inode::Tree {
+        depth,
+        nchildren,
+        npointers,
+        pointers,
+    })
+}
+
+pub fn deserialize_inode(
+    data: &[u8],
+    storage: &mut Storage,
+    store: &ContextKeyValueStore
+) -> Result<InodeId, DeserializationError> {
+    use DeserializationError::*;
+
+    match data.get(0).copied().ok_or(UnexpectedEOF)? {
+        ID_INODE_TREE => {
+            let inode = deserialize_inode_tree(&data[1..], storage, store)?;
+            let inode_id = storage.add_inode(inode)?;
+
+            Ok(inode_id)
+        }
+        ID_INODE_VALUES => {
+            let tree_id = deserialize_tree(&data[1..], storage)?;
+            let inode_id = storage.add_inode(Inode::Value(tree_id))?;
+
+            Ok(inode_id)
         }
         _ => Err(UnknownID),
     }
@@ -697,6 +882,7 @@ mod tests {
     #[test]
     fn test_serialize() {
         let mut storage = Storage::new();
+        let mut repo = InMemory::try_new().unwrap();
         let mut stats = SerializeStats::default();
 
         let tree_id = TreeStorageId::empty();
@@ -725,7 +911,7 @@ mod tests {
         let mut data = Vec::with_capacity(1024);
         serialize_entry(&Entry::Tree(tree_id), &mut data, &storage, &mut stats).unwrap();
 
-        let entry = deserialize(&data, &mut storage).unwrap();
+        let entry = deserialize(&data, &mut storage, &repo).unwrap();
 
         if let Entry::Tree(entry) = entry {
             assert_eq!(
@@ -744,7 +930,7 @@ mod tests {
 
         let mut data = Vec::with_capacity(1024);
         serialize_entry(&Entry::Blob(blob_id), &mut data, &storage, &mut stats).unwrap();
-        let entry = deserialize(&data, &mut storage).unwrap();
+        let entry = deserialize(&data, &mut storage, &repo).unwrap();
         if let Entry::Blob(entry) = entry {
             let blob = storage.get_blob(entry).unwrap();
             assert_eq!(blob.as_ref(), &[1, 2, 3, 4, 5, 6, 7, 8]);
@@ -771,7 +957,7 @@ mod tests {
             &mut stats,
         )
         .unwrap();
-        let entry = deserialize(&data, &mut storage).unwrap();
+        let entry = deserialize(&data, &mut storage, &repo).unwrap();
         if let Entry::Commit(entry) = entry {
             assert_eq!(*entry, commit);
         } else {

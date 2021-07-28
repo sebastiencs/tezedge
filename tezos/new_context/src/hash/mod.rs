@@ -323,6 +323,7 @@ fn hash_long_inode(
             hasher.update(&[*npointers as u8]);
 
             // Inode pointer:
+
             //
             // |    1    |   32   |
             // +---------+--------+
@@ -337,7 +338,8 @@ fn hash_long_inode(
                     let hash_id = match pointer.hash_id.get() {
                         Some(hash_id) => hash_id,
                         None => {
-                            let inode = storage.get_inode(pointer.inode.get()).unwrap();
+                            let inode_id = pointer.inode.get();
+                            let inode = storage.get_inode(inode_id).unwrap();
                             let hash_id = hash_long_inode(inode, store, storage)?;
                             pointer.hash_id.set(Some(hash_id));
                             hash_id

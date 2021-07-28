@@ -1061,7 +1061,7 @@ impl WorkingTree {
             None => Err(MerkleError::EntryNotFound { hash_id }),
             Some(entry_bytes) => {
                 let mut storage = self.index.storage.borrow_mut();
-                deserialize(entry_bytes.as_ref(), &mut storage).map_err(Into::into)
+                deserialize(entry_bytes.as_ref(), &mut storage, store).map_err(Into::into)
             }
         }
     }
