@@ -563,7 +563,13 @@ mod tests {
     use crypto::hash::{ContextHash, HashTrait};
     use tezos_timing::SerializeStats;
 
-    use crate::{kv_store::in_memory::InMemory, working_tree::{Node, NodeKind, Tree, serializer::{deserialize, serialize_entry}}};
+    use crate::{
+        kv_store::in_memory::InMemory,
+        working_tree::{
+            serializer::{deserialize, serialize_entry},
+            Node, NodeKind, Tree,
+        },
+    };
 
     use super::*;
 
@@ -819,7 +825,15 @@ mod tests {
             let computed_hash = repo.get_hash(computed_hash_id).unwrap().unwrap();
             let computed_hash = ContextHash::try_from_bytes(computed_hash).unwrap();
 
-            serialize_entry(&Entry::Tree(tree), computed_hash_id, &mut output, &storage, &mut stats, &mut batch).unwrap();
+            serialize_entry(
+                &Entry::Tree(tree),
+                computed_hash_id,
+                &mut output,
+                &storage,
+                &mut stats,
+                &mut batch,
+            )
+            .unwrap();
             repo.write_batch(batch).unwrap();
 
             let data = repo.get_value(computed_hash_id).unwrap().unwrap();
@@ -827,12 +841,17 @@ mod tests {
 
             match entry {
                 Entry::Tree(new_tree) => {
-                    let new_computed_hash_id = hash_tree(new_tree, &mut repo, &mut storage).unwrap();
+                    if let Some(inode_id) = new_tree.get_inode_id() {
+                        storage.inodes_drop_hash_ids(inode_id);
+                    }
+
+                    let new_computed_hash_id =
+                        hash_tree(new_tree, &mut repo, &mut storage).unwrap();
                     let new_computed_hash = repo.get_hash(new_computed_hash_id).unwrap().unwrap();
                     let new_computed_hash = ContextHash::try_from_bytes(new_computed_hash).unwrap();
                     assert_eq!(new_computed_hash, computed_hash);
                 }
-                _ => panic!()
+                _ => panic!(),
             }
 
             // let inode = storage.get_inode(tree.get_inode_id().unwrap()).unwrap();

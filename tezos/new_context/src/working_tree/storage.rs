@@ -795,6 +795,23 @@ impl Storage {
         }
     }
 
+    /// [test only] Remove hash ids in the inode and it's children
+    ///
+    /// This is used to force recomputing hashes
+    #[cfg(test)]
+    pub fn inodes_drop_hash_ids(&self, inode_id: InodeId) {
+        let inode = self.get_inode(inode_id).unwrap();
+
+        if let Inode::Tree { pointers, .. } = inode {
+            for pointer in pointers.iter().filter_map(|p| p.as_ref()) {
+                pointer.hash_id.set(None);
+
+                let inode_id = pointer.inode.get();
+                self.inodes_drop_hash_ids(inode_id);
+            }
+        };
+    }
+
     fn iter_inodes_recursive_unsorted<Fun>(
         &self,
         inode: &Inode,
