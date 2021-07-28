@@ -561,11 +561,9 @@ mod tests {
     use flate2::read::GzDecoder;
 
     use crypto::hash::{ContextHash, HashTrait};
+    use tezos_timing::SerializeStats;
 
-    use crate::{
-        kv_store::in_memory::InMemory,
-        working_tree::{Node, NodeKind, Tree},
-    };
+    use crate::{kv_store::in_memory::InMemory, working_tree::{Node, NodeKind, Tree, serializer::{deserialize, serialize_entry}}};
 
     use super::*;
 
@@ -778,6 +776,8 @@ mod tests {
 
         let mut repo = InMemory::try_new().expect("failed to create context");
         let mut storage = Storage::new();
+        let mut output = Vec::new();
+        let mut stats = SerializeStats::default();
 
         // NOTE: reading from a stream is very slow with serde, thats why
         // the whole file is being read here before parsing.
@@ -789,6 +789,7 @@ mod tests {
         for test_case in test_cases {
             let bindings_count = test_case.bindings.len();
             let mut tree = Tree::empty();
+            let mut batch = Vec::new();
 
             let mut names = HashSet::new();
 
@@ -814,9 +815,25 @@ mod tests {
             }
 
             let expected_hash = ContextHash::from_base58_check(&test_case.hash).unwrap();
-            let computed_hash = hash_tree(tree, &mut repo, &mut storage).unwrap();
-            let computed_hash = repo.get_hash(computed_hash).unwrap().unwrap();
+            let computed_hash_id = hash_tree(tree, &mut repo, &mut storage).unwrap();
+            let computed_hash = repo.get_hash(computed_hash_id).unwrap().unwrap();
             let computed_hash = ContextHash::try_from_bytes(computed_hash).unwrap();
+
+            serialize_entry(&Entry::Tree(tree), computed_hash_id, &mut output, &storage, &mut stats, &mut batch).unwrap();
+            repo.write_batch(batch).unwrap();
+
+            let data = repo.get_value(computed_hash_id).unwrap().unwrap();
+            let entry = deserialize(data, &mut storage, &repo).unwrap();
+
+            match entry {
+                Entry::Tree(new_tree) => {
+                    let new_computed_hash_id = hash_tree(new_tree, &mut repo, &mut storage).unwrap();
+                    let new_computed_hash = repo.get_hash(new_computed_hash_id).unwrap().unwrap();
+                    let new_computed_hash = ContextHash::try_from_bytes(new_computed_hash).unwrap();
+                    assert_eq!(new_computed_hash, computed_hash);
+                }
+                _ => panic!()
+            }
 
             // let inode = storage.get_inode(tree.get_inode_id().unwrap()).unwrap();
             // // println!("INODE={:#?}", inode);

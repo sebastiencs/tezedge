@@ -400,10 +400,14 @@ impl<'a> SerializingData<'a> {
         entry: &Entry,
         storage: &Storage,
     ) -> Result<(), MerkleError> {
-        serialize_entry(entry, &mut self.serialized, storage, &mut self.stats)?;
-
-        self.batch
-            .push((entry_hash, Arc::from(self.serialized.as_slice())));
+        serialize_entry(
+            entry,
+            entry_hash,
+            &mut self.serialized,
+            storage,
+            &mut self.stats,
+            &mut self.batch,
+        )?;
         Ok(())
     }
 

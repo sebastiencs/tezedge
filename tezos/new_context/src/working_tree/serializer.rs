@@ -173,126 +173,25 @@ fn serialize_tree(
 
 pub fn serialize_entry(
     entry: &Entry,
+    entry_hash_id: HashId,
     output: &mut Vec<u8>,
     storage: &Storage,
     stats: &mut SerializeStats,
+    batch: &mut Vec<(HashId, Arc<[u8]>)>,
 ) -> Result<(), SerializationError> {
     output.clear();
 
     match entry {
-        Entry::Tree(tree) if !tree.is_inode() => {
-            output.write_all(&[ID_TREE])?;
-            let tree = storage.get_tree(*tree)?;
+        Entry::Tree(tree_id) => {
+            if let Some(inode_id) = tree_id.get_inode_id() {
+                serialize_inode(inode_id, output, entry_hash_id, storage, stats, batch)?;
+            } else {
+                output.write_all(&[ID_TREE])?;
+                let tree = storage.get_tree(*tree_id)?;
 
-            serialize_tree(tree, output, storage, stats)?;
+                serialize_tree(tree, output, storage, stats)?;
 
-            // let mut keys_length: usize = 0;
-            // let mut hash_ids_length: usize = 0;
-            // let mut highest_hash_id: u32 = 0;
-            // let mut nblobs_inlined: usize = 0;
-            // let mut blobs_length: usize = 0;
-
-            // for (key_id, node_id) in tree {
-            //     let key = storage.get_str(*key_id)?;
-
-            //     let node = storage.get_node(*node_id)?;
-
-            //     let hash_id: u32 = node.hash_id().map(|h| h.as_u32()).unwrap_or(0);
-            //     let kind = node.node_kind();
-
-            //     let blob_inline = get_inline_blob(storage, &node);
-            //     let blob_inline_length = blob_inline.as_ref().map(|b| b.len()).unwrap_or(0);
-
-            //     match key.len() {
-            //         len if len != 0 && len < 16 => {
-            //             let byte: [u8; 1] = KeyNodeDescriptor::new()
-            //                 .with_kind(kind)
-            //                 .with_key_inline_length(len as u8)
-            //                 .with_blob_inline_length(blob_inline_length as u8)
-            //                 .into_bytes();
-            //             output.write_all(&byte[..])?;
-            //             output.write_all(key.as_bytes())?;
-            //             keys_length += len;
-            //         }
-            //         len => {
-            //             let byte: [u8; 1] = KeyNodeDescriptor::new()
-            //                 .with_kind(kind)
-            //                 .with_key_inline_length(0)
-            //                 .with_blob_inline_length(blob_inline_length as u8)
-            //                 .into_bytes();
-            //             output.write_all(&byte[..])?;
-
-            //             let key_length: u16 = len.try_into()?;
-            //             output.write_all(&key_length.to_ne_bytes())?;
-            //             output.write_all(key.as_bytes())?;
-            //             keys_length += 2 + key.len();
-            //         }
-            //     }
-
-            //     if let Some(blob_inline) = blob_inline {
-            //         nblobs_inlined += 1;
-            //         blobs_length += blob_inline.len();
-
-            //         output.write_all(&blob_inline)?;
-            //     } else if hash_id & 0x7FFFFF == hash_id {
-            //         // The HashId fits in 23 bits
-            //         hash_ids_length += 3;
-            //         highest_hash_id = highest_hash_id.max(hash_id);
-
-            //         // Set `COMPACT_HASH_ID_BIT` so the deserializer knows the `HashId` is in 3 bytes
-            //         let hash_id: u32 = hash_id | COMPACT_HASH_ID_BIT;
-            //         let hash_id: [u8; 4] = hash_id.to_be_bytes();
-
-            //         output.write_all(&hash_id[1..])?;
-            //     } else if hash_id & 0x7FFFFFFF == hash_id {
-            //         // HashId fits in 31 bits
-            //         hash_ids_length += 4;
-            //         highest_hash_id = highest_hash_id.max(hash_id);
-
-            //         output.write_all(&hash_id.to_be_bytes())?;
-            //     } else {
-            //         // The HashId must not be 32 bits because we use the
-            //         // MSB to determine if the HashId is compact or not
-            //         return Err(SerializationError::HashIdTooBig);
-            //     }
-            // }
-
-            // stats.add_tree(
-            //     hash_ids_length,
-            //     keys_length,
-            //     highest_hash_id,
-            //     nblobs_inlined,
-            //     blobs_length,
-            // );
-        }
-        Entry::Tree(tree) => {
-            assert!(tree.is_inode());
-
-            let inode = storage.get_inode(tree.get_inode_id().unwrap())?;
-
-            let (depth, nchildren, npointers, pointers) = match inode {
-                Inode::Tree {
-                    depth,
-                    nchildren,
-                    npointers,
-                    pointers,
-                } => (*depth, *nchildren, *npointers, pointers),
-                _ => unreachable!("The root of an Inode is always a Inode::Tree"),
-            };
-
-            output.write_all(&[ID_INODE_TREE])?;
-            output.write_all(&depth.to_ne_bytes())?;
-            output.write_all(&nchildren.to_ne_bytes())?;
-            output.write_all(&npointers.to_ne_bytes())?;
-
-            for (index, pointer) in pointers.iter().enumerate() {
-                if let Some(pointer) = pointer {
-                    let hash_id = pointer.hash_id.get();
-                    let hash_id = hash_id.map(|h| h.as_u32()).unwrap_or(0);
-
-                    output.write_all(&index.to_ne_bytes())?;
-                    output.write_all(&hash_id.to_ne_bytes())?;
-                };
+                batch.push((entry_hash_id, Arc::from(output.as_slice())));
             }
         }
         Entry::Blob(blob_id) => {
@@ -303,6 +202,8 @@ pub fn serialize_entry(
             output.write_all(blob.as_ref())?;
 
             stats.add_blob(blob.len());
+
+            batch.push((entry_hash_id, Arc::from(output.as_slice())));
         }
         Entry::Commit(commit) => {
             output.write_all(&[ID_COMMIT])?;
@@ -321,6 +222,8 @@ pub fn serialize_entry(
             let message_length: u32 = commit.message.len().try_into()?;
             output.write_all(&message_length.to_ne_bytes())?;
             output.write_all(commit.message.as_bytes())?;
+
+            batch.push((entry_hash_id, Arc::from(output.as_slice())));
         }
     }
 
@@ -741,7 +644,7 @@ pub fn deserialize_inode(
             storage.add_inode(inode).map_err(Into::into)
         }
         ID_INODE_VALUES => {
-            let tree_id = deserialize_tree(&data[1..], storage)?;
+            let tree_id = deserialize_tree(data, storage)?;
             storage.add_inode(Inode::Value(tree_id)).map_err(Into::into)
         }
         _ => Err(UnknownID),
@@ -830,6 +733,8 @@ impl<'a> Iterator for HashIdIterator<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::convert::TryFrom;
+
     use tezos_timing::SerializeStats;
 
     use crate::{
@@ -841,8 +746,10 @@ mod tests {
     #[test]
     fn test_serialize() {
         let mut storage = Storage::new();
-        let mut repo = InMemory::try_new().unwrap();
+        let repo = InMemory::try_new().unwrap();
         let mut stats = SerializeStats::default();
+        let mut batch = Vec::new();
+        let fake_hash_id = HashId::try_from(1).unwrap();
 
         let tree_id = TreeStorageId::empty();
         let tree_id = storage
@@ -868,7 +775,15 @@ mod tests {
             .unwrap();
 
         let mut data = Vec::with_capacity(1024);
-        serialize_entry(&Entry::Tree(tree_id), &mut data, &storage, &mut stats).unwrap();
+        serialize_entry(
+            &Entry::Tree(tree_id),
+            fake_hash_id,
+            &mut data,
+            &storage,
+            &mut stats,
+            &mut batch,
+        )
+        .unwrap();
 
         let entry = deserialize(&data, &mut storage, &repo).unwrap();
 
@@ -888,7 +803,15 @@ mod tests {
         let blob_id = storage.add_blob_by_ref(&[1, 2, 3, 4, 5, 6, 7, 8]).unwrap();
 
         let mut data = Vec::with_capacity(1024);
-        serialize_entry(&Entry::Blob(blob_id), &mut data, &storage, &mut stats).unwrap();
+        serialize_entry(
+            &Entry::Blob(blob_id),
+            fake_hash_id,
+            &mut data,
+            &storage,
+            &mut stats,
+            &mut batch,
+        )
+        .unwrap();
         let entry = deserialize(&data, &mut storage, &repo).unwrap();
         if let Entry::Blob(entry) = entry {
             let blob = storage.get_blob(entry).unwrap();
@@ -911,9 +834,11 @@ mod tests {
 
         serialize_entry(
             &Entry::Commit(Box::new(commit.clone())),
+            fake_hash_id,
             &mut data,
             &storage,
             &mut stats,
+            &mut batch,
         )
         .unwrap();
         let entry = deserialize(&data, &mut storage, &repo).unwrap();
