@@ -85,8 +85,12 @@ impl TezedgeIndex {
             None => Ok(None),
             Some(entry_bytes) => {
                 let repository = self.repository.read()?;
-                Ok(Some(deserialize(entry_bytes.as_ref(), storage, &*repository)?))
-            },
+                Ok(Some(deserialize(
+                    entry_bytes.as_ref(),
+                    storage,
+                    &*repository,
+                )?))
+            }
         }
     }
 

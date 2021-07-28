@@ -1,7 +1,13 @@
 // Copyright (c) SimpleStaking, Viable Systems and Tezedge Contributors
 // SPDX-License-Identifier: MIT
 
-use std::{cell::Cell, cmp::Ordering, convert::{TryFrom, TryInto}, mem::size_of, ops::Range};
+use std::{
+    cell::Cell,
+    cmp::Ordering,
+    convert::{TryFrom, TryInto},
+    mem::size_of,
+    ops::Range,
+};
 
 use static_assertions::assert_eq_size;
 use tezos_timing::StorageMemoryUsage;
@@ -349,6 +355,7 @@ impl PointerToInode {
 assert_eq_size!([u8; 12], Option<PointerToInode>);
 
 /// Inode representation used for hashing directories with >256 entries.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 pub enum Inode {
     Empty,
@@ -788,10 +795,10 @@ impl Storage {
         }
     }
 
-    fn iter_inodes_recursive<Fun>(
+    fn iter_inodes_recursive_unsorted<Fun>(
         &self,
         inode: &Inode,
-        fun: &mut Fun
+        fun: &mut Fun,
     ) -> Result<(), MerkleError>
     where
         Fun: FnMut(&(StringId, NodeId)) -> Result<(), MerkleError>,
@@ -801,7 +808,7 @@ impl Storage {
                 for pointer in pointers.iter().filter_map(|p| p.as_ref()) {
                     let inode_id = pointer.inode.get();
                     let inode = self.get_inode(inode_id)?;
-                    self.iter_inodes_recursive(inode, fun)?;
+                    self.iter_inodes_recursive_unsorted(inode, fun)?;
                 }
             }
             Inode::Value(tree_id) => {
@@ -827,7 +834,7 @@ impl Storage {
         if let Some(inode_id) = tree_id.get_inode_id() {
             let inode = self.inodes.get(inode_id.0 as usize).unwrap();
 
-            self.iter_inodes_recursive(inode, &mut fun)?;
+            self.iter_inodes_recursive_unsorted(inode, &mut fun)?;
         } else {
             let tree = self.get_tree(tree_id)?;
             for elem in tree {

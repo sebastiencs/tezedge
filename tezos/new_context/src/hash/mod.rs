@@ -348,7 +348,7 @@ fn hash_long_inode(
 
                     let hash = store
                         .get_hash(hash_id)?
-                        .ok_or_else(|| HashingError::HashIdNotFound { hash_id })?;
+                        .ok_or(HashingError::HashIdNotFound { hash_id })?;
 
                     hasher.update(hash.as_ref());
                 };
