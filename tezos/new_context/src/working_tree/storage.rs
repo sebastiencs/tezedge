@@ -334,7 +334,7 @@ impl TryFrom<usize> for NodeId {
     }
 }
 
-#[derive(Clone, Debug, Copy)]
+#[derive(Clone, Debug, Copy, PartialEq, Eq)]
 pub struct InodeId(u32);
 
 #[derive(Clone, Debug)]
@@ -435,6 +435,9 @@ impl Default for Storage {
         Self::new()
     }
 }
+
+// Whether or not a non-existing key was added to the inode
+type IsNewKey = bool;
 
 impl Storage {
     pub fn new() -> Self {
@@ -738,26 +741,36 @@ impl Storage {
         key: &str,
         key_id: StringId,
         node: Node,
-    ) -> Result<InodeId, StorageIdError> {
+    ) -> Result<(InodeId, IsNewKey), StorageIdError> {
         let inode = self.get_inode(inode_id)?;
 
         match inode {
             Inode::Empty => {
                 let tree_id = self.insert_tree_single_node(key_id, node)?;
-                self.create_inode(depth, tree_id)
+                let inode_id = self.create_inode(depth, tree_id)?;
+
+                Ok((inode_id, true))
             }
             Inode::Value(tree_id) => {
                 let tree_id = *tree_id;
                 let node_id = self.add_node(node)?;
 
-                // Copy the existing values in `Self::temp_tree` to create an inode
+                // Copy the existing values into `Self::temp_tree` to create an inode
                 let range = self.with_temp_tree_range(|this| {
                     this.copy_tree_in_temp_tree(tree_id)?;
-                    this.temp_tree.push((key_id, node_id));
+
+                    match this.find_in_tree(&this.temp_tree, key)? {
+                        Ok(found) => this.temp_tree[found] = (key_id, node_id),
+                        Err(index) => this.temp_tree.insert(index, (key_id, node_id)),
+                    }
+
                     Ok(())
                 })?;
 
-                self.create_inode(depth, range)
+                let new_inode_id = self.create_inode(depth, range)?;
+                let is_new_key = self.inode_len(new_inode_id) != tree_id.len();
+
+                Ok((new_inode_id, is_new_key))
             }
             Inode::Tree {
                 depth,
@@ -771,13 +784,15 @@ impl Storage {
 
                 let index_at_depth = index_of_key(depth, key) as usize;
 
-                let inode_id = if let Some(pointer) = &pointers[index_at_depth] {
+                let (inode_id, is_new_key) = if let Some(pointer) = &pointers[index_at_depth] {
                     let inode_id = pointer.inode.get();
                     self.insert_inode(depth + 1, inode_id, key, key_id, node)?
                 } else {
                     npointers += 1;
+
                     let new_tree_id = self.insert_tree_single_node(key_id, node)?;
-                    self.create_inode(depth, new_tree_id)?
+                    let inode_id = self.create_inode(depth, new_tree_id)?;
+                    (inode_id, true)
                 };
 
                 pointers[index_at_depth] = Some(PointerToInode {
@@ -785,12 +800,14 @@ impl Storage {
                     inode: Cell::new(inode_id),
                 });
 
-                self.add_inode(Inode::Tree {
+                let inode_id = self.add_inode(Inode::Tree {
                     depth,
-                    nchildren: nchildren + 1,
+                    nchildren: if is_new_key { nchildren + 1 } else { nchildren },
                     npointers,
                     pointers,
-                })
+                })?;
+
+                Ok((inode_id, is_new_key))
             }
         }
     }
@@ -861,9 +878,21 @@ impl Storage {
         Ok(())
     }
 
+    fn inode_len(&self, inode_id: InodeId) -> usize {
+        let inode = self.get_inode(inode_id).unwrap();
+        match inode {
+            Inode::Tree {
+                nchildren: children,
+                ..
+            } => *children as usize,
+            Inode::Empty => 0,
+            Inode::Value(tree_id) => tree_id.len(),
+        }
+    }
+
     pub fn tree_len(&self, tree_id: TreeStorageId) -> usize {
         if let Some(inode_id) = tree_id.get_inode_id() {
-            let inode = self.inodes.get(inode_id.0 as usize).unwrap();
+            let inode = self.get_inode(inode_id).unwrap();
 
             match inode {
                 Inode::Tree {
@@ -908,9 +937,9 @@ impl Storage {
 
         // Are we inserting in an Inode ?
         if let Some(inode_id) = tree_id.get_inode_id() {
-            let inode = self.insert_inode(0, inode_id, key_str, key_id, node)?;
+            let (inode_id, _) = self.insert_inode(0, inode_id, key_str, key_id, node)?;
             self.temp_tree.clear();
-            return TreeStorageId::try_new_inode(inode.0 as usize);
+            return Ok(inode_id.into());
         }
 
         let node_id = self.nodes.push(node)?;
@@ -956,7 +985,139 @@ impl Storage {
             let inode_id = self.create_inode(0, range)?;
             self.temp_tree.clear();
 
-            TreeStorageId::try_new_inode(inode_id.0 as usize)
+            Ok(inode_id.into())
+        }
+    }
+
+    fn remove_in_inode_recursive(
+        &mut self,
+        inode_id: InodeId,
+        key: &str,
+    ) -> Result<Option<InodeId>, StorageIdError> {
+        let inode = self.get_inode(inode_id)?;
+
+        match inode {
+            Inode::Empty => {
+                panic!()
+            }
+            Inode::Value(tree_id) => {
+                let tree_id = *tree_id;
+                let new_tree_id = self.remove(tree_id, key)?;
+
+                if new_tree_id.is_empty() {
+                    Ok(None)
+                } else if new_tree_id == tree_id {
+                    // The key was not found in the tree, so it's the same tree.
+                    // Do not create a new inode.
+                    Ok(Some(inode_id))
+                } else {
+                    let inode_id = self.add_inode(Inode::Value(new_tree_id))?;
+                    Ok(Some(inode_id))
+                }
+            }
+            Inode::Tree {
+                depth,
+                nchildren,
+                npointers,
+                pointers,
+            } => {
+                let depth = *depth;
+                let mut npointers = *npointers;
+                let nchildren = *nchildren;
+                let new_nchildren = nchildren - 1;
+
+                let new_inode_id = if new_nchildren <= 32 {
+                    let tree_id = self.inode_to_tree(inode_id)?;
+                    let new_tree_id = self.remove(tree_id, key)?;
+
+                    if tree_id == new_tree_id {
+                        // The key was not found.
+                        return Ok(Some(inode_id));
+                    }
+
+                    self.add_inode(Inode::Value(new_tree_id))?
+                } else {
+                    let index_at_depth = index_of_key(depth, key) as usize;
+
+                    let pointer = match pointers[index_at_depth].as_ref() {
+                        Some(pointer) => pointer,
+                        None => return Ok(Some(inode_id)), // The key was not found
+                    };
+
+                    let ptr_inode_id = pointer.inode.get();
+                    let mut pointers = pointers.clone();
+
+                    let new_ptr_inode_id = self.remove_in_inode_recursive(ptr_inode_id, key)?;
+
+                    if let Some(new_inode_id) = new_ptr_inode_id {
+                        if new_inode_id == ptr_inode_id {
+                            // The key was not found, don't create a new inode
+                            return Ok(Some(inode_id));
+                        }
+
+                        pointers[index_at_depth] = Some(PointerToInode {
+                            hash_id: Cell::new(None),
+                            inode: Cell::new(new_inode_id),
+                        });
+                    } else {
+                        pointers[index_at_depth] = None;
+                        npointers -= 1;
+                    }
+
+                    self.add_inode(Inode::Tree {
+                        depth,
+                        nchildren: new_nchildren,
+                        npointers,
+                        pointers,
+                    })?
+                };
+
+                Ok(Some(new_inode_id))
+            }
+        }
+    }
+
+    fn inode_to_tree(&mut self, inode_id: InodeId) -> Result<TreeStorageId, StorageIdError> {
+        let mut temp_tree = std::mem::take(&mut self.temp_tree);
+        temp_tree.clear();
+
+        let inode = self.get_inode(inode_id)?;
+
+        self.iter_inodes_recursive_unsorted(inode, &mut |value| {
+            temp_tree.push(*value);
+            Ok(())
+        })
+        .unwrap();
+
+        self.temp_tree = temp_tree;
+        let new_tree_id = self.copy_sorted(TempTreeRange {
+            start: 0,
+            end: self.temp_tree.len(),
+        })?;
+
+        Ok(new_tree_id)
+    }
+
+    fn remove_in_inode(
+        &mut self,
+        inode_id: InodeId,
+        key: &str,
+    ) -> Result<TreeStorageId, StorageIdError> {
+        let inode_id = self.remove_in_inode_recursive(inode_id, key)?;
+        let inode_id = inode_id.unwrap();
+
+        let inode = self.get_inode(inode_id)?;
+
+        let nchildren = match inode {
+            Inode::Tree { nchildren, .. } => *nchildren,
+            Inode::Empty => panic!("Empty"),
+            Inode::Value(_) => panic!("Value"),
+        };
+
+        if nchildren > 256 {
+            Ok(inode_id.into())
+        } else {
+            self.inode_to_tree(inode_id)
         }
     }
 
@@ -965,6 +1126,10 @@ impl Storage {
         tree_id: TreeStorageId,
         key: &str,
     ) -> Result<TreeStorageId, StorageIdError> {
+        if let Some(inode_id) = tree_id.get_inode_id() {
+            return self.remove_in_inode(inode_id, key);
+        };
+
         self.with_new_tree(|this, new_tree| {
             let tree = match this.get_tree(tree_id) {
                 Ok(tree) if !tree.is_empty() => tree,

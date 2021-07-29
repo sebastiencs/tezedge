@@ -793,11 +793,14 @@ mod tests {
         let test_cases: Vec<NodeHashTest> = serde_json::from_slice(&bytes).unwrap();
 
         for test_case in test_cases {
+            //        for test_case in test_cases.iter().nth(19) {
             let bindings_count = test_case.bindings.len();
             let mut tree = Tree::empty();
             let mut batch = Vec::new();
 
             let mut names = HashSet::new();
+
+            // println!("AAAAA", );
 
             for binding in test_case.bindings.iter().skip(0) {
                 let node_kind = match binding.kind.as_str() {
@@ -819,6 +822,44 @@ mod tests {
 
                 // println!("LAA LENGTH={:?} IS_INODE={:?}", count, tree.is_inode());
             }
+
+            let hash_id = HashId::new(11111).unwrap();
+
+            for index in 0..10000 {
+                let key = format!("seb{}", index);
+                tree = storage
+                    .insert(
+                        tree,
+                        &key,
+                        Node::new_commited(NodeKind::Leaf, Some(hash_id), None),
+                    )
+                    .unwrap();
+                let a = tree;
+                tree = storage
+                    .insert(
+                        tree,
+                        &key,
+                        Node::new_commited(NodeKind::Leaf, Some(hash_id), None),
+                    )
+                    .unwrap();
+                let b = tree;
+
+                // println!("A={:?} B={:?}", storage.tree_to_vec_unsorted(a).len(), storage.tree_to_vec_unsorted(b).len());
+                assert_eq!(storage.tree_len(a), storage.tree_len(b));
+            }
+
+            for index in 0..10000 {
+                let key = format!("seb{}", index);
+                tree = storage.remove(tree, &key).unwrap();
+                tree = storage.remove(tree, &key).unwrap();
+            }
+
+            // let hash_id = HashId::new(11111).unwrap();
+            // for index in 0..10000 {
+            //     let key = format!("seb{}", index);
+            //     tree = storage.insert(tree, &key, Node::new_commited(NodeKind::Leaf, Some(hash_id), None)).unwrap();
+            //     tree = storage.remove(tree, &key).unwrap();
+            // }
 
             let expected_hash = ContextHash::from_base58_check(&test_case.hash).unwrap();
             let computed_hash_id = hash_tree(tree, &mut repo, &mut storage).unwrap();
