@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: MIT
 
 use std::{
-    array::TryFromSliceError, cell::Cell, convert::TryInto, io::Write, num::TryFromIntError,
-    str::Utf8Error, string::FromUtf8Error, sync::Arc,
+    array::TryFromSliceError, convert::TryInto, io::Write, num::TryFromIntError, str::Utf8Error,
+    string::FromUtf8Error, sync::Arc,
 };
 
 use modular_bitfield::prelude::*;
@@ -137,26 +137,11 @@ fn serialize_tree(
             blobs_length += blob_inline.len();
 
             output.write_all(&blob_inline)?;
-        } else if hash_id & 0x7FFFFF == hash_id {
-            // The HashId fits in 23 bits
-            hash_ids_length += 3;
-            highest_hash_id = highest_hash_id.max(hash_id);
-
-            // Set `COMPACT_HASH_ID_BIT` so the deserializer knows the `HashId` is in 3 bytes
-            let hash_id: u32 = hash_id | COMPACT_HASH_ID_BIT;
-            let hash_id: [u8; 4] = hash_id.to_be_bytes();
-
-            output.write_all(&hash_id[1..])?;
-        } else if hash_id & 0x7FFFFFFF == hash_id {
-            // HashId fits in 31 bits
-            hash_ids_length += 4;
-            highest_hash_id = highest_hash_id.max(hash_id);
-
-            output.write_all(&hash_id.to_be_bytes())?;
         } else {
-            // The HashId must not be 32 bits because we use the
-            // MSB to determine if the HashId is compact or not
-            return Err(SerializationError::HashIdTooBig);
+            let nbytes = serialize_hash_id(hash_id, output)?;
+
+            hash_ids_length += nbytes;
+            highest_hash_id = highest_hash_id.max(hash_id);
         }
     }
 
@@ -207,14 +192,13 @@ pub fn serialize_entry(
         }
         Entry::Commit(commit) => {
             output.write_all(&[ID_COMMIT])?;
-            output.write_all(
-                &commit
-                    .parent_commit_hash
-                    .map(|h| h.as_u32())
-                    .unwrap_or(0)
-                    .to_ne_bytes(),
-            )?;
-            output.write_all(&commit.root_hash.as_u32().to_ne_bytes())?;
+
+            let parent_hash_id = commit.parent_commit_hash.map(|h| h.as_u32()).unwrap_or(0);
+            serialize_hash_id(parent_hash_id, output)?;
+
+            let root_hash_id = commit.root_hash.as_u32();
+            serialize_hash_id(root_hash_id, output)?;
+
             output.write_all(&commit.time.to_ne_bytes())?;
             let author_length: u32 = commit.author.len().try_into()?;
             output.write_all(&author_length.to_ne_bytes())?;
@@ -230,6 +214,28 @@ pub fn serialize_entry(
     stats.total_bytes += output.len();
 
     Ok(())
+}
+
+fn serialize_hash_id(hash_id: u32, output: &mut Vec<u8>) -> Result<usize, SerializationError> {
+    if hash_id & 0x7FFFFF == hash_id {
+        // The HashId fits in 23 bits
+
+        // Set `COMPACT_HASH_ID_BIT` so the deserializer knows the `HashId` is in 3 bytes
+        let hash_id: u32 = hash_id | COMPACT_HASH_ID_BIT;
+        let hash_id: [u8; 4] = hash_id.to_be_bytes();
+
+        output.write_all(&hash_id[1..])?;
+        Ok(3)
+    } else if hash_id & 0x7FFFFFFF == hash_id {
+        // HashId fits in 31 bits
+
+        output.write_all(&hash_id.to_be_bytes())?;
+        Ok(4)
+    } else {
+        // The HashId must not be 32 bits because we use the
+        // MSB to determine if the HashId is compact or not
+        Err(SerializationError::HashIdTooBig)
+    }
 }
 
 fn serialize_inode(
@@ -258,11 +264,12 @@ fn serialize_inode(
             for (index, pointer) in pointers.iter().enumerate() {
                 if let Some(pointer) = pointer {
                     let index: u8 = index as u8;
+
                     let hash_id = pointer.hash_id.get();
                     let hash_id = hash_id.map(|h| h.as_u32()).unwrap_or(0);
 
                     output.write_all(&index.to_ne_bytes())?;
-                    output.write_all(&hash_id.to_ne_bytes())?;
+                    serialize_hash_id(hash_id, output)?;
                 };
             }
 
@@ -336,6 +343,32 @@ impl From<StorageIdError> for DeserializationError {
     }
 }
 
+fn deserialize_hash_id(data: &[u8]) -> Result<(Option<HashId>, usize), DeserializationError> {
+    use DeserializationError::*;
+
+    let byte_hash_id = data.get(0).copied().ok_or(UnexpectedEOF)?;
+
+    if byte_hash_id & 1 << 7 != 0 {
+        // The HashId is in 3 bytes
+        let hash_id = data.get(0..3).ok_or(UnexpectedEOF)?;
+
+        let hash_id: u32 = (hash_id[0] as u32) << 16 | (hash_id[1] as u32) << 8 | hash_id[2] as u32;
+
+        // Clear `COMPACT_HASH_ID_BIT`
+        let hash_id = hash_id & (COMPACT_HASH_ID_BIT - 1);
+        let hash_id = HashId::new(hash_id);
+
+        Ok((hash_id, 3))
+    } else {
+        // The HashId is in 4 bytes
+        let hash_id = data.get(0..4).ok_or(UnexpectedEOF)?;
+        let hash_id = u32::from_be_bytes(hash_id.try_into()?);
+        let hash_id = HashId::new(hash_id);
+
+        Ok((hash_id, 4))
+    }
+}
+
 fn deserialize_tree(
     data: &[u8],
     storage: &mut Storage,
@@ -391,32 +424,12 @@ fn deserialize_tree(
 
                 Node::new_commited(kind, None, Some(Entry::Blob(blob_id)))
             } else {
-                let byte_hash_id = data.get(pos).copied().ok_or(UnexpectedEOF)?;
+                let bytes = data.get(pos..).ok_or(UnexpectedEOF)?;
+                let (hash_id, nbytes) = deserialize_hash_id(bytes)?;
 
-                if byte_hash_id & 1 << 7 != 0 {
-                    // The HashId is in 3 bytes
-                    let hash_id = data.get(pos..pos + 3).ok_or(UnexpectedEOF)?;
+                pos += nbytes;
 
-                    let hash_id: u32 =
-                        (hash_id[0] as u32) << 16 | (hash_id[1] as u32) << 8 | hash_id[2] as u32;
-
-                    // Clear `COMPACT_HASH_ID_BIT`
-                    let hash_id = hash_id & (COMPACT_HASH_ID_BIT - 1);
-                    let hash_id = HashId::new(hash_id).ok_or(MissingHash)?;
-
-                    pos += 3;
-
-                    Node::new_commited(kind, Some(hash_id), None)
-                } else {
-                    // The HashId is in 4 bytes
-                    let hash_id = data.get(pos..pos + 4).ok_or(UnexpectedEOF)?;
-                    let hash_id = u32::from_be_bytes(hash_id.try_into()?);
-                    let hash_id = HashId::new(hash_id).ok_or(MissingHash)?;
-
-                    pos += 4;
-
-                    Node::new_commited(kind, Some(hash_id), None)
-                }
+                Node::new_commited(kind, Some(hash_id.ok_or(MissingHash)?), None)
             };
 
             let node_id = storage.add_node(node)?;
@@ -437,98 +450,13 @@ pub fn deserialize(
     storage: &mut Storage,
     store: &ContextKeyValueStore,
 ) -> Result<Entry, DeserializationError> {
-    let mut pos = 1;
-
-    use DeserializationError as Error;
     use DeserializationError::*;
+
+    let mut pos = 1;
 
     match data.get(0).copied().ok_or(UnexpectedEOF)? {
         ID_TREE => {
-            let data_length = data.len();
-
-            let tree_id =
-                storage.with_new_tree::<_, Result<_, Error>>(|storage, new_tree| {
-                    while pos < data_length {
-                        let descriptor = data.get(pos..pos + 1).ok_or(UnexpectedEOF)?;
-                        let descriptor = KeyNodeDescriptor::from_bytes([descriptor[0]; 1]);
-
-                        pos += 1;
-
-                        let key_id = match descriptor.key_inline_length() as usize {
-                            len if len > 0 => {
-                                // The key is in the next `len` bytes
-                                let key_bytes = data.get(pos..pos + len).ok_or(UnexpectedEOF)?;
-                                let key_str = std::str::from_utf8(key_bytes)?;
-                                pos += len;
-                                storage.get_string_id(key_str)
-                            }
-                            _ => {
-                                // The key length is in 2 bytes, followed by the key itself
-                                let key_length = data.get(pos..pos + 2).ok_or(UnexpectedEOF)?;
-                                let key_length = u16::from_ne_bytes(key_length.try_into()?);
-                                let key_length = key_length as usize;
-
-                                let key_bytes = data
-                                    .get(pos + 2..pos + 2 + key_length)
-                                    .ok_or(UnexpectedEOF)?;
-                                let key_str = std::str::from_utf8(key_bytes)?;
-                                pos += 2 + key_length;
-                                storage.get_string_id(key_str)
-                            }
-                        };
-
-                        let kind = descriptor.kind();
-                        let blob_inline_length = descriptor.blob_inline_length() as usize;
-
-                        let node = if blob_inline_length > 0 {
-                            // The blob is inlined
-
-                            let blob = data
-                                .get(pos..pos + blob_inline_length)
-                                .ok_or(UnexpectedEOF)?;
-                            let blob_id = storage.add_blob_by_ref(blob)?;
-
-                            pos += blob_inline_length;
-
-                            Node::new_commited(kind, None, Some(Entry::Blob(blob_id)))
-                        } else {
-                            let byte_hash_id = data.get(pos).copied().ok_or(UnexpectedEOF)?;
-
-                            if byte_hash_id & 1 << 7 != 0 {
-                                // The HashId is in 3 bytes
-                                let hash_id = data.get(pos..pos + 3).ok_or(UnexpectedEOF)?;
-
-                                let hash_id: u32 = (hash_id[0] as u32) << 16
-                                    | (hash_id[1] as u32) << 8
-                                    | hash_id[2] as u32;
-
-                                // Clear `COMPACT_HASH_ID_BIT`
-                                let hash_id = hash_id & (COMPACT_HASH_ID_BIT - 1);
-                                let hash_id = HashId::new(hash_id).ok_or(MissingHash)?;
-
-                                pos += 3;
-
-                                Node::new_commited(kind, Some(hash_id), None)
-                            } else {
-                                // The HashId is in 4 bytes
-                                let hash_id = data.get(pos..pos + 4).ok_or(UnexpectedEOF)?;
-                                let hash_id = u32::from_be_bytes(hash_id.try_into()?);
-                                let hash_id = HashId::new(hash_id).ok_or(MissingHash)?;
-
-                                pos += 4;
-
-                                Node::new_commited(kind, Some(hash_id), None)
-                            }
-                        };
-
-                        let node_id = storage.add_node(node)?;
-
-                        new_tree.push((key_id, node_id));
-                    }
-
-                    Ok(storage.add_tree(new_tree))
-                })??;
-
+            let tree_id = deserialize_tree(data, storage)?;
             Ok(Entry::Tree(tree_id))
         }
         ID_BLOB => {
@@ -537,24 +465,28 @@ pub fn deserialize(
             Ok(Entry::Blob(blob_id))
         }
         ID_COMMIT => {
-            let parent_commit_hash = data.get(pos..pos + 4).ok_or(UnexpectedEOF)?;
-            let parent_commit_hash = u32::from_ne_bytes(parent_commit_hash.try_into()?);
+            let bytes = data.get(pos..).ok_or(UnexpectedEOF)?;
+            let (parent_commit_hash, nbytes) = deserialize_hash_id(bytes)?;
 
-            let root_hash = data.get(pos + 4..pos + 8).ok_or(UnexpectedEOF)?;
-            let root_hash = u32::from_ne_bytes(root_hash.try_into()?);
+            pos += nbytes;
 
-            let time = data.get(pos + 8..pos + 16).ok_or(UnexpectedEOF)?;
+            let bytes = data.get(pos..).ok_or(UnexpectedEOF)?;
+            let (root_hash, nbytes) = deserialize_hash_id(bytes)?;
+
+            pos += nbytes;
+
+            let time = data.get(pos..pos + 8).ok_or(UnexpectedEOF)?;
             let time = u64::from_ne_bytes(time.try_into()?);
 
-            let author_length = data.get(pos + 16..pos + 20).ok_or(UnexpectedEOF)?;
+            let author_length = data.get(pos + 8..pos + 12).ok_or(UnexpectedEOF)?;
             let author_length = u32::from_ne_bytes(author_length.try_into()?) as usize;
 
             let author = data
-                .get(pos + 20..pos + 20 + author_length)
+                .get(pos + 12..pos + 12 + author_length)
                 .ok_or(UnexpectedEOF)?;
             let author = author.to_vec();
 
-            pos = pos + 20 + author_length;
+            pos = pos + 12 + author_length;
 
             let message_length = data.get(pos..pos + 4).ok_or(UnexpectedEOF)?;
             let message_length = u32::from_ne_bytes(message_length.try_into()?) as usize;
@@ -565,8 +497,8 @@ pub fn deserialize(
             let message = message.to_vec();
 
             Ok(Entry::Commit(Box::new(Commit {
-                parent_commit_hash: HashId::new(parent_commit_hash),
-                root_hash: HashId::new(root_hash).ok_or(MissingRootHash)?,
+                parent_commit_hash: parent_commit_hash,
+                root_hash: root_hash.ok_or(MissingRootHash)?,
                 time,
                 author: String::from_utf8(author)?,
                 message: String::from_utf8(message)?,
@@ -609,18 +541,22 @@ fn deserialize_inode_tree(
         let index = data.get(pos..pos + 1).ok_or(UnexpectedEOF)?;
         let index = u8::from_ne_bytes(index.try_into()?);
 
-        let hash_id = data.get(pos + 1..pos + 1 + 4).ok_or(UnexpectedEOF)?;
-        let hash_id = u32::from_ne_bytes(hash_id.try_into()?);
-        let hash_id = HashId::new(hash_id).unwrap();
+        pos += 1;
 
-        pos += 5;
+        let bytes = data.get(pos..).ok_or(UnexpectedEOF)?;
+        let (hash_id, nbytes) = deserialize_hash_id(bytes)?;
 
-        let inode_id = match store.get_value(hash_id) {
+        pos += nbytes;
+
+        let inode_id = match store.get_value(hash_id.ok_or(MissingHash)?) {
             Ok(data) => deserialize_inode(data.unwrap().as_ref(), storage, store)?,
             Err(_) => panic!(),
         };
 
-        pointers[index as usize] = Some(PointerToInode::new(Some(hash_id), inode_id));
+        pointers[index as usize] = Some(PointerToInode::new(
+            Some(hash_id.ok_or(MissingHash)?),
+            inode_id,
+        ));
     }
 
     Ok(Inode::Tree {
@@ -665,68 +601,72 @@ impl<'a> Iterator for HashIdIterator<'a> {
     type Item = HashId;
 
     fn next(&mut self) -> Option<Self::Item> {
+        let id = self.data.get(0).copied()?;
+
         loop {
             let mut pos = self.pos;
 
             if pos == 0 {
-                let id = self.data.get(0).copied()?;
                 if id == ID_BLOB {
                     // No HashId in Entry::Blob
                     return None;
                 } else if id == ID_COMMIT {
+                    // Deserialize the parent hash to know it's size
+                    let (_, nbytes) = deserialize_hash_id(self.data.get(1..)?).ok()?;
+
                     // Entry::Commit.root_hash
-                    let root_hash = self.data.get(9..9 + 4)?;
-                    let root_hash = u32::from_ne_bytes(root_hash.try_into().ok()?);
+                    let (root_hash, _) = deserialize_hash_id(self.data.get(1 + nbytes..)?).ok()?;
                     self.pos = self.data.len();
 
-                    return HashId::new(root_hash);
+                    return root_hash;
+                } else if id == ID_INODE_TREE {
+                    pos += 10;
+                } else {
+                    pos += 1;
                 }
+            }
+
+            if id == ID_INODE_TREE {
                 pos += 1;
-            }
 
-            let descriptor = self.data.get(pos..pos + 1)?;
-            let descriptor = KeyNodeDescriptor::from_bytes([descriptor[0]; 1]);
+                let bytes = self.data.get(pos..)?;
+                let (hash_id, nbytes) = deserialize_hash_id(bytes).ok()?;
 
-            pos += 1;
+                self.pos = pos + nbytes;
 
-            let offset = match descriptor.key_inline_length() as usize {
-                len if len > 0 => len,
-                _ => {
-                    let key_length = self.data.get(pos..pos + 2)?;
-                    let key_length = u16::from_ne_bytes(key_length.try_into().ok()?);
-                    2 + key_length as usize
-                }
-            };
-
-            pos += offset;
-
-            let blob_inline_length = descriptor.blob_inline_length() as usize;
-
-            if blob_inline_length > 0 {
-                // No HashId when the blob is inlined, go to next entry
-                self.pos = pos + blob_inline_length;
-                continue;
-            }
-
-            let byte_hash_id = self.data.get(pos)?;
-
-            let hash_id = if byte_hash_id & 1 << 7 != 0 {
-                // HashId in 3 bytes
-                let hash_id = self.data.get(pos..pos + 3)?;
-                self.pos = pos + 3;
-
-                let hash_id: u32 =
-                    (hash_id[0] as u32) << 16 | (hash_id[1] as u32) << 8 | hash_id[2] as u32;
-                hash_id & (COMPACT_HASH_ID_BIT - 1)
+                return hash_id;
             } else {
-                // HashId in 4 bytes
-                let hash_id = self.data.get(pos..pos + 4)?;
+                let descriptor = self.data.get(pos..pos + 1)?;
+                let descriptor = KeyNodeDescriptor::from_bytes([descriptor[0]; 1]);
 
-                self.pos = pos + 4;
-                u32::from_be_bytes(hash_id[..].try_into().ok()?)
-            };
+                pos += 1;
 
-            return HashId::new(hash_id);
+                let offset = match descriptor.key_inline_length() as usize {
+                    len if len > 0 => len,
+                    _ => {
+                        let key_length = self.data.get(pos..pos + 2)?;
+                        let key_length = u16::from_ne_bytes(key_length.try_into().ok()?);
+                        2 + key_length as usize
+                    }
+                };
+
+                pos += offset;
+
+                let blob_inline_length = descriptor.blob_inline_length() as usize;
+
+                if blob_inline_length > 0 {
+                    // No HashId when the blob is inlined, go to next entry
+                    self.pos = pos + blob_inline_length;
+                    continue;
+                }
+
+                let bytes = self.data.get(pos..)?;
+                let (hash_id, nbytes) = deserialize_hash_id(bytes).ok()?;
+
+                self.pos = pos + nbytes;
+
+                return hash_id;
+            }
         }
     }
 }
@@ -746,10 +686,12 @@ mod tests {
     #[test]
     fn test_serialize() {
         let mut storage = Storage::new();
-        let repo = InMemory::try_new().unwrap();
+        let mut repo = InMemory::try_new().unwrap();
         let mut stats = SerializeStats::default();
         let mut batch = Vec::new();
         let fake_hash_id = HashId::try_from(1).unwrap();
+
+        // Test Entry::Tree
 
         let tree_id = TreeStorageId::empty();
         let tree_id = storage
@@ -799,6 +741,8 @@ mod tests {
         let iter = iter_hash_ids(&data);
         assert_eq!(iter.map(|h| h.as_u32()).collect::<Vec<_>>(), &[3, 1, 2]);
 
+        // Test Entry::Blob
+
         // Not inlined value
         let blob_id = storage.add_blob_by_ref(&[1, 2, 3, 4, 5, 6, 7, 8]).unwrap();
 
@@ -821,6 +765,8 @@ mod tests {
         }
         let iter = iter_hash_ids(&data);
         assert_eq!(iter.count(), 0);
+
+        // Test Entry::Commit
 
         let mut data = Vec::with_capacity(1024);
 
@@ -850,6 +796,120 @@ mod tests {
 
         let iter = iter_hash_ids(&data);
         assert_eq!(iter.map(|h| h.as_u32()).collect::<Vec<_>>(), &[12345]);
+
+        // Test Inode::Tree
+
+        let mut pointers: [Option<PointerToInode>; 32] = Default::default();
+
+        for index in 0..pointers.len() {
+            let inode_value = Inode::Value(TreeStorageId::empty());
+            let inode_value_id = storage.add_inode(inode_value).unwrap();
+
+            let hash_id = HashId::new((index + 1) as u32).unwrap();
+
+            repo.write_batch(vec![(hash_id, Arc::new([ID_INODE_VALUES]))])
+                .unwrap();
+
+            pointers[index] = Some(PointerToInode::new(Some(hash_id), inode_value_id));
+        }
+
+        let inode = Inode::Tree {
+            depth: 100,
+            nchildren: 200,
+            npointers: 250,
+            pointers,
+        };
+
+        let inode_id = storage.add_inode(inode).unwrap();
+
+        let hash_id = HashId::new(123).unwrap();
+        batch.clear();
+        serialize_inode(
+            inode_id, &mut data, hash_id, &storage, &mut stats, &mut batch,
+        )
+        .unwrap();
+
+        let new_inode_id = deserialize_inode(&batch[0].1, &mut storage, &repo).unwrap();
+        let new_inode = storage.get_inode(new_inode_id).unwrap();
+
+        if let Inode::Tree {
+            depth,
+            nchildren,
+            npointers,
+            pointers,
+        } = new_inode
+        {
+            assert_eq!(*depth, 100);
+            assert_eq!(*nchildren, 200);
+            assert_eq!(*npointers, 250);
+
+            for (index, pointer) in pointers.iter().enumerate() {
+                let pointer = pointer.as_ref().unwrap();
+                let hash_id = pointer.hash_id.get().unwrap();
+                assert_eq!(hash_id.as_u32() as usize, index + 1);
+
+                let inode = storage.get_inode(pointer.inode.get()).unwrap();
+                match inode {
+                    Inode::Value(tree_id) => assert!(tree_id.is_empty()),
+                    _ => panic!(),
+                }
+            }
+        } else {
+            panic!()
+        }
+
+        let iter = iter_hash_ids(&batch[0].1);
+        assert_eq!(
+            iter.map(|h| h.as_u32()).collect::<Vec<_>>(),
+            (1..33).collect::<Vec<_>>()
+        );
+
+        // Test Inode::Value
+
+        let tree_id = TreeStorageId::empty();
+        let tree_id = storage
+            .insert(
+                tree_id,
+                "a",
+                Node::new_commited(NodeKind::Leaf, HashId::new(1), None),
+            )
+            .unwrap();
+        let tree_id = storage
+            .insert(
+                tree_id,
+                "bab",
+                Node::new_commited(NodeKind::Leaf, HashId::new(2), None),
+            )
+            .unwrap();
+        let tree_id = storage
+            .insert(
+                tree_id,
+                "0aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                Node::new_commited(NodeKind::Leaf, HashId::new(3), None),
+            )
+            .unwrap();
+
+        let inode = Inode::Value(tree_id);
+        let inode_id = storage.add_inode(inode).unwrap();
+
+        batch.clear();
+        serialize_inode(
+            inode_id, &mut data, hash_id, &storage, &mut stats, &mut batch,
+        )
+        .unwrap();
+
+        let new_inode_id = deserialize_inode(&batch[0].1, &mut storage, &repo).unwrap();
+        let new_inode = storage.get_inode(new_inode_id).unwrap();
+
+        if let Inode::Value(new_tree_id) = new_inode {
+            assert_eq!(
+                storage.get_owned_tree(tree_id).unwrap(),
+                storage.get_owned_tree(*new_tree_id).unwrap()
+            )
+        }
+
+        let iter = iter_hash_ids(&batch[0].1);
+        assert_eq!(iter.map(|h| h.as_u32()).collect::<Vec<_>>(), &[3, 1, 2]);
     }
 
     #[test]
