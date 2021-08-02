@@ -820,7 +820,7 @@ mod tests {
 
                 tree = storage.insert(tree, binding.name.as_str(), node).unwrap();
 
-                // println!("LAA LENGTH={:?} IS_INODE={:?}", count, tree.is_inode());
+                assert!(storage.get_tree_node_id(tree, binding.name.as_str()).is_some());
             }
 
             let hash_id = HashId::new(11111).unwrap();
