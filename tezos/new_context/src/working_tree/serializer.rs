@@ -285,9 +285,6 @@ fn serialize_inode(
                 serialize_inode(inode_id, output, hash_id, storage, stats, batch)?;
             }
         }
-        Inode::Empty => {
-            panic!()
-        }
         Inode::Value(tree_id) => {
             output.write_all(&[ID_INODE_VALUES])?;
             let tree = storage.get_small_tree(*tree_id)?;

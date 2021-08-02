@@ -358,7 +358,6 @@ assert_eq_size!([u8; 12], Option<PointerToInode>);
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 pub enum Inode {
-    Empty,
     /// Value is a list of (StringId, NodeId)
     Value(TreeStorageId),
     Tree {
@@ -579,7 +578,6 @@ impl Storage {
         let inode = self.get_inode(inode_id).ok()?;
 
         match inode {
-            Inode::Empty => None,
             Inode::Value(tree_id) => self.tree_find_node(*tree_id, key),
             Inode::Tree {
                 depth, pointers, ..
@@ -681,9 +679,7 @@ impl Storage {
     ) -> Result<InodeId, StorageIdError> {
         let tree_range_len = tree_range.end - tree_range.start;
 
-        if tree_range_len == 0 {
-            self.add_inode(Inode::Empty)
-        } else if tree_range_len <= 32 {
+        if tree_range_len <= 32 {
             // The tree in `tree_range` is not guaranted to be sorted.
             // We use `Self::copy_sorted` to copy that tree in `Storage::trees` in
             // a sorted order.
@@ -767,12 +763,6 @@ impl Storage {
         let inode = self.get_inode(inode_id)?;
 
         match inode {
-            Inode::Empty => {
-                let tree_id = self.insert_tree_single_node(key_id, node)?;
-                let inode_id = self.create_inode(depth, tree_id)?;
-
-                Ok((inode_id, true))
-            }
             Inode::Value(tree_id) => {
                 let tree_id = *tree_id;
                 let node_id = self.add_node(node)?;
@@ -873,7 +863,6 @@ impl Storage {
                     fun(elem)?;
                 }
             }
-            Inode::Empty => {}
         };
 
         Ok(())
@@ -907,22 +896,13 @@ impl Storage {
                 nchildren: children,
                 ..
             } => *children as usize,
-            Inode::Empty => 0,
             Inode::Value(tree_id) => tree_id.small_tree_len(),
         }
     }
 
     pub fn tree_len(&self, tree_id: TreeStorageId) -> usize {
         if let Some(inode_id) = tree_id.get_inode_id() {
-            let inode = self.get_inode(inode_id).unwrap();
-
-            match inode {
-                Inode::Tree {
-                    nchildren: children,
-                    ..
-                } => *children as usize,
-                _ => panic!("root is always Inode::Tree"),
-            }
+            self.inode_len(inode_id)
         } else {
             tree_id.small_tree_len()
         }
@@ -1020,9 +1000,6 @@ impl Storage {
         let inode = self.get_inode(inode_id)?;
 
         match inode {
-            Inode::Empty => {
-                panic!()
-            }
             Inode::Value(tree_id) => {
                 let tree_id = *tree_id;
                 let new_tree_id = self.remove(tree_id, key)?;
@@ -1133,7 +1110,6 @@ impl Storage {
 
         let nchildren = match inode {
             Inode::Tree { nchildren, .. } => *nchildren,
-            Inode::Empty => panic!("Empty"),
             Inode::Value(_) => panic!("Value"),
         };
 

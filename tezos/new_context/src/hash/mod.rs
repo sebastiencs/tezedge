@@ -40,8 +40,6 @@ pub enum HashingError {
     ConversionError { error: TryFromSliceError },
     #[fail(display = "Expected value instead of `None` for {}", _0)]
     ValueExpected(&'static str),
-    #[fail(display = "Got an unexpected empty inode")]
-    UnexpectedEmptyInode,
     #[fail(display = "Invalid hash value, reason: {}", _0)]
     InvalidHash(String),
     #[fail(display = "Missing Entry")]
@@ -262,7 +260,6 @@ fn hash_long_inode(
     let mut hasher = VarBlake2b::new(ENTRY_HASH_LEN)?;
 
     match inode {
-        Inode::Empty => return Err(HashingError::UnexpectedEmptyInode),
         Inode::Value(entries) => {
             // Inode value:
             //
