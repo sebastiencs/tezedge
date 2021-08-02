@@ -575,12 +575,34 @@ impl Storage {
         Ok(result)
     }
 
-    // TODO: Change this
-    pub fn get_tree_node_id(&self, tree_id: TreeStorageId, key: &str) -> Option<NodeId> {
-        let tree = self.get_tree(tree_id).ok()?;
-        let index = self.find_in_tree(tree, key).ok()?.ok()?;
+    fn get_tree_node_id_recursive(&self, inode_id: InodeId, key: &str) -> Option<NodeId> {
+        let inode = self.get_inode(inode_id).ok()?;
 
-        Some(tree[index].1)
+        match inode {
+            Inode::Empty => None,
+            Inode::Value(tree_id) => {
+                self.get_tree_node_id(*tree_id, key)
+            },
+            Inode::Tree { depth, pointers, .. } => {
+                let index_at_depth = index_of_key(*depth, key) as usize;
+
+                let pointer = pointers[index_at_depth].as_ref()?;
+
+                let inode_id = pointer.inode.get();
+                self.get_tree_node_id_recursive(inode_id, key)
+            },
+        }
+    }
+
+    pub fn get_tree_node_id(&self, tree_id: TreeStorageId, key: &str) -> Option<NodeId> {
+        if let Some(inode_id) = tree_id.get_inode_id() {
+            self.get_tree_node_id_recursive(inode_id, key)
+        } else {
+            let tree = self.get_tree(tree_id).ok()?;
+            let index = self.find_in_tree(tree, key).ok()?.ok()?;
+
+            Some(tree[index].1)
+        }
     }
 
     pub fn add_tree(
