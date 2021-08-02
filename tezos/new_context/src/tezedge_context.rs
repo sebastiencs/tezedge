@@ -304,7 +304,7 @@ impl TezedgeIndex {
         };
 
         // first get node at key
-        let child_node_id = match storage.get_tree_node_id(root, first) {
+        let child_node_id = match storage.tree_find_node(root, first) {
             Some(hash) => hash,
             None => {
                 return Ok(Tree::empty());
@@ -375,7 +375,7 @@ impl TezedgeIndex {
         // get file node from tree
         let node_id =
             storage
-                .get_tree_node_id(node, *file)
+                .tree_find_node(node, *file)
                 .ok_or_else(|| MerkleError::ValueNotFound {
                     key: self.key_to_string(key),
                 })?;

@@ -658,7 +658,7 @@ impl WorkingTree {
         match self.find_raw_tree(tree, &path, &mut storage) {
             Err(_) => Ok(false),
             Ok(tree_id) => {
-                if let Some(node_id) = storage.get_tree_node_id(tree_id, *file) {
+                if let Some(node_id) = storage.tree_find_node(tree_id, *file) {
                     let node = storage.get_node(node_id)?;
                     Ok(node.node_kind() == NodeKind::Leaf)
                 } else {
@@ -693,7 +693,7 @@ impl WorkingTree {
         // get file node from tree
         let node_id =
             storage
-                .get_tree_node_id(node, *file)
+                .tree_find_node(node, *file)
                 .ok_or_else(|| MerkleError::ValueNotFound {
                     key: self.key_to_string(key),
                 })?;

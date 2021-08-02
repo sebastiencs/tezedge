@@ -274,7 +274,7 @@ fn hash_long_inode(
 
             // println!("HERE VALUES LENGTH={:?} {:?}", entries.len(), entries);
 
-            let entries = storage.get_tree(*entries)?;
+            let entries = storage.get_small_tree(*entries)?;
 
             hasher.update(&[0u8]); // type tag
             hasher.update(&[entries.len() as u8]);
@@ -338,7 +338,7 @@ fn hash_long_inode(
                     let hash_id = match pointer.hash_id.get() {
                         Some(hash_id) => hash_id,
                         None => {
-                            let inode_id = pointer.inode.get();
+                            let inode_id = pointer.inode_id.get();
                             let inode = storage.get_inode(inode_id).unwrap();
                             let hash_id = hash_long_inode(inode, store, storage)?;
                             pointer.hash_id.set(Some(hash_id));
@@ -381,7 +381,7 @@ fn hash_short_inode(
     // +--------+--------------+-----+--------------+
     // |   \k   | prehash(e_1) | ... | prehash(e_k) |
 
-    let tree = storage.get_tree(tree)?;
+    let tree = storage.get_small_tree(tree)?;
     hasher.update(&(tree.len() as u64).to_be_bytes());
 
     // Node entry:
@@ -820,7 +820,9 @@ mod tests {
 
                 tree = storage.insert(tree, binding.name.as_str(), node).unwrap();
 
-                assert!(storage.get_tree_node_id(tree, binding.name.as_str()).is_some());
+                assert!(storage
+                    .tree_find_node(tree, binding.name.as_str())
+                    .is_some());
             }
 
             let hash_id = HashId::new(11111).unwrap();

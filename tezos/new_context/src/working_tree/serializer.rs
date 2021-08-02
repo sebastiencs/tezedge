@@ -172,7 +172,7 @@ pub fn serialize_entry(
                 serialize_inode(inode_id, output, entry_hash_id, storage, stats, batch)?;
             } else {
                 output.write_all(&[ID_TREE])?;
-                let tree = storage.get_tree(*tree_id)?;
+                let tree = storage.get_small_tree(*tree_id)?;
 
                 serialize_tree(tree, output, storage, stats)?;
 
@@ -281,7 +281,7 @@ fn serialize_inode(
                     .get()
                     .ok_or(SerializationError::MissingHashId)?;
 
-                let inode_id = pointer.inode.get();
+                let inode_id = pointer.inode_id.get();
                 serialize_inode(inode_id, output, hash_id, storage, stats, batch)?;
             }
         }
@@ -290,7 +290,7 @@ fn serialize_inode(
         }
         Inode::Value(tree_id) => {
             output.write_all(&[ID_INODE_VALUES])?;
-            let tree = storage.get_tree(*tree_id)?;
+            let tree = storage.get_small_tree(*tree_id)?;
             serialize_tree(tree, output, storage, stats)?;
 
             batch.push((hash_id, Arc::from(output.as_slice())));
@@ -848,7 +848,7 @@ mod tests {
                 let hash_id = pointer.hash_id.get().unwrap();
                 assert_eq!(hash_id.as_u32() as usize, index + 1);
 
-                let inode = storage.get_inode(pointer.inode.get()).unwrap();
+                let inode = storage.get_inode(pointer.inode_id.get()).unwrap();
                 match inode {
                     Inode::Value(tree_id) => assert!(tree_id.is_empty()),
                     _ => panic!(),
