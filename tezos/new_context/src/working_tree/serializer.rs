@@ -250,7 +250,7 @@ fn serialize_inode(
     let inode = storage.get_inode(inode_id).unwrap();
 
     match inode {
-        Inode::Tree {
+        Inode::Pointers {
             depth,
             nchildren,
             npointers,
@@ -285,7 +285,7 @@ fn serialize_inode(
                 serialize_inode(inode_id, output, hash_id, storage, stats, batch)?;
             }
         }
-        Inode::Value(tree_id) => {
+        Inode::Tree(tree_id) => {
             output.write_all(&[ID_INODE_VALUES])?;
             let tree = storage.get_small_tree(*tree_id)?;
             serialize_tree(tree, output, storage, stats)?;
@@ -556,7 +556,7 @@ fn deserialize_inode_tree(
         ));
     }
 
-    Ok(Inode::Tree {
+    Ok(Inode::Pointers {
         depth,
         nchildren,
         npointers,
@@ -578,7 +578,7 @@ pub fn deserialize_inode(
         }
         ID_INODE_VALUES => {
             let tree_id = deserialize_tree(data, storage)?;
-            storage.add_inode(Inode::Value(tree_id)).map_err(Into::into)
+            storage.add_inode(Inode::Tree(tree_id)).map_err(Into::into)
         }
         _ => Err(UnknownID),
     }
@@ -799,7 +799,7 @@ mod tests {
         let mut pointers: [Option<PointerToInode>; 32] = Default::default();
 
         for index in 0..pointers.len() {
-            let inode_value = Inode::Value(TreeStorageId::empty());
+            let inode_value = Inode::Tree(TreeStorageId::empty());
             let inode_value_id = storage.add_inode(inode_value).unwrap();
 
             let hash_id = HashId::new((index + 1) as u32).unwrap();
@@ -810,7 +810,7 @@ mod tests {
             pointers[index] = Some(PointerToInode::new(Some(hash_id), inode_value_id));
         }
 
-        let inode = Inode::Tree {
+        let inode = Inode::Pointers {
             depth: 100,
             nchildren: 200,
             npointers: 250,
@@ -829,7 +829,7 @@ mod tests {
         let new_inode_id = deserialize_inode(&batch[0].1, &mut storage, &repo).unwrap();
         let new_inode = storage.get_inode(new_inode_id).unwrap();
 
-        if let Inode::Tree {
+        if let Inode::Pointers {
             depth,
             nchildren,
             npointers,
@@ -847,7 +847,7 @@ mod tests {
 
                 let inode = storage.get_inode(pointer.inode_id.get()).unwrap();
                 match inode {
-                    Inode::Value(tree_id) => assert!(tree_id.is_empty()),
+                    Inode::Tree(tree_id) => assert!(tree_id.is_empty()),
                     _ => panic!(),
                 }
             }
@@ -886,7 +886,7 @@ mod tests {
             )
             .unwrap();
 
-        let inode = Inode::Value(tree_id);
+        let inode = Inode::Tree(tree_id);
         let inode_id = storage.add_inode(inode).unwrap();
 
         batch.clear();
@@ -898,7 +898,7 @@ mod tests {
         let new_inode_id = deserialize_inode(&batch[0].1, &mut storage, &repo).unwrap();
         let new_inode = storage.get_inode(new_inode_id).unwrap();
 
-        if let Inode::Value(new_tree_id) = new_inode {
+        if let Inode::Tree(new_tree_id) = new_inode {
             assert_eq!(
                 storage.get_owned_tree(tree_id).unwrap(),
                 storage.get_owned_tree(*new_tree_id).unwrap()

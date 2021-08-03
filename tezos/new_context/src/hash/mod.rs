@@ -260,7 +260,7 @@ fn hash_long_inode(
     let mut hasher = VarBlake2b::new(ENTRY_HASH_LEN)?;
 
     match inode {
-        Inode::Value(entries) => {
+        Inode::Tree(entries) => {
             // Inode value:
             //
             // |   1   |   1  |     n_1      |  ...  |      n_k      |
@@ -297,7 +297,7 @@ fn hash_long_inode(
                 hasher.update(node.entry_hash(store, storage)?.as_ref());
             }
         }
-        Inode::Tree {
+        Inode::Pointers {
             depth,
             nchildren,
             npointers,
