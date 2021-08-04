@@ -678,7 +678,7 @@ impl WorkingTree {
         let mut storage = self.index.storage.borrow_mut();
 
         if let Ok(tree_id) = self.find_raw_tree(tree, path, &mut storage) {
-            storage.get_tree_node_id(tree_id, *file).is_some()
+            storage.tree_find_node(tree_id, *file).is_some()
         } else {
             false
         }

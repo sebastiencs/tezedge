@@ -17,8 +17,7 @@ use crate::{
     kv_store::HashId,
     persistent::DBError,
     working_tree::{
-        storage::{Blob, BlobStorageId, Inode, NodeId, Storage, StorageError},
-        string_interner::StringId,
+        storage::{Blob, BlobStorageId, Inode, Storage, StorageError},
         Commit, Entry, NodeKind, Tree,
     },
     ContextKeyValueStore,
