@@ -259,7 +259,7 @@ fn hash_long_inode(
     let mut hasher = VarBlake2b::new(ENTRY_HASH_LEN)?;
 
     match inode {
-        Inode::Tree(entries) => {
+        Inode::Directory(entries) => {
             // Inode value:
             //
             // |   1   |   1  |     n_1      |  ...  |      n_k      |
@@ -845,7 +845,7 @@ mod tests {
                 let b = tree;
 
                 // println!("A={:?} B={:?}", storage.tree_to_vec_unsorted(a).len(), storage.tree_to_vec_unsorted(b).len());
-                assert_eq!(storage.tree_len(a), storage.tree_len(b));
+                assert_eq!(storage.tree_len(a).unwrap(), storage.tree_len(b).unwrap());
             }
 
             for index in 0..10000 {

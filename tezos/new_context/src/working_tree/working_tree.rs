@@ -149,7 +149,14 @@ impl TreeWalkerLevel {
             if let WorkingTreeValue::Tree(tree) = &root.value {
                 let storage = root.index.storage.borrow();
 
-                let tree_len = storage.tree_len(*tree);
+                let tree_len = match storage.tree_len(*tree) {
+                    Ok(tree_len) => tree_len,
+                    Err(e) => {
+                        eprintln!("TreeWalkerLevel tree_len error='{:?}' key='{:?}", e, key);
+                        0
+                    }
+                };
+
                 let mut tree_vec = Vec::with_capacity(tree_len);
 
                 storage
@@ -548,8 +555,7 @@ impl WorkingTree {
         let mut storage = self.index.storage.borrow_mut();
 
         let node = self.find_raw_tree(root, key, &mut storage)?;
-        let node = storage.tree_to_vec_unsorted(node);
-        //let node = storage.get_tree(node)?.to_vec();
+        let node = storage.tree_to_vec_sorted(node)?;
         let node_length = node.len();
 
         let length = length.unwrap_or(node_length).min(node_length);
@@ -724,7 +730,7 @@ impl WorkingTree {
                 Ok(())
             }
             Entry::Tree(tree) => {
-                let tree = storage.tree_to_vec_unsorted(*tree);
+                let tree = storage.tree_to_vec_unsorted(*tree)?;
 
                 tree.iter()
                     .map(|(key, child_node)| {
@@ -779,7 +785,7 @@ impl WorkingTree {
         let mut keyvalues: Vec<(ContextKeyOwned, ContextValue)> = Vec::new();
         let delimiter = if prefix.is_empty() { "" } else { "/" };
 
-        let prefixed_tree = storage.tree_to_vec_unsorted(prefixed_tree);
+        let prefixed_tree = storage.tree_to_vec_unsorted(prefixed_tree)?;
 
         for (key, child_node) in prefixed_tree.iter() {
             let entry = self.node_entry(*child_node, storage)?;

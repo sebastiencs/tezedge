@@ -289,7 +289,7 @@ fn serialize_inode(
                 serialize_inode(inode_id, output, hash_id, storage, stats, batch)?;
             }
         }
-        Inode::Tree(tree_id) => {
+        Inode::Directory(tree_id) => {
             output.write_all(&[ID_INODE_VALUES])?;
             let tree = storage.get_small_tree(*tree_id)?;
             serialize_tree(tree, output, storage, stats)?;
@@ -582,7 +582,9 @@ pub fn deserialize_inode(
         }
         ID_INODE_VALUES => {
             let tree_id = deserialize_tree(data, storage)?;
-            storage.add_inode(Inode::Tree(tree_id)).map_err(Into::into)
+            storage
+                .add_inode(Inode::Directory(tree_id))
+                .map_err(Into::into)
         }
         _ => Err(UnknownID),
     }
@@ -803,7 +805,7 @@ mod tests {
         let mut pointers: [Option<PointerToInode>; 32] = Default::default();
 
         for index in 0..pointers.len() {
-            let inode_value = Inode::Tree(TreeStorageId::empty());
+            let inode_value = Inode::Directory(TreeStorageId::empty());
             let inode_value_id = storage.add_inode(inode_value).unwrap();
 
             let hash_id = HashId::new((index + 1) as u32).unwrap();
@@ -851,7 +853,7 @@ mod tests {
 
                 let inode = storage.get_inode(pointer.inode_id()).unwrap();
                 match inode {
-                    Inode::Tree(tree_id) => assert!(tree_id.is_empty()),
+                    Inode::Directory(tree_id) => assert!(tree_id.is_empty()),
                     _ => panic!(),
                 }
             }
@@ -890,7 +892,7 @@ mod tests {
             )
             .unwrap();
 
-        let inode = Inode::Tree(tree_id);
+        let inode = Inode::Directory(tree_id);
         let inode_id = storage.add_inode(inode).unwrap();
 
         batch.clear();
@@ -902,7 +904,7 @@ mod tests {
         let new_inode_id = deserialize_inode(&batch[0].1, &mut storage, &repo).unwrap();
         let new_inode = storage.get_inode(new_inode_id).unwrap();
 
-        if let Inode::Tree(new_tree_id) = new_inode {
+        if let Inode::Directory(new_tree_id) = new_inode {
             assert_eq!(
                 storage.get_owned_tree(tree_id).unwrap(),
                 storage.get_owned_tree(*new_tree_id).unwrap()
