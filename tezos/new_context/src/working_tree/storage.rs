@@ -62,19 +62,19 @@ impl Default for TreeStorageId {
 // }
 
 impl TreeStorageId {
-    fn try_new_tree(start: usize, end: usize) -> Result<Self, StorageIdError> {
+    fn try_new_tree(start: usize, end: usize) -> Result<Self, StorageError> {
         let length = end
             .checked_sub(start)
-            .ok_or(StorageIdError::TreeInvalidStartEnd)?;
+            .ok_or(StorageError::TreeInvalidStartEnd)?;
 
         if start & !0xFFFFFFFF != 0 {
             // Must fit in 32 bits
-            return Err(StorageIdError::TreeStartTooBig);
+            return Err(StorageError::TreeStartTooBig);
         }
 
         if length & !0xFFFFFFF != 0 {
             // Must fit in 28 bits
-            return Err(StorageIdError::TreeLengthTooBig);
+            return Err(StorageError::TreeLengthTooBig);
         }
 
         let tree_id = Self {
@@ -86,10 +86,10 @@ impl TreeStorageId {
         Ok(tree_id)
     }
 
-    fn try_new_inode(index: usize) -> Result<Self, StorageIdError> {
+    fn try_new_inode(index: usize) -> Result<Self, StorageError> {
         if index & !0xFFFFFFFFFFFFFFF != 0 {
             // Must fit in 60 bits
-            return Err(StorageIdError::InodeIndexTooBig);
+            return Err(StorageError::InodeIndexTooBig);
         }
 
         Ok(Self {
@@ -152,8 +152,7 @@ impl TreeStorageId {
             return false;
         }
 
-        let length = (self.bits as usize) & 0xFFFFFFF;
-        length == 0
+        self.small_tree_len() == 0
     }
 }
 
@@ -181,7 +180,7 @@ impl From<InodeId> for TreeStorageId {
 }
 
 #[derive(Debug)]
-pub enum StorageIdError {
+pub enum StorageError {
     BlobSliceTooBig,
     BlobStartTooBig,
     BlobLengthTooBig,
@@ -195,9 +194,10 @@ pub enum StorageIdError {
     BlobNotFound,
     NodeNotFound,
     InodeNotFound,
+    ExpectingTreeGotInode,
 }
 
-impl From<NodeIdError> for StorageIdError {
+impl From<NodeIdError> for StorageError {
     fn from(_: NodeIdError) -> Self {
         Self::NodeIdError
     }
@@ -242,12 +242,12 @@ enum BlobRef {
 }
 
 impl BlobStorageId {
-    fn try_new_inline(value: &[u8]) -> Result<Self, StorageIdError> {
+    fn try_new_inline(value: &[u8]) -> Result<Self, StorageError> {
         let len = value.len();
 
         // Inline values are 7 bytes maximum
         if len > 7 {
-            return Err(StorageIdError::BlobSliceTooBig);
+            return Err(StorageError::BlobSliceTooBig);
         }
 
         // We copy the slice into an array so we can use u64::from_ne_bytes
@@ -270,17 +270,17 @@ impl BlobStorageId {
         Ok(blob_id)
     }
 
-    fn try_new(start: usize, end: usize) -> Result<Self, StorageIdError> {
+    fn try_new(start: usize, end: usize) -> Result<Self, StorageError> {
         let length = end - start;
 
         if start & !0xFFFFFFFF != 0 {
             // Start must fit in 32 bits
-            return Err(StorageIdError::BlobStartTooBig);
+            return Err(StorageError::BlobStartTooBig);
         }
 
         if length & !0xFFFFFFF != 0 {
             // Length must fit in 28 bits
-            return Err(StorageIdError::BlobLengthTooBig);
+            return Err(StorageError::BlobLengthTooBig);
         }
 
         let blob_id = Self {
@@ -485,10 +485,10 @@ impl Storage {
         self.strings.get_string_id(s)
     }
 
-    pub fn get_str(&self, string_id: StringId) -> Result<&str, StorageIdError> {
+    pub fn get_str(&self, string_id: StringId) -> Result<&str, StorageError> {
         self.strings
             .get(string_id)
-            .ok_or(StorageIdError::StringNotFound)
+            .ok_or(StorageError::StringNotFound)
     }
 
     pub fn add_blob_by_ref(&mut self, blob: &[u8]) -> Result<BlobStorageId, StorageIdError> {
@@ -506,21 +506,21 @@ impl Storage {
         }
     }
 
-    pub fn get_blob(&self, blob_id: BlobStorageId) -> Result<Blob, StorageIdError> {
+    pub fn get_blob(&self, blob_id: BlobStorageId) -> Result<Blob, StorageError> {
         match blob_id.get() {
             BlobRef::Inline { length, value } => Ok(Blob::Inline { length, value }),
             BlobRef::Ref { start, end } => {
                 let blob = match self.blobs.get(start..end) {
                     Some(blob) => blob,
-                    None => return Err(StorageIdError::BlobNotFound),
+                    None => return Err(StorageError::BlobNotFound),
                 };
                 Ok(Blob::Ref { blob })
             }
         }
     }
 
-    pub fn get_node(&self, node_id: NodeId) -> Result<&Node, StorageIdError> {
-        self.nodes.get(node_id)?.ok_or(StorageIdError::NodeNotFound)
+    pub fn get_node(&self, node_id: NodeId) -> Result<&Node, StorageError> {
+        self.nodes.get(node_id)?.ok_or(StorageError::NodeNotFound)
     }
 
     pub fn add_node(&mut self, node: Node) -> Result<NodeId, NodeIdError> {
@@ -530,13 +530,13 @@ impl Storage {
     pub fn get_small_tree(
         &self,
         tree_id: TreeStorageId,
-    ) -> Result<&[(StringId, NodeId)], StorageIdError> {
-        assert!(!tree_id.is_inode());
+    ) -> Result<&[(StringId, NodeId)], StorageError> {
+        if tree_id.is_inode() {
+            return Err(StorageError::ExpectingTreeGotInode);
+        }
 
         let (start, end) = tree_id.get();
-        self.trees
-            .get(start..end)
-            .ok_or(StorageIdError::TreeNotFound)
+        self.trees.get(start..end).ok_or(StorageError::TreeNotFound)
     }
 
     #[cfg(test)]
@@ -561,7 +561,7 @@ impl Storage {
         &self,
         tree: &[(StringId, NodeId)],
         key: &str,
-    ) -> Result<Result<usize, usize>, StorageIdError> {
+    ) -> Result<Result<usize, usize>, StorageError> {
         let mut error = None;
 
         let result = tree.binary_search_by(|value| match self.get_str(value.0) {
@@ -609,10 +609,10 @@ impl Storage {
         }
     }
 
-    pub fn add_tree(
+    pub fn append_to_trees(
         &mut self,
         new_tree: &mut Vec<(StringId, NodeId)>,
-    ) -> Result<TreeStorageId, StorageIdError> {
+    ) -> Result<TreeStorageId, StorageError> {
         let start = self.trees.len();
         self.trees.append(new_tree);
         let end = self.trees.len();
@@ -634,7 +634,7 @@ impl Storage {
         result
     }
 
-    pub(super) fn add_inode(&mut self, inode: Inode) -> Result<InodeId, StorageIdError> {
+    pub(super) fn add_inode(&mut self, inode: Inode) -> Result<InodeId, StorageError> {
         let current = self.inodes.len();
         self.inodes.push(inode);
 
@@ -645,15 +645,14 @@ impl Storage {
     /// Copy tree from `Self::temp_tree` into `Self::trees` in a sorted order.
     ///
     /// `tree_range` is the range of the tree in `Self::temp_tree`
-    fn copy_sorted(&mut self, tree_range: TempTreeRange) -> Result<TreeStorageId, StorageIdError> {
+    fn copy_sorted(&mut self, tree_range: TempTreeRange) -> Result<TreeStorageId, StorageError> {
         let start = self.trees.len();
 
         for (key_id, node_id) in &self.temp_tree[tree_range] {
             let key_str = self.get_str(*key_id)?;
             let tree = &self.trees[start..];
-            let index = self.binary_search_in_tree(tree, key_str)?;
 
-            match index {
+            match self.binary_search_in_tree(tree, key_str)? {
                 Ok(found) => {
                     self.trees[start + found].1 = *node_id;
                 }
@@ -667,9 +666,9 @@ impl Storage {
         TreeStorageId::try_new_tree(start, end)
     }
 
-    fn with_temp_tree_range<Fun>(&mut self, mut fun: Fun) -> Result<TempTreeRange, StorageIdError>
+    fn with_temp_tree_range<Fun>(&mut self, mut fun: Fun) -> Result<TempTreeRange, StorageError>
     where
-        Fun: FnMut(&mut Self) -> Result<(), StorageIdError>,
+        Fun: FnMut(&mut Self) -> Result<(), StorageError>,
     {
         let start = self.temp_tree.len();
         fun(self)?;
@@ -682,7 +681,7 @@ impl Storage {
         &mut self,
         depth: u32,
         tree_range: TempTreeRange,
-    ) -> Result<InodeId, StorageIdError> {
+    ) -> Result<InodeId, StorageError> {
         let tree_range_len = tree_range.end - tree_range.start;
 
         if tree_range_len <= INODE_POINTER_THRESHOLD {
@@ -736,7 +735,7 @@ impl Storage {
         &mut self,
         key_id: StringId,
         node: Node,
-    ) -> Result<TempTreeRange, StorageIdError> {
+    ) -> Result<TempTreeRange, StorageError> {
         let node_id = self.nodes.push(node)?;
 
         self.with_temp_tree_range(|this| {
@@ -745,10 +744,13 @@ impl Storage {
         })
     }
 
+    /// Note: The callers of this function expect the tree to be copied
+    ///       at the end of `Self::temp_tree`. This is something to keep in mind
+    ///       if the implementation of this function change
     fn copy_tree_in_temp_tree(
         &mut self,
         tree_id: TreeStorageId,
-    ) -> Result<TempTreeRange, StorageIdError> {
+    ) -> Result<TempTreeRange, StorageError> {
         let (tree_start, tree_end) = tree_id.get();
 
         self.with_temp_tree_range(|this| {
@@ -765,7 +767,7 @@ impl Storage {
         key: &str,
         key_id: StringId,
         node: Node,
-    ) -> Result<(InodeId, IsNewKey), StorageIdError> {
+    ) -> Result<(InodeId, IsNewKey), StorageError> {
         let inode = self.get_inode(inode_id)?;
 
         match inode {
@@ -773,7 +775,7 @@ impl Storage {
                 let tree_id = *tree_id;
                 let node_id = self.add_node(node)?;
 
-                // Copy the existing values into `Self::temp_tree` to create an inode
+                // Copy the existing tree into `Self::temp_tree` to create an inode
                 let range = self.with_temp_tree_range(|this| {
                     let range = this.copy_tree_in_temp_tree(tree_id)?;
 
@@ -934,18 +936,18 @@ impl Storage {
         vec
     }
 
-    pub fn get_inode(&self, inode_id: InodeId) -> Result<&Inode, StorageIdError> {
+    pub fn get_inode(&self, inode_id: InodeId) -> Result<&Inode, StorageError> {
         self.inodes
             .get(inode_id.0 as usize)
-            .ok_or(StorageIdError::InodeNotFound)
+            .ok_or(StorageError::InodeNotFound)
     }
 
-    pub fn insert(
+    pub fn tree_insert(
         &mut self,
         tree_id: TreeStorageId,
         key_str: &str,
         node: Node,
-    ) -> Result<TreeStorageId, StorageIdError> {
+    ) -> Result<TreeStorageId, StorageError> {
         let key_id = self.get_string_id(key_str);
 
         // Are we inserting in an Inode ?
@@ -974,7 +976,7 @@ impl Storage {
                 }
             }
 
-            this.add_tree(new_tree)
+            this.append_to_trees(new_tree)
         })?;
 
         // We only check at the end of this function if the new tree length
@@ -1003,13 +1005,13 @@ impl Storage {
         &mut self,
         inode_id: InodeId,
         key: &str,
-    ) -> Result<Option<InodeId>, StorageIdError> {
+    ) -> Result<Option<InodeId>, StorageError> {
         let inode = self.get_inode(inode_id)?;
 
         match inode {
             Inode::Tree(tree_id) => {
                 let tree_id = *tree_id;
-                let new_tree_id = self.remove(tree_id, key)?;
+                let new_tree_id = self.tree_remove(tree_id, key)?;
 
                 if new_tree_id.is_empty() {
                     Ok(None)
@@ -1034,7 +1036,7 @@ impl Storage {
 
                 let new_inode_id = if new_nchildren as usize <= INODE_POINTER_THRESHOLD {
                     let tree_id = self.inodes_to_tree_sorted(inode_id)?;
-                    let new_tree_id = self.remove(tree_id, key)?;
+                    let new_tree_id = self.tree_remove(tree_id, key)?;
 
                     if tree_id == new_tree_id {
                         // The key was not found.
@@ -1083,12 +1085,9 @@ impl Storage {
         }
     }
 
-    fn inodes_to_tree_sorted(
-        &mut self,
-        inode_id: InodeId,
-    ) -> Result<TreeStorageId, StorageIdError> {
+    fn inodes_to_tree_sorted(&mut self, inode_id: InodeId) -> Result<TreeStorageId, StorageError> {
         // Iterator on the inodes children and copy all nodes into `Self::temp_tree`
-        self.with_new_tree::<_, Result<_, StorageIdError>>(|this, temp_tree| {
+        self.with_new_tree::<_, Result<_, StorageError>>(|this, temp_tree| {
             let inode = this.get_inode(inode_id)?;
 
             this.iter_inodes_recursive_unsorted(inode, &mut |value| {
@@ -1111,7 +1110,7 @@ impl Storage {
         &mut self,
         inode_id: InodeId,
         key: &str,
-    ) -> Result<TreeStorageId, StorageIdError> {
+    ) -> Result<TreeStorageId, StorageError> {
         let inode_id = self.remove_in_inode_recursive(inode_id, key)?;
         let inode_id = inode_id.unwrap();
 
@@ -1124,11 +1123,11 @@ impl Storage {
         }
     }
 
-    pub fn remove(
+    pub fn tree_remove(
         &mut self,
         tree_id: TreeStorageId,
         key: &str,
-    ) -> Result<TreeStorageId, StorageIdError> {
+    ) -> Result<TreeStorageId, StorageError> {
         if let Some(inode_id) = tree_id.get_inode_id() {
             return self.remove_in_inode(inode_id, key);
         };
@@ -1152,7 +1151,7 @@ impl Storage {
                 new_tree.extend_from_slice(&tree[index + 1..]);
             }
 
-            this.add_tree(new_tree)
+            this.append_to_trees(new_tree)
         })
     }
 
@@ -1199,9 +1198,9 @@ mod tests {
         let node2 = Node::new(Leaf, entry2.clone());
 
         let tree_id = TreeStorageId::empty();
-        let tree_id = storage.insert(tree_id, "a", node1.clone()).unwrap();
-        let tree_id = storage.insert(tree_id, "b", node2.clone()).unwrap();
-        let tree_id = storage.insert(tree_id, "0", node1.clone()).unwrap();
+        let tree_id = storage.tree_insert(tree_id, "a", node1.clone()).unwrap();
+        let tree_id = storage.tree_insert(tree_id, "b", node2.clone()).unwrap();
+        let tree_id = storage.tree_insert(tree_id, "0", node1.clone()).unwrap();
 
         assert_eq!(
             storage.get_owned_tree(tree_id).unwrap(),
@@ -1228,7 +1227,7 @@ mod tests {
         let mut tree_id = TreeStorageId::empty();
         for i in 0..300 {
             tree_id = storage
-                .insert(tree_id, i.to_string().as_str(), node1.clone())
+                .tree_insert(tree_id, i.to_string().as_str(), node1.clone())
                 .unwrap();
         }
 

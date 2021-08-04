@@ -70,7 +70,7 @@ use crate::{ContextKey, ContextValue};
 
 use super::{
     serializer::{deserialize, serialize_entry, DeserializationError, SerializationError},
-    storage::{BlobStorageId, NodeId, Storage, StorageIdError},
+    storage::{BlobStorageId, NodeId, Storage, StorageError},
 };
 
 pub struct PostCommitData {
@@ -301,7 +301,7 @@ pub enum MerkleError {
     #[fail(display = "Deserialization error, {:?}", error)]
     DeserializationError { error: DeserializationError },
     #[fail(display = "Storage ID error, {:?}", error)]
-    StorageIdError { error: StorageIdError },
+    StorageIdError { error: StorageError },
 }
 
 impl From<persistent::database::DBError> for MerkleError {
@@ -346,8 +346,8 @@ impl From<FromBytesError> for MerkleError {
     }
 }
 
-impl From<StorageIdError> for MerkleError {
-    fn from(error: StorageIdError) -> Self {
+impl From<StorageError> for MerkleError {
+    fn from(error: StorageError) -> Self {
         Self::StorageIdError { error }
     }
 }
@@ -944,8 +944,8 @@ impl WorkingTree {
         }
 
         let tree = match new_node {
-            None => storage.remove(tree, last)?,
-            Some(new_node) => storage.insert(tree, last, new_node)?,
+            None => storage.tree_remove(tree, last)?,
+            Some(new_node) => storage.tree_insert(tree, last, new_node)?,
         };
 
         if tree.is_empty() {

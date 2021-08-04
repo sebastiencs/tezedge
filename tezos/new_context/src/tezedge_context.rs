@@ -305,7 +305,7 @@ impl TezedgeIndex {
 
         // first get node at key
         let child_node_id = match storage.tree_find_node(root, first) {
-            Some(hash) => hash,
+            Some(node_id) => node_id,
             None => {
                 return Ok(Tree::empty());
             }
@@ -313,19 +313,18 @@ impl TezedgeIndex {
 
         // get entry (from working tree)
         let child_node = storage.get_node(child_node_id)?;
-        if let Some(entry) = child_node.get_entry() {
-            match entry {
-                Entry::Tree(tree) => {
-                    return self.find_raw_tree(tree, &key[1..], storage);
-                }
-                Entry::Blob(_) => return Ok(Tree::empty()),
-                Entry::Commit { .. } => {
-                    return Err(MerkleError::FoundUnexpectedStructure {
-                        sought: "Tree/Blob".to_string(),
-                        found: "commit".to_string(),
-                    })
-                }
+        match child_node.get_entry() {
+            Some(Entry::Tree(tree)) => {
+                return self.find_raw_tree(tree, &key[1..], storage);
             }
+            Some(Entry::Blob(_)) => return Ok(Tree::empty()),
+            Some(Entry::Commit { .. }) => {
+                return Err(MerkleError::FoundUnexpectedStructure {
+                    sought: "Tree/Blob".to_string(),
+                    found: "commit".to_string(),
+                })
+            }
+            None => {}
         }
 
         // get entry by hash (from DB)

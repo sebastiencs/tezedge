@@ -20,7 +20,7 @@ use crate::{
 };
 
 use super::{
-    storage::{Blob, InodeId, NodeId, NodeIdError, Storage, StorageIdError},
+    storage::{Blob, InodeId, NodeId, NodeIdError, Storage, StorageError},
     string_interner::StringId,
     Entry, Node,
 };
@@ -40,7 +40,7 @@ pub enum SerializationError {
     NodeNotFound,
     BlobNotFound,
     TryFromIntError,
-    StorageIdError { error: StorageIdError },
+    StorageIdError { error: StorageError },
     HashIdTooBig,
     MissingHashId,
 }
@@ -57,8 +57,8 @@ impl From<TryFromIntError> for SerializationError {
     }
 }
 
-impl From<StorageIdError> for SerializationError {
-    fn from(error: StorageIdError) -> Self {
+impl From<StorageError> for SerializationError {
+    fn from(error: StorageError) -> Self {
         Self::StorageIdError { error }
     }
 }
@@ -307,7 +307,7 @@ pub enum DeserializationError {
     MissingRootHash,
     MissingHash,
     NodeIdError,
-    StorageIdError { error: StorageIdError },
+    StorageIdError { error: StorageError },
 }
 
 impl From<TryFromSliceError> for DeserializationError {
@@ -334,8 +334,8 @@ impl From<NodeIdError> for DeserializationError {
     }
 }
 
-impl From<StorageIdError> for DeserializationError {
-    fn from(error: StorageIdError) -> Self {
+impl From<StorageError> for DeserializationError {
+    fn from(error: StorageError) -> Self {
         Self::StorageIdError { error }
     }
 }
@@ -434,7 +434,7 @@ fn deserialize_tree(
             new_tree.push((key_id, node_id));
         }
 
-        Ok(storage.add_tree(new_tree))
+        Ok(storage.append_to_trees(new_tree))
     })??;
 
     Ok(tree_id)
@@ -692,21 +692,21 @@ mod tests {
 
         let tree_id = TreeStorageId::empty();
         let tree_id = storage
-            .insert(
+            .tree_insert(
                 tree_id,
                 "a",
                 Node::new_commited(NodeKind::Leaf, HashId::new(1), None),
             )
             .unwrap();
         let tree_id = storage
-            .insert(
+            .tree_insert(
                 tree_id,
                 "bab",
                 Node::new_commited(NodeKind::Leaf, HashId::new(2), None),
             )
             .unwrap();
         let tree_id = storage
-            .insert(
+            .tree_insert(
                 tree_id,
                 "0aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 Node::new_commited(NodeKind::Leaf, HashId::new(3), None),
@@ -865,21 +865,21 @@ mod tests {
 
         let tree_id = TreeStorageId::empty();
         let tree_id = storage
-            .insert(
+            .tree_insert(
                 tree_id,
                 "a",
                 Node::new_commited(NodeKind::Leaf, HashId::new(1), None),
             )
             .unwrap();
         let tree_id = storage
-            .insert(
+            .tree_insert(
                 tree_id,
                 "bab",
                 Node::new_commited(NodeKind::Leaf, HashId::new(2), None),
             )
             .unwrap();
         let tree_id = storage
-            .insert(
+            .tree_insert(
                 tree_id,
                 "0aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 Node::new_commited(NodeKind::Leaf, HashId::new(3), None),

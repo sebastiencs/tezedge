@@ -17,7 +17,7 @@ use crate::{
     kv_store::HashId,
     persistent::DBError,
     working_tree::{
-        storage::{Blob, BlobStorageId, Inode, NodeId, Storage, StorageIdError},
+        storage::{Blob, BlobStorageId, Inode, NodeId, Storage, StorageError},
         string_interner::StringId,
         Commit, Entry, NodeKind, Tree,
     },
@@ -59,7 +59,7 @@ pub enum HashingError {
     #[fail(display = "Blob not found")]
     BlobNotFound,
     #[fail(display = "StorageIdError: {:?}", error)]
-    StorageIdError { error: StorageIdError },
+    StorageIdError { error: StorageError },
 }
 
 impl From<DBError> for HashingError {
@@ -86,8 +86,8 @@ impl From<io::Error> for HashingError {
     }
 }
 
-impl From<StorageIdError> for HashingError {
-    fn from(error: StorageIdError) -> Self {
+impl From<StorageError> for HashingError {
+    fn from(error: StorageError) -> Self {
         Self::StorageIdError { error }
     }
 }
@@ -688,7 +688,7 @@ mod tests {
 
         let node = Node::new(NodeKind::Leaf, Entry::Blob(blob_id));
 
-        let dummy_tree = storage.insert(dummy_tree, "a", node).unwrap();
+        let dummy_tree = storage.tree_insert(dummy_tree, "a", node).unwrap();
 
         // hexademical representation of above tree:
         //
@@ -815,7 +815,7 @@ mod tests {
                 // count += 1;
                 names.insert(binding.name.clone());
 
-                tree = storage.insert(tree, binding.name.as_str(), node).unwrap();
+                tree = storage.tree_insert(tree, binding.name.as_str(), node).unwrap();
 
                 assert!(storage
                     .tree_find_node(tree, binding.name.as_str())
@@ -827,7 +827,7 @@ mod tests {
             for index in 0..10000 {
                 let key = format!("seb{}", index);
                 tree = storage
-                    .insert(
+                    .tree_insert(
                         tree,
                         &key,
                         Node::new_commited(NodeKind::Leaf, Some(hash_id), None),
@@ -835,7 +835,7 @@ mod tests {
                     .unwrap();
                 let a = tree;
                 tree = storage
-                    .insert(
+                    .tree_insert(
                         tree,
                         &key,
                         Node::new_commited(NodeKind::Leaf, Some(hash_id), None),
@@ -849,8 +849,8 @@ mod tests {
 
             for index in 0..10000 {
                 let key = format!("seb{}", index);
-                tree = storage.remove(tree, &key).unwrap();
-                tree = storage.remove(tree, &key).unwrap();
+                tree = storage.tree_remove(tree, &key).unwrap();
+                tree = storage.tree_remove(tree, &key).unwrap();
             }
 
             // let hash_id = HashId::new(11111).unwrap();
