@@ -531,7 +531,7 @@ impl Storage {
             .ok_or(StorageError::StringNotFound)
     }
 
-    pub fn add_blob_by_ref(&mut self, blob: &[u8]) -> Result<BlobStorageId, StorageIdError> {
+    pub fn add_blob_by_ref(&mut self, blob: &[u8]) -> Result<BlobStorageId, StorageError> {
         // Do not consider blobs of length zero as inlined, this never
         // happens when the node is running and fix a serialization issue
         // during testing/fuzzing

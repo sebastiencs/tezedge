@@ -920,6 +920,9 @@ mod tests {
         let mut repo = InMemory::try_new().expect("failed to create context");
         let mut storage = Storage::new();
         let mut stats = SerializeStats::default();
+        let mut batch = Vec::new();
+
+        let fake_hash_id = HashId::try_from(1).unwrap();
 
         let blob_id = storage.add_blob_by_ref(&[]).unwrap();
         let blob = Entry::Blob(blob_id);
@@ -929,7 +932,7 @@ mod tests {
 
         let tree_id = TreeStorageId::empty();
         let tree_id = storage
-            .insert(
+            .tree_insert(
                 tree_id,
                 "a",
                 Node::new_commited(NodeKind::Leaf, blob_hash_id, None),
@@ -937,9 +940,18 @@ mod tests {
             .unwrap();
 
         let mut data = Vec::with_capacity(1024);
-        serialize_entry(&Entry::Tree(tree_id), &mut data, &storage, &mut stats).unwrap();
 
-        let entry = deserialize(&data, &mut storage).unwrap();
+        serialize_entry(
+            &Entry::Tree(tree_id),
+            fake_hash_id,
+            &mut data,
+            &storage,
+            &mut stats,
+            &mut batch,
+        )
+        .unwrap();
+
+        let entry = deserialize(&data, &mut storage, &repo).unwrap();
 
         if let Entry::Tree(entry) = entry {
             assert_eq!(
