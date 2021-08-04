@@ -9,6 +9,7 @@ use std::{
     ops::Range,
 };
 
+use modular_bitfield::prelude::*;
 use static_assertions::assert_eq_size;
 use tezos_timing::StorageMemoryUsage;
 
@@ -343,22 +344,70 @@ impl TryFrom<usize> for NodeId {
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
 pub struct InodeId(u32);
 
+#[bitfield]
+#[derive(Clone, Copy, Debug)]
+pub struct PointerToInodeInner {
+    hash_id: B32,
+    is_commited: bool,
+    inode_id: B31,
+}
+
 #[derive(Clone, Debug)]
 pub struct PointerToInode {
-    pub hash_id: Cell<Option<HashId>>,
-    pub inode_id: Cell<InodeId>,
+    inner: Cell<PointerToInodeInner>,
 }
 
 impl PointerToInode {
     pub fn new(hash_id: Option<HashId>, inode_id: InodeId) -> Self {
         Self {
-            hash_id: Cell::new(hash_id),
-            inode_id: Cell::new(inode_id),
+            inner: Cell::new(
+                PointerToInodeInner::new()
+                    .with_hash_id(hash_id.map(|h| h.as_u32()).unwrap_or(0))
+                    .with_is_commited(false)
+                    .with_inode_id(inode_id.0),
+            ),
         }
+    }
+
+    pub fn new_commited(hash_id: Option<HashId>, inode_id: InodeId) -> Self {
+        Self {
+            inner: Cell::new(
+                PointerToInodeInner::new()
+                    .with_hash_id(hash_id.map(|h| h.as_u32()).unwrap_or(0))
+                    .with_is_commited(true)
+                    .with_inode_id(inode_id.0),
+            ),
+        }
+    }
+
+    pub fn inode_id(&self) -> InodeId {
+        let inner = self.inner.get();
+        let inode_id = inner.inode_id();
+
+        InodeId(inode_id)
+    }
+
+    pub fn hash_id(&self) -> Option<HashId> {
+        let inner = self.inner.get();
+        let hash_id = inner.hash_id();
+
+        HashId::new(hash_id)
+    }
+
+    pub fn set_hash_id(&self, hash_id: Option<HashId>) {
+        let mut inner = self.inner.get();
+        inner.set_hash_id(hash_id.map(|h| h.as_u32()).unwrap_or(0));
+
+        self.inner.set(inner);
+    }
+
+    pub fn is_commited(&self) -> bool {
+        let inner = self.inner.get();
+        inner.is_commited()
     }
 }
 
-assert_eq_size!([u8; 12], Option<PointerToInode>);
+assert_eq_size!([u8; 9], Option<PointerToInode>);
 
 /// Inode representation used for hashing directories with >TREE_INODE_THRESHOLD entries.
 #[allow(clippy::large_enum_variant)]
@@ -374,7 +423,7 @@ pub enum Inode {
     },
 }
 
-assert_eq_size!([u8; 400], Inode);
+assert_eq_size!([u8; 304], Inode);
 
 type TempTreeRange = Range<usize>;
 
@@ -592,7 +641,7 @@ impl Storage {
 
                 let pointer = pointers.get(index_at_depth)?.as_ref()?;
 
-                let inode_id = pointer.inode_id.get();
+                let inode_id = pointer.inode_id();
                 self.tree_find_node_recursive(inode_id, key)
             }
         }
@@ -716,10 +765,7 @@ impl Storage {
                 npointers += 1;
                 let inode_id = self.create_inode(depth + 1, range)?;
 
-                pointers[index as usize] = Some(PointerToInode {
-                    hash_id: Cell::new(None),
-                    inode_id: Cell::new(inode_id),
-                })
+                pointers[index as usize] = Some(PointerToInode::new(None, inode_id));
             }
 
             self.add_inode(Inode::Pointers {
@@ -810,7 +856,7 @@ impl Storage {
                 let index_at_depth = index_of_key(depth, key) as usize;
 
                 let (inode_id, is_new_key) = if let Some(pointer) = &pointers[index_at_depth] {
-                    let inode_id = pointer.inode_id.get();
+                    let inode_id = pointer.inode_id();
                     self.insert_inode(depth + 1, inode_id, key, key_id, node)?
                 } else {
                     npointers += 1;
@@ -820,10 +866,7 @@ impl Storage {
                     (inode_id, true)
                 };
 
-                pointers[index_at_depth] = Some(PointerToInode {
-                    hash_id: Cell::new(None),
-                    inode_id: Cell::new(inode_id),
-                });
+                pointers[index_at_depth] = Some(PointerToInode::new(None, inode_id));
 
                 let inode_id = self.add_inode(Inode::Pointers {
                     depth,
@@ -846,9 +889,9 @@ impl Storage {
 
         if let Inode::Pointers { pointers, .. } = inode {
             for pointer in pointers.iter().filter_map(|p| p.as_ref()) {
-                pointer.hash_id.set(None);
+                pointer.set_hash_id(None);
 
-                let inode_id = pointer.inode_id.get();
+                let inode_id = pointer.inode_id();
                 self.inodes_drop_hash_ids(inode_id);
             }
         };
@@ -865,7 +908,7 @@ impl Storage {
         match inode {
             Inode::Pointers { pointers, .. } => {
                 for pointer in pointers.iter().filter_map(|p| p.as_ref()) {
-                    let inode_id = pointer.inode_id.get();
+                    let inode_id = pointer.inode_id();
                     let inode = self.get_inode(inode_id)?;
                     self.iter_inodes_recursive_unsorted(inode, fun)?;
                 }
@@ -1052,7 +1095,7 @@ impl Storage {
                         None => return Ok(Some(inode_id)), // The key was not found
                     };
 
-                    let ptr_inode_id = pointer.inode_id.get();
+                    let ptr_inode_id = pointer.inode_id();
                     let mut pointers = pointers.clone();
 
                     let new_ptr_inode_id = self.remove_in_inode_recursive(ptr_inode_id, key)?;
@@ -1063,10 +1106,7 @@ impl Storage {
                             return Ok(Some(inode_id));
                         }
 
-                        pointers[index_at_depth] = Some(PointerToInode {
-                            hash_id: Cell::new(None),
-                            inode_id: Cell::new(new_inode_id),
-                        });
+                        pointers[index_at_depth] = Some(PointerToInode::new(None, new_inode_id));
                     } else {
                         pointers[index_at_depth] = None;
                         npointers -= 1;

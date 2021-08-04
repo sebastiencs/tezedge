@@ -261,11 +261,14 @@ fn serialize_inode(
             output.write_all(&nchildren.to_ne_bytes())?;
             output.write_all(&npointers.to_ne_bytes())?;
 
+            // TODO: Make a bitfield of 32 bits indicating how many hashes there are
+            //       and at what index, instead of wasting 1 byte (the index below) for
+            //       each hash
             for (index, pointer) in pointers.iter().enumerate() {
                 if let Some(pointer) = pointer {
                     let index: u8 = index as u8;
 
-                    let hash_id = pointer.hash_id.get();
+                    let hash_id = pointer.hash_id();
                     let hash_id = hash_id.map(|h| h.as_u32()).unwrap_or(0);
 
                     output.write_all(&index.to_ne_bytes())?;
@@ -276,12 +279,13 @@ fn serialize_inode(
             batch.push((hash_id, Arc::from(output.as_slice())));
 
             for pointer in pointers.iter().filter_map(|p| p.as_ref()) {
-                let hash_id = pointer
-                    .hash_id
-                    .get()
-                    .ok_or(SerializationError::MissingHashId)?;
+                if pointer.is_commited() {
+                    continue;
+                }
 
-                let inode_id = pointer.inode_id.get();
+                let hash_id = pointer.hash_id().ok_or(SerializationError::MissingHashId)?;
+
+                let inode_id = pointer.inode_id();
                 serialize_inode(inode_id, output, hash_id, storage, stats, batch)?;
             }
         }
@@ -550,7 +554,7 @@ fn deserialize_inode_tree(
             Err(_) => panic!(),
         };
 
-        pointers[index as usize] = Some(PointerToInode::new(
+        pointers[index as usize] = Some(PointerToInode::new_commited(
             Some(hash_id.ok_or(MissingHash)?),
             inode_id,
         ));
@@ -842,10 +846,10 @@ mod tests {
 
             for (index, pointer) in pointers.iter().enumerate() {
                 let pointer = pointer.as_ref().unwrap();
-                let hash_id = pointer.hash_id.get().unwrap();
+                let hash_id = pointer.hash_id().unwrap();
                 assert_eq!(hash_id.as_u32() as usize, index + 1);
 
-                let inode = storage.get_inode(pointer.inode_id.get()).unwrap();
+                let inode = storage.get_inode(pointer.inode_id()).unwrap();
                 match inode {
                     Inode::Tree(tree_id) => assert!(tree_id.is_empty()),
                     _ => panic!(),

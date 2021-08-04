@@ -331,13 +331,13 @@ fn hash_long_inode(
 
                     hasher.update(&[index]);
 
-                    let hash_id = match pointer.hash_id.get() {
+                    let hash_id = match pointer.hash_id() {
                         Some(hash_id) => hash_id,
                         None => {
-                            let inode_id = pointer.inode_id.get();
+                            let inode_id = pointer.inode_id();
                             let inode = storage.get_inode(inode_id).unwrap();
                             let hash_id = hash_long_inode(inode, store, storage)?;
-                            pointer.hash_id.set(Some(hash_id));
+                            pointer.set_hash_id(Some(hash_id));
                             hash_id
                         }
                     };
@@ -814,7 +814,9 @@ mod tests {
                 // count += 1;
                 names.insert(binding.name.clone());
 
-                tree = storage.tree_insert(tree, binding.name.as_str(), node).unwrap();
+                tree = storage
+                    .tree_insert(tree, binding.name.as_str(), node)
+                    .unwrap();
 
                 assert!(storage
                     .tree_find_node(tree, binding.name.as_str())
