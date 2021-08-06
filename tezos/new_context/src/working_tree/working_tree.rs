@@ -470,7 +470,7 @@ impl WorkingTree {
         let mut storage = self.index.storage.borrow_mut();
 
         if let Ok(tree_id) = self.find_raw_tree(root, path, &mut storage) {
-            if let Some(node_id) = storage.get_tree_node_id(tree_id, *file) {
+            if let Some(node_id) = storage.tree_find_node(tree_id, *file) {
                 match self.index.node_entry(node_id, &mut storage) {
                     Err(MerkleError::EntryNotFound { .. }) => Ok(None),
                     Err(err) => Err(err)?,
