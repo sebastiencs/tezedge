@@ -553,11 +553,12 @@ impl WorkingTree {
     ) -> Result<Vec<(String, WorkingTree)>, MerkleError> {
         let root = self.get_working_tree_root_ref();
         let mut storage = self.index.storage.borrow_mut();
-
         let node = self.find_raw_tree(root, key, &mut storage)?;
-        let node = storage.tree_to_vec_sorted(node)?;
-        let node_length = node.len();
 
+        // It's important to get the tree sorted here
+        let node = storage.tree_to_vec_sorted(node)?;
+
+        let node_length = node.len();
         let length = length.unwrap_or(node_length).min(node_length);
         let offset = offset.unwrap_or(0);
 

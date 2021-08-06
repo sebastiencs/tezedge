@@ -45,6 +45,11 @@ pub struct TreeStorageId {
     /// | 60 bits    |
     /// |------------|
     /// | an InodeId |
+    ///
+    /// Note that the `InodeId` here can only be the root of an `Inode`.
+    /// A `TreeStorageId` never contains an `InodeId` other than a root.
+    /// The working tree doesn't have knowledge of inodes, it's an implementation
+    /// detail of the `Storage`
     bits: u64,
 }
 
@@ -111,6 +116,9 @@ impl TreeStorageId {
         (start, start + length)
     }
 
+    /// Return the length of the small tree.
+    ///
+    /// Use `Storage::tree_len` to get the length of all trees (including inodes)
     fn small_tree_len(self) -> usize {
         debug_assert!(!self.is_inode());
 
@@ -140,21 +148,18 @@ impl TreeStorageId {
 impl From<TreeStorageId> for u64 {
     fn from(tree_id: TreeStorageId) -> Self {
         tree_id.bits
-        // let bytes = tree_id.into_bytes();
-        // u64::from_ne_bytes(bytes)
     }
 }
 
 impl From<u64> for TreeStorageId {
     fn from(entry_id: u64) -> Self {
         Self { bits: entry_id }
-        // Self::from_bytes(entry_id.to_ne_bytes())
     }
 }
 
 impl From<InodeId> for TreeStorageId {
     fn from(inode_id: InodeId) -> Self {
-        // Never fails, `InodeId` is 32 bits, `TreeStorageId` expects 60 bits max
+        // Never fails, `InodeId` is 31 bits, `TreeStorageId` expects 60 bits max
         Self::try_new_inode(inode_id.0 as usize).unwrap()
     }
 }
@@ -390,11 +395,11 @@ impl PointerToInode {
 
 assert_eq_size!([u8; 9], Option<PointerToInode>);
 
-/// Inode representation used for hashing directories with >TREE_INODE_THRESHOLD entries.
+/// Inode representation used for hashing directories with > TREE_INODE_THRESHOLD entries.
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 pub enum Inode {
-    /// Value is a list of (StringId, NodeId)
+    /// Directory is a list of (StringId, NodeId)
     Directory(TreeStorageId),
     Pointers {
         depth: u32,
@@ -567,6 +572,11 @@ impl Storage {
         self.nodes.push(node).map_err(|_| NodeIdError)
     }
 
+    /// Return the small tree `tree_id`.
+    ///
+    /// This returns an error when the underlying tree is an Inode.
+    /// To iterate/access all trees (including inodes), `Self::tree_iterate_unsorted`
+    /// and `Self::tree_to_vec_unsorted` must be used.
     pub fn get_small_tree(
         &self,
         tree_id: TreeStorageId,
@@ -579,12 +589,10 @@ impl Storage {
         self.trees.get(start..end).ok_or(StorageError::TreeNotFound)
     }
 
+    /// [Test-only] Return the tree with owned values
     #[cfg(test)]
     pub fn get_owned_tree(&self, tree_id: TreeStorageId) -> Option<Vec<(String, Node)>> {
-        assert!(!tree_id.is_inode());
-
-        let (start, end) = tree_id.get();
-        let tree = self.trees.get(start..end)?;
+        let tree = self.tree_to_vec_sorted(tree_id).unwrap();
 
         Some(
             tree.iter()
@@ -785,6 +793,8 @@ impl Storage {
         })
     }
 
+    /// Copy tree `tree_id` from `Self::trees` into `Self::temp_Tree`
+    ///
     /// Note: The callers of this function expect the tree to be copied
     ///       at the end of `Self::temp_tree`. This is something to keep in mind
     ///       if the implementation of this function change
@@ -919,6 +929,10 @@ impl Storage {
         Ok(())
     }
 
+    /// Iterate on `tree_id`.
+    ///
+    /// The elements won't be sorted when the underlying tree is an `Inode`.
+    /// `Self::tree_to_vec_sorted` can be used to get the tree sorted.
     pub fn tree_iterate_unsorted<Fun>(
         &self,
         tree_id: TreeStorageId,
@@ -951,6 +965,7 @@ impl Storage {
         }
     }
 
+    /// Return the number of nodes in `tree_id`.
     pub fn tree_len(&self, tree_id: TreeStorageId) -> Result<usize, StorageError> {
         if let Some(inode_id) = tree_id.get_inode_id() {
             self.inode_len(inode_id)
@@ -961,8 +976,8 @@ impl Storage {
 
     /// Make a vector of `(StringId, NodeId)`
     ///
-    /// The vector won't be sorted by their `StringId` when the underlying tree
-    /// is an Inode
+    /// The vector won't be sorted when the underlying tree is an Inode.
+    /// `Self::tree_to_vec_sorted` can be used to get the vector sorted.
     pub fn tree_to_vec_unsorted(
         &self,
         tree_id: TreeStorageId,
@@ -1123,6 +1138,10 @@ impl Storage {
                 let new_nchildren = nchildren - 1;
 
                 let new_inode_id = if new_nchildren as usize <= INODE_POINTER_THRESHOLD {
+                    // After removing an element from this `Inode::Pointers`, it remains
+                    // INODE_POINTER_THRESHOLD items, so it should be converted to a
+                    // `Inode::Directory`.
+
                     let tree_id = self.inodes_to_tree_sorted(inode_id)?;
                     let new_tree_id = self.tree_remove(tree_id, key)?;
 
@@ -1171,6 +1190,10 @@ impl Storage {
         }
     }
 
+    /// Convert the Inode into a small tree
+    ///
+    /// This traverses all elements (all children) of this `inode_id` and
+    /// copy them into `Self::trees` in a sorted order.
     fn inodes_to_tree_sorted(&mut self, inode_id: InodeId) -> Result<TreeStorageId, StorageError> {
         // Iterator on the inodes children and copy all nodes into `Self::temp_tree`
         self.with_new_tree::<_, Result<_, StorageError>>(|this, temp_tree| {
