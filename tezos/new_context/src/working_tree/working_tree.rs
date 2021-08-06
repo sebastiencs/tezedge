@@ -1023,35 +1023,6 @@ impl WorkingTree {
                         ),
                     }
                 })
-
-                // let tree = storage.get_tree(*tree)?;
-
-                // tree.iter()
-                //     .map(|(_, child_node)| {
-                //         let child_node = storage.get_node(*child_node)?;
-
-                //         if child_node.is_commited() {
-                //             data.add_older_entry(child_node, storage)?;
-                //             return Ok(());
-                //         }
-                //         child_node.set_commited(true);
-
-                //         match child_node.get_entry().as_ref() {
-                //             None => Ok(()),
-                //             Some(entry) => self.get_entries_recursively(
-                //                 entry,
-                //                 child_node.entry_hash_id(data.store, storage)?,
-                //                 None,
-                //                 data,
-                //                 storage,
-                //             ),
-                //         }
-                //     })
-                //     .find_map(|res| match res {
-                //         Ok(_) => None,
-                //         Err(err) => Some(Err(err)),
-                //     })
-                //     .unwrap_or(Ok(()))
             }
             Entry::Commit(commit) => {
                 let entry = match root {

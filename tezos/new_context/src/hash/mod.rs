@@ -633,7 +633,7 @@ mod tests {
 
             let mut names = HashSet::new();
 
-            for binding in test_case.bindings.iter().skip(0) {
+            for binding in test_case.bindings {
                 let node_kind = match binding.kind.as_str() {
                     "Tree" => NodeKind::NonLeaf,
                     "Contents" => NodeKind::Leaf,

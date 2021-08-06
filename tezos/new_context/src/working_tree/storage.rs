@@ -589,7 +589,7 @@ impl Storage {
         self.trees.get(start..end).ok_or(StorageError::TreeNotFound)
     }
 
-    /// [Test-only] Return the tree with owned values
+    /// [test only] Return the tree with owned values
     #[cfg(test)]
     pub fn get_owned_tree(&self, tree_id: TreeStorageId) -> Option<Vec<(String, Node)>> {
         let tree = self.tree_to_vec_sorted(tree_id).unwrap();
