@@ -180,6 +180,10 @@ fn hash_long_inode(
             // |  index  |  hash  |
 
             for (index, pointer) in pointers.iter().enumerate() {
+                // When the pointer is `None`, it means that there is no entries/nodes
+                // under that index.
+
+                // Skip pointers without entries.
                 if let Some(pointer) = pointer.as_ref() {
                     let index: u8 = index as u8;
 
@@ -189,7 +193,7 @@ fn hash_long_inode(
                         Some(hash_id) => hash_id,
                         None => {
                             let inode_id = pointer.inode_id();
-                            let inode = storage.get_inode(inode_id).unwrap();
+                            let inode = storage.get_inode(inode_id)?;
                             let hash_id = hash_long_inode(inode, store, storage)?;
                             pointer.set_hash_id(Some(hash_id));
                             hash_id

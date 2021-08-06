@@ -405,6 +405,9 @@ pub enum Inode {
         depth: u32,
         nchildren: u32,
         npointers: u8,
+        /// List of pointers to Inode
+        /// When the pointer is `None`, it means that there is no entries
+        /// under that index.
         pointers: [Option<PointerToInode>; 32],
     },
 }
