@@ -28,8 +28,8 @@ use super::{
 const ID_TREE: u8 = 0;
 const ID_BLOB: u8 = 1;
 const ID_COMMIT: u8 = 2;
-const ID_INODE_TREE: u8 = 3;
-const ID_INODE_VALUES: u8 = 4;
+const ID_INODE_POINTERS: u8 = 3;
+const ID_INODE_DIRECTORY: u8 = 4;
 
 const COMPACT_HASH_ID_BIT: u32 = 1 << 23;
 
@@ -266,7 +266,7 @@ fn serialize_inode(
             npointers,
             pointers,
         } => {
-            output.write_all(&[ID_INODE_TREE])?;
+            output.write_all(&[ID_INODE_POINTERS])?;
             output.write_all(&depth.to_ne_bytes())?;
             output.write_all(&nchildren.to_ne_bytes())?;
             output.write_all(&npointers.to_ne_bytes())?;
@@ -309,7 +309,7 @@ fn serialize_inode(
             }
         }
         Inode::Directory(tree_id) => {
-            output.write_all(&[ID_INODE_VALUES])?;
+            output.write_all(&[ID_INODE_DIRECTORY])?;
             let tree = storage.get_small_tree(*tree_id)?;
             serialize_tree(tree, output, storage, stats)?;
 
@@ -524,7 +524,7 @@ pub fn deserialize(
                 message: String::from_utf8(message)?,
             })))
         }
-        ID_INODE_TREE => {
+        ID_INODE_POINTERS => {
             let inode = deserialize_inode_tree(&data[1..], storage, store)?;
             let inode_id = storage.add_inode(inode)?;
 
@@ -595,11 +595,11 @@ pub fn deserialize_inode(
     use DeserializationError::*;
 
     match data.get(0).copied().ok_or(UnexpectedEOF)? {
-        ID_INODE_TREE => {
+        ID_INODE_POINTERS => {
             let inode = deserialize_inode_tree(&data[1..], storage, store)?;
             storage.add_inode(inode).map_err(Into::into)
         }
-        ID_INODE_VALUES => {
+        ID_INODE_DIRECTORY => {
             let tree_id = deserialize_tree(data, storage)?;
             storage
                 .add_inode(Inode::Directory(tree_id))
@@ -641,14 +641,14 @@ impl<'a> Iterator for HashIdIterator<'a> {
                     self.pos = self.data.len();
 
                     return root_hash;
-                } else if id == ID_INODE_TREE {
+                } else if id == ID_INODE_POINTERS {
                     pos += 10;
                 } else {
                     pos += 1;
                 }
             }
 
-            if id == ID_INODE_TREE {
+            if id == ID_INODE_POINTERS {
                 pos += 1;
 
                 let bytes = self.data.get(pos..)?;
@@ -833,7 +833,7 @@ mod tests {
 
             let hash_id = HashId::new((index + 1) as u32).unwrap();
 
-            repo.write_batch(vec![(hash_id, Arc::new([ID_INODE_VALUES]))])
+            repo.write_batch(vec![(hash_id, Arc::new([ID_INODE_DIRECTORY]))])
                 .unwrap();
 
             pointers[index] = Some(PointerToInode::new(Some(hash_id), inode_value_id));

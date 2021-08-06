@@ -324,6 +324,10 @@ impl TezedgeIndex {
                     found: "commit".to_string(),
                 })
             }
+            // If `Node::get_entry` returns `None`, it means that the entry
+            // is not deserialized into the working tree.
+            // To get the entry, we must fetch it from the repository.
+            // See below.
             None => {}
         }
 
