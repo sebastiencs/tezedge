@@ -1002,28 +1002,26 @@ impl WorkingTree {
 
         match entry {
             Entry::Blob(_blob_id) => Ok(()),
-            Entry::Tree(tree) => {
-                storage.tree_iterate_unsorted(*tree, |&(_, node_id)| {
-                    let child_node = storage.get_node(node_id)?;
+            Entry::Tree(tree) => storage.tree_iterate_unsorted(*tree, |&(_, node_id)| {
+                let child_node = storage.get_node(node_id)?;
 
-                    if child_node.is_commited() {
-                        data.add_older_entry(child_node, storage)?;
-                        return Ok(());
-                    }
-                    child_node.set_commited(true);
+                if child_node.is_commited() {
+                    data.add_older_entry(child_node, storage)?;
+                    return Ok(());
+                }
+                child_node.set_commited(true);
 
-                    match child_node.get_entry().as_ref() {
-                        None => Ok(()),
-                        Some(entry) => self.get_entries_recursively(
-                            entry,
-                            child_node.entry_hash_id(data.store, storage)?,
-                            None,
-                            data,
-                            storage,
-                        ),
-                    }
-                })
-            }
+                match child_node.get_entry().as_ref() {
+                    None => Ok(()),
+                    Some(entry) => self.get_entries_recursively(
+                        entry,
+                        child_node.entry_hash_id(data.store, storage)?,
+                        None,
+                        data,
+                        storage,
+                    ),
+                }
+            }),
             Entry::Commit(commit) => {
                 let entry = match root {
                     Some(root) => Entry::Tree(root),
