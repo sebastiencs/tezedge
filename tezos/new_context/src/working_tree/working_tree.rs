@@ -414,6 +414,7 @@ impl<'a> SerializingData<'a> {
             storage,
             &mut self.stats,
             &mut self.batch,
+            &mut self.referenced_older_entries,
         )?;
         Ok(())
     }

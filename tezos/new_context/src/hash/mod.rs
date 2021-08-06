@@ -617,6 +617,7 @@ mod tests {
         let mut repo = InMemory::try_new().expect("failed to create context");
         let mut storage = Storage::new();
         let mut output = Vec::new();
+        let mut older_entries = Vec::new();
         let mut stats = SerializeStats::default();
 
         // NOTE: reading from a stream is very slow with serde, thats why
@@ -718,6 +719,7 @@ mod tests {
                     &storage,
                     &mut stats,
                     &mut batch,
+                    &mut older_entries,
                 )
                 .unwrap();
                 repo.write_batch(batch).unwrap();

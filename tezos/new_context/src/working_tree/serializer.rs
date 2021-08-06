@@ -163,13 +163,22 @@ pub fn serialize_entry(
     storage: &Storage,
     stats: &mut SerializeStats,
     batch: &mut Vec<(HashId, Arc<[u8]>)>,
+    referenced_older_entries: &mut Vec<HashId>,
 ) -> Result<(), SerializationError> {
     output.clear();
 
     match entry {
         Entry::Tree(tree_id) => {
             if let Some(inode_id) = tree_id.get_inode_id() {
-                serialize_inode(inode_id, output, entry_hash_id, storage, stats, batch)?;
+                serialize_inode(
+                    inode_id,
+                    output,
+                    entry_hash_id,
+                    storage,
+                    stats,
+                    batch,
+                    referenced_older_entries,
+                )?;
             } else {
                 output.write_all(&[ID_TREE])?;
                 let tree = storage.get_small_tree(*tree_id)?;
@@ -245,6 +254,7 @@ fn serialize_inode(
     storage: &Storage,
     stats: &mut SerializeStats,
     batch: &mut Vec<(HashId, Arc<[u8]>)>,
+    referenced_older_entries: &mut Vec<HashId>,
 ) -> Result<(), SerializationError> {
     output.clear();
     let inode = storage.get_inode(inode_id).unwrap();
@@ -279,14 +289,23 @@ fn serialize_inode(
             batch.push((hash_id, Arc::from(output.as_slice())));
 
             for pointer in pointers.iter().filter_map(|p| p.as_ref()) {
+                let hash_id = pointer.hash_id().ok_or(SerializationError::MissingHashId)?;
+
                 if pointer.is_commited() {
+                    referenced_older_entries.push(hash_id);
                     continue;
                 }
 
-                let hash_id = pointer.hash_id().ok_or(SerializationError::MissingHashId)?;
-
                 let inode_id = pointer.inode_id();
-                serialize_inode(inode_id, output, hash_id, storage, stats, batch)?;
+                serialize_inode(
+                    inode_id,
+                    output,
+                    hash_id,
+                    storage,
+                    stats,
+                    batch,
+                    referenced_older_entries,
+                )?;
             }
         }
         Inode::Directory(tree_id) => {
@@ -692,6 +711,7 @@ mod tests {
         let mut repo = InMemory::try_new().unwrap();
         let mut stats = SerializeStats::default();
         let mut batch = Vec::new();
+        let mut older_entries = Vec::new();
         let fake_hash_id = HashId::try_from(1).unwrap();
 
         // Test Entry::Tree
@@ -727,6 +747,7 @@ mod tests {
             &storage,
             &mut stats,
             &mut batch,
+            &mut older_entries,
         )
         .unwrap();
 
@@ -757,6 +778,7 @@ mod tests {
             &storage,
             &mut stats,
             &mut batch,
+            &mut older_entries,
         )
         .unwrap();
         let entry = deserialize(&data, &mut storage, &repo).unwrap();
@@ -788,6 +810,7 @@ mod tests {
             &storage,
             &mut stats,
             &mut batch,
+            &mut older_entries,
         )
         .unwrap();
         let entry = deserialize(&data, &mut storage, &repo).unwrap();
@@ -828,7 +851,13 @@ mod tests {
         let hash_id = HashId::new(123).unwrap();
         batch.clear();
         serialize_inode(
-            inode_id, &mut data, hash_id, &storage, &mut stats, &mut batch,
+            inode_id,
+            &mut data,
+            hash_id,
+            &storage,
+            &mut stats,
+            &mut batch,
+            &mut older_entries,
         )
         .unwrap();
 
@@ -897,7 +926,13 @@ mod tests {
 
         batch.clear();
         serialize_inode(
-            inode_id, &mut data, hash_id, &storage, &mut stats, &mut batch,
+            inode_id,
+            &mut data,
+            hash_id,
+            &storage,
+            &mut stats,
+            &mut batch,
+            &mut older_entries,
         )
         .unwrap();
 
@@ -921,6 +956,7 @@ mod tests {
         let mut storage = Storage::new();
         let mut stats = SerializeStats::default();
         let mut batch = Vec::new();
+        let mut older_entries = Vec::new();
 
         let fake_hash_id = HashId::try_from(1).unwrap();
 
@@ -948,6 +984,7 @@ mod tests {
             &storage,
             &mut stats,
             &mut batch,
+            &mut older_entries,
         )
         .unwrap();
 
