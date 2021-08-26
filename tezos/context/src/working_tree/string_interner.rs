@@ -39,7 +39,7 @@ pub struct StringId {
 const_assert!(STRING_INTERN_THRESHOLD < (1 << 5));
 
 impl StringId {
-    fn is_big(self) -> bool {
+    pub fn is_big(self) -> bool {
         (self.bits >> 31) != 0
     }
 
