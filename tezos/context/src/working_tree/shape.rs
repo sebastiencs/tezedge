@@ -9,7 +9,7 @@ use std::{collections::{BTreeMap, btree_map::Entry::{Occupied, Vacant}, hash_map
 use crate::{kv_store::entries::Entries, Map};
 
 use super::{
-    storage::{NodeId, Storage},
+    storage::{DirEntryId, Storage},
     string_interner::StringId,
 };
 
@@ -73,7 +73,7 @@ impl Shape {
 
     fn make_shape(
         &mut self,
-        dir: &[(StringId, NodeId)],
+        dir: &[(StringId, DirEntryId)],
         storage: &Storage,
     ) -> Result<Option<ShapeId>, ShapeError> {
         self.temp.clear();
