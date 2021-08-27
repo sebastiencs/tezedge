@@ -12,6 +12,7 @@ use std::{
 };
 
 use crate::{kv_store::index_map::IndexMap, Map};
+use serde::{Deserialize, Serialize};
 
 use super::{
     storage::{DirEntryId, Storage},
@@ -25,7 +26,7 @@ pub enum ShapeError {
     IdFromUSize,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct ShapeId(u32);
 
 impl TryInto<usize> for ShapeId {

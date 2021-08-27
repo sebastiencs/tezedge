@@ -219,8 +219,11 @@ impl KeyValueStoreBackend for InMemory {
         self.hashes.get_memory_usage()
     }
 
-    fn get_shape(&self, shape_id: ShapeId) -> Result<&[StringId], DBError> {
-        self.shapes.get_shape(shape_id).map_err(Into::into)
+    fn get_shape(&self, shape_id: ShapeId) -> Result<Cow<[StringId]>, DBError> {
+        self.shapes
+            .get_shape(shape_id)
+            .map(Cow::Borrowed)
+            .map_err(Into::into)
     }
 
     fn make_shape(

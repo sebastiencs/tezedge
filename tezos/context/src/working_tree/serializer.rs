@@ -563,7 +563,7 @@ fn deserialize_shaped_directory(
     let shape_id = ShapeId::from(shape_id);
 
     let shape = store.get_shape(shape_id).unwrap();
-    let mut shape = shape.into_iter();
+    let mut shape = shape.as_ref().into_iter();
 
     pos += 4;
 

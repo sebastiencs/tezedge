@@ -6,6 +6,7 @@
 
 use std::{collections::hash_map::DefaultHasher, hash::Hasher};
 
+use serde::{Deserialize, Serialize};
 use static_assertions::const_assert;
 use tezos_timing::StringsMemoryUsage;
 
@@ -16,7 +17,7 @@ pub(crate) const STRING_INTERN_THRESHOLD: usize = 30;
 const FULL_31_BITS: usize = 0x7FFFFFFF;
 const FULL_5_BITS: usize = 0x1F;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StringId {
     /// | 1 bit  |  31 bits |
     /// |--------|----------|

@@ -109,16 +109,18 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
         self.hashes.get_memory_usage()
     }
 
-    fn get_shape(&self, shape_id: ShapeId) -> Result<&[StringId], DBError> {
-        todo!()
+    fn get_shape(&self, shape_id: ShapeId) -> Result<Cow<[StringId]>, DBError> {
+        self.client
+            .get_shape(shape_id)
+            .map_err(|reason| DBError::IpcAccessError { reason })
     }
 
     fn make_shape(
         &mut self,
-        dir: &[(StringId, DirEntryId)],
-        storage: &Storage,
+        _dir: &[(StringId, DirEntryId)],
+        _storage: &Storage,
     ) -> Result<Option<ShapeId>, DBError> {
-        todo!()
+        Ok(None)
     }
 }
 
@@ -152,6 +154,7 @@ enum ContextRequest {
     GetContextHashId(ContextHash),
     GetHash(HashId),
     GetValue(HashId),
+    GetShape(ShapeId),
     ContainsObject(HashId),
     ShutdownCall, // TODO: is this required?
 }
@@ -162,6 +165,7 @@ enum ContextResponse {
     GetContextHashResponse(Result<Option<ObjectHash>, String>),
     GetContextHashIdResponse(Result<Option<HashId>, String>),
     GetValueResponse(Result<Option<ContextValue>, String>),
+    GetShapeResponse(Result<Vec<StringId>, String>),
     ContainsObjectResponse(Result<bool, String>),
     ShutdownResult,
 }
@@ -170,6 +174,8 @@ enum ContextResponse {
 pub enum ContextError {
     #[fail(display = "Context get object error: {}", reason)]
     GetValueError { reason: String },
+    #[fail(display = "Context get shape error: {}", reason)]
+    GetShapeError { reason: String },
     #[fail(display = "Context contains object error: {}", reason)]
     ContainsObjectError { reason: String },
     #[fail(display = "Context get hash id error: {}", reason)]
@@ -372,6 +378,25 @@ impl IpcContextClient {
             }),
         }
     }
+
+    /// Get object by hash id
+    pub fn get_shape(&self, shape_id: ShapeId) -> Result<Cow<[StringId]>, ContextServiceError> {
+        let mut io = self.io.borrow_mut();
+        io.tx.send(&ContextRequest::GetShape(shape_id))?;
+
+        // this might take a while, so we will use unusually long timeout
+        match io
+            .rx
+            .try_receive(Some(Self::TIMEOUT), Some(IpcContextListener::IO_TIMEOUT))?
+        {
+            ContextResponse::GetShapeResponse(result) => result
+                .map(Cow::Owned)
+                .map_err(|err| ContextError::GetShapeError { reason: err }.into()),
+            message => Err(ContextServiceError::UnexpectedMessage {
+                message: message.into(),
+            }),
+        }
+    }
 }
 
 impl<'a> Iterator for ContextIncoming<'a> {
@@ -465,6 +490,17 @@ impl IpcContextServer {
                             .fetch_object_bytes(hash)
                             .map_err(|err| format!("Context error: {:?}", err));
                         io.tx.send(&ContextResponse::GetValueResponse(res))?;
+                    }
+                },
+                ContextRequest::GetShape(shape_id) => match crate::ffi::get_context_index()? {
+                    None => io.tx.send(&ContextResponse::GetShapeResponse(Err(
+                        "Context index unavailable".to_owned(),
+                    )))?,
+                    Some(index) => {
+                        let repo = index.repository.read().unwrap();
+                        let shape = repo.get_shape(shape_id).unwrap();
+                        io.tx
+                            .send(&ContextResponse::GetShapeResponse(Ok(shape.to_vec())))?;
                     }
                 },
                 ContextRequest::ContainsObject(hash) => match crate::ffi::get_context_index()? {
