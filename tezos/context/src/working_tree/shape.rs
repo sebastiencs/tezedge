@@ -1,9 +1,19 @@
-use std::{collections::hash_map::{DefaultHasher, Entry::{Occupied, Vacant}}, convert::{TryFrom, TryInto}, hash::Hasher};
+// Copyright (c) SimpleStaking, Viable Systems and Tezedge Contributors
+// SPDX-License-Identifier: MIT
 
-use crate::{Map, kv_store::entries::Entries};
+use std::{collections::{BTreeMap, btree_map::Entry::{Occupied, Vacant}, hash_map::{
+        DefaultHasher,
+        // Entry::{Occupied, Vacant},
+    }}, convert::{TryFrom, TryInto}, hash::Hasher};
 
-use super::{storage::{NodeId, Storage}, string_interner::StringId};
+use crate::{kv_store::entries::Entries, Map};
 
+use super::{
+    storage::{NodeId, Storage},
+    string_interner::StringId,
+};
+
+#[derive(Debug)]
 enum ShapeError {
     ShapeIdNotFound,
     CannotFindKey,
@@ -30,70 +40,69 @@ impl TryFrom<usize> for ShapeId {
     }
 }
 
-#[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
+//#[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct ShapeHash(u64);
 
 struct Shape {
-    hashes: Map<ShapeHash, Box<[StringId]>>,
+    hashes: BTreeMap<ShapeHash, (ShapeId, Box<[StringId]>)>,
     ids: Entries<ShapeId, ShapeHash>,
     temp: Vec<StringId>,
 }
 
 impl Shape {
+    fn new() -> Self {
+        Self {
+            hashes: BTreeMap::default(),
+            ids: Entries::with_capacity(1024),
+            temp: Vec::with_capacity(256),
+        }
+    }
+
     fn get_shape(&self, shape_id: ShapeId) -> Result<&[StringId], ShapeError> {
         let hash = match self.ids.get(shape_id)?.copied() {
             Some(hash) => hash,
             None => return Err(ShapeError::ShapeIdNotFound),
         };
 
-        let slice = match self.hashes.get(&hash) {
-            Some(slice) => slice,
-            None => return Err(ShapeError::ShapeIdNotFound),
-        };
-
-        Ok(slice)
+        self.hashes
+            .get(&hash)
+            .map(|s| &*s.1)
+            .ok_or(ShapeError::ShapeIdNotFound)
     }
 
-    fn make_shape(&mut self, dir: &[(StringId, NodeId)], storage: &Storage) -> Result<Option<ShapeId>, ShapeError> {
-        let mut temp = std::mem::take(&mut self.temp);
+    fn make_shape(
+        &mut self,
+        dir: &[(StringId, NodeId)],
+        storage: &Storage,
+    ) -> Result<Option<ShapeId>, ShapeError> {
+        self.temp.clear();
 
         let mut hasher = DefaultHasher::new();
+        hasher.write_usize(dir.len());
 
         for (key_id, _) in dir {
             if key_id.is_big() {
                 return Ok(None);
             }
 
-            let key = storage.get_str(*key_id).map_err(|_| ShapeError::CannotFindKey)?;
-            hasher.write(key.as_bytes());
+            let key = storage
+                .get_str(*key_id)
+                .map_err(|_| ShapeError::CannotFindKey)?;
 
-            temp.push(*key_id);
+            hasher.write(key.as_bytes());
+            self.temp.push(*key_id);
         }
 
-        let hashed = ShapeHash(hasher.finish());
+        let shape_hash = ShapeHash(hasher.finish());
 
-        let mut new_shape = false;
-
-        // match self.hashes.entry(hashed) {
-        //     Occupied(entry) => {
-        //         //entry.
-        //     },
-        //     Vacant(_) => todo!(),
-        // }
-
-        self.hashes
-            .entry(hashed)
-            .or_insert_with(|| {
-                new_shape = true;
-                Box::from(temp.as_slice())
-            });
-
-        self.temp = temp;
-
-        if new_shape {
-            self.ids.push(hashed).map(Some)
-        } else {
-            todo!()
+        match self.hashes.entry(shape_hash) {
+            Occupied(entry) => Ok(Some(entry.get().0)),
+            Vacant(entry) => {
+                let shape_id = self.ids.push(shape_hash)?;
+                entry.insert((shape_id, Box::from(self.temp.as_slice())));
+                Ok(Some(shape_id))
+            }
         }
     }
 }
