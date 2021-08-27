@@ -13,6 +13,9 @@ use slog::{error, info};
 use tezos_timing::RepositoryMemoryUsage;
 
 use crate::persistent::{DBError, Flushable, Persistable};
+use crate::working_tree::shape::{ShapeError, ShapeId};
+use crate::working_tree::storage::{DirEntryId, Storage};
+use crate::working_tree::string_interner::StringId;
 use crate::ContextValue;
 use crate::{
     ffi::TezedgeIndexError, gc::NotGarbageCollected, persistent::KeyValueStoreBackend, ObjectHash,
@@ -104,6 +107,18 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
 
     fn memory_usage(&self) -> RepositoryMemoryUsage {
         self.hashes.get_memory_usage()
+    }
+
+    fn get_shape(&self, shape_id: ShapeId) -> Result<&[StringId], DBError> {
+        todo!()
+    }
+
+    fn make_shape(
+        &mut self,
+        dir: &[(StringId, DirEntryId)],
+        storage: &Storage,
+    ) -> Result<Option<ShapeId>, DBError> {
+        todo!()
     }
 }
 

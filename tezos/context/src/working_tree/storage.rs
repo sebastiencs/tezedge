@@ -22,6 +22,7 @@ use crate::hash::index as index_of_key;
 use crate::kv_store::{index_map::IndexMap, HashId};
 
 use super::{
+    shape::Shapes,
     string_interner::{StringId, StringInterner},
     working_tree::MerkleError,
     DirEntry,
@@ -475,6 +476,8 @@ pub struct Storage {
     /// A `DirectoryId` might contains an `InodeId` but it's only the root
     /// of an Inode, any children of that root are not visible to the working tree.
     inodes: Vec<Inode>,
+
+    shapes: Shapes,
 }
 
 #[derive(Debug)]
@@ -520,6 +523,7 @@ impl Storage {
             strings: Default::default(),
             nodes: IndexMap::with_capacity(2048),
             inodes: Vec::with_capacity(256),
+            shapes: Shapes::new(),
         }
     }
 

@@ -20,7 +20,7 @@ use crate::{
     persistent::DBError,
     timings::send_statistics,
     working_tree::{
-        serializer::deserialize,
+        serializer::deserialize_object,
         storage::{BlobId, DirEntryId, DirectoryId, Storage},
         working_tree::{MerkleError, PostCommitData},
         Commit, Object,
@@ -97,7 +97,11 @@ impl TezedgeIndex {
 
         match repo.get_value(hash_id)? {
             None => Ok(None),
-            Some(object_bytes) => Ok(Some(deserialize(object_bytes.as_ref(), storage, &*repo)?)),
+            Some(object_bytes) => Ok(Some(deserialize_object(
+                object_bytes.as_ref(),
+                storage,
+                &*repo,
+            )?)),
         }
     }
 

@@ -1,12 +1,17 @@
 // Copyright (c) SimpleStaking, Viable Systems and Tezedge Contributors
 // SPDX-License-Identifier: MIT
 
-use std::{collections::{BTreeMap, btree_map::Entry::{Occupied, Vacant}, hash_map::{
-        DefaultHasher,
-        // Entry::{Occupied, Vacant},
-    }}, convert::{TryFrom, TryInto}, hash::Hasher};
+use std::{
+    collections::{
+        btree_map::Entry::{Occupied, Vacant},
+        hash_map::DefaultHasher,
+        BTreeMap,
+    },
+    convert::{TryFrom, TryInto},
+    hash::Hasher,
+};
 
-use crate::{kv_store::entries::Entries, Map};
+use crate::{kv_store::index_map::IndexMap, Map};
 
 use super::{
     storage::{DirEntryId, Storage},
@@ -14,14 +19,14 @@ use super::{
 };
 
 #[derive(Debug)]
-enum ShapeError {
+pub enum ShapeError {
     ShapeIdNotFound,
     CannotFindKey,
     IdFromUSize,
 }
 
 #[derive(Debug, Clone, Copy)]
-struct ShapeId(u32);
+pub struct ShapeId(u32);
 
 impl TryInto<usize> for ShapeId {
     type Error = ShapeError;
@@ -40,26 +45,44 @@ impl TryFrom<usize> for ShapeId {
     }
 }
 
+impl ShapeId {
+    pub fn as_u32(&self) -> u32 {
+        self.0
+    }
+}
+
+impl From<u32> for ShapeId {
+    fn from(shape_id: u32) -> Self {
+        Self(shape_id)
+    }
+}
+
 //#[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct ShapeHash(u64);
 
-struct Shape {
+pub struct Shapes {
     hashes: BTreeMap<ShapeHash, (ShapeId, Box<[StringId]>)>,
-    ids: Entries<ShapeId, ShapeHash>,
+    ids: IndexMap<ShapeId, ShapeHash>,
     temp: Vec<StringId>,
 }
 
-impl Shape {
-    fn new() -> Self {
+impl Default for Shapes {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Shapes {
+    pub fn new() -> Self {
         Self {
             hashes: BTreeMap::default(),
-            ids: Entries::with_capacity(1024),
+            ids: IndexMap::with_capacity(1024),
             temp: Vec::with_capacity(256),
         }
     }
 
-    fn get_shape(&self, shape_id: ShapeId) -> Result<&[StringId], ShapeError> {
+    pub fn get_shape(&self, shape_id: ShapeId) -> Result<&[StringId], ShapeError> {
         let hash = match self.ids.get(shape_id)?.copied() {
             Some(hash) => hash,
             None => return Err(ShapeError::ShapeIdNotFound),
@@ -71,7 +94,7 @@ impl Shape {
             .ok_or(ShapeError::ShapeIdNotFound)
     }
 
-    fn make_shape(
+    pub fn make_shape(
         &mut self,
         dir: &[(StringId, DirEntryId)],
         storage: &Storage,

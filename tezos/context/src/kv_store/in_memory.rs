@@ -23,6 +23,11 @@ use crate::{
     },
     hash::ObjectHash,
     persistent::{DBError, Flushable, KeyValueStoreBackend, Persistable},
+    working_tree::{
+        shape::{ShapeError, ShapeId, Shapes},
+        storage::{DirEntryId, Storage},
+        string_interner::StringId,
+    },
     Map,
 };
 
@@ -145,6 +150,8 @@ pub struct InMemory {
     pub context_hashes: Map<u64, HashId>,
     context_hashes_cycles: VecDeque<Vec<u64>>,
     thread_handle: Option<JoinHandle<()>>,
+
+    shapes: Shapes,
 }
 
 impl GarbageCollector for InMemory {
@@ -211,6 +218,18 @@ impl KeyValueStoreBackend for InMemory {
     fn memory_usage(&self) -> RepositoryMemoryUsage {
         self.hashes.get_memory_usage()
     }
+
+    fn get_shape(&self, shape_id: ShapeId) -> Result<&[StringId], DBError> {
+        self.shapes.get_shape(shape_id).map_err(Into::into)
+    }
+
+    fn make_shape(
+        &mut self,
+        dir: &[(StringId, DirEntryId)],
+        storage: &Storage,
+    ) -> Result<Option<ShapeId>, DBError> {
+        self.shapes.make_shape(dir, storage).map_err(Into::into)
+    }
 }
 
 impl InMemory {
@@ -258,6 +277,7 @@ impl InMemory {
             context_hashes,
             context_hashes_cycles,
             thread_handle,
+            shapes: Shapes::default(),
         })
     }
 

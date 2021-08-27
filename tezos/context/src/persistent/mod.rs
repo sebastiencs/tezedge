@@ -14,7 +14,12 @@ use tezos_timing::RepositoryMemoryUsage;
 
 use crate::{
     kv_store::{readonly_ipc::ContextServiceError, HashId, HashIdError, VacantObjectHash},
-    working_tree::serializer::DeserializationError,
+    working_tree::{
+        serializer::DeserializationError,
+        shape::{ShapeError, ShapeId},
+        storage::{DirEntryId, Storage},
+        string_interner::StringId,
+    },
     ObjectHash,
 };
 
@@ -65,6 +70,13 @@ pub trait KeyValueStoreBackend {
     fn clear_objects(&mut self) -> Result<(), DBError>;
     /// Memory usage
     fn memory_usage(&self) -> RepositoryMemoryUsage;
+
+    fn get_shape(&self, shape_id: ShapeId) -> Result<&[StringId], DBError>;
+    fn make_shape(
+        &mut self,
+        dir: &[(StringId, DirEntryId)],
+        storage: &Storage,
+    ) -> Result<Option<ShapeId>, DBError>;
 }
 
 /// Possible errors for schema
@@ -97,11 +109,19 @@ pub enum DBError {
     HashIdFailed,
     #[fail(display = "Deserialization error: {:?}", error)]
     DeserializationError { error: DeserializationError },
+    #[fail(display = "Shape error: {:?}", error)]
+    ShapeError { error: ShapeError },
 }
 
 impl From<HashIdError> for DBError {
     fn from(_: HashIdError) -> Self {
         DBError::HashIdFailed
+    }
+}
+
+impl From<ShapeError> for DBError {
+    fn from(error: ShapeError) -> Self {
+        DBError::ShapeError { error }
     }
 }
 
