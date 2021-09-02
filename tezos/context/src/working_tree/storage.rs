@@ -693,11 +693,11 @@ impl Storage {
         } else {
             let dir = self.get_small_dir(dir_id).ok()?;
 
-            println!("DIR_FIND_DIR_ENTRY DIR={:?}", dir);
+            println!("DIR_FIND_DIR_ENTRY KEY={:?} DIR={:?}", key, dir);
 
             let index = self.binary_search_in_dir(dir, key);
 
-            println!("DIR_FIND_DIR_ENTRY BINARY_SEARCH={:?}", index);
+            println!("DIR_FIND_DIR_ENTRY KEY={:?} BINARY_SEARCH={:?}", key, index);
 
             let index = index.ok()?.ok()?;
 

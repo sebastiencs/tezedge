@@ -621,14 +621,17 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
             }
         };
 
+        println!("CLEARING STORAGE");
         let mut storage = self.storage.borrow_mut();
         storage.clear();
 
         {
             let mut repository = self.repository.write()?;
             repository.update_strings(&storage.strings)?;
+            println!("UPDATE STRINGS");
 
             if let Some(string_interner) = repository.take_new_strings()? {
+                println!("UPDATE STRINGS WITH {:?}", string_interner);
                 storage.strings = string_interner;
             };
         }
