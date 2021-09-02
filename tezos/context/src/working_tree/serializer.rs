@@ -15,6 +15,7 @@ use tezos_timing::SerializeStats;
 
 use crate::{
     kv_store::HashId,
+    persistent::DBError,
     working_tree::{
         storage::{DirectoryId, Inode, PointerToInode},
         Commit, DirEntryKind,
@@ -50,6 +51,7 @@ pub enum SerializationError {
     StorageIdError { error: StorageError },
     HashIdTooBig,
     MissingHashId,
+    DBError { error: DBError },
 }
 
 impl From<std::io::Error> for SerializationError {
@@ -67,6 +69,12 @@ impl From<TryFromIntError> for SerializationError {
 impl From<StorageError> for SerializationError {
     fn from(error: StorageError) -> Self {
         Self::StorageIdError { error }
+    }
+}
+
+impl From<DBError> for SerializationError {
+    fn from(error: DBError) -> Self {
+        Self::DBError { error }
     }
 }
 
@@ -141,9 +149,9 @@ fn serialize_directory(
     let mut nblobs_inlined: usize = 0;
     let mut blobs_length: usize = 0;
 
-    // if let Some(shape_id) = store.make_shape(dir, storage).unwrap() {
-    //     return serialize_shaped_directory(shape_id, dir, output, storage, stats);
-    // };
+    if let Some(shape_id) = store.make_shape(dir, storage)? {
+        return serialize_shaped_directory(shape_id, dir, output, storage, stats);
+    };
 
     output.write_all(&[ID_DIRECTORY])?;
 
@@ -489,6 +497,7 @@ pub enum DeserializationError {
     StorageIdError { error: StorageError },
     InodeNotFoundInRepository,
     InodeEmptyInRepository,
+    DBError { error: Box<DBError> },
 }
 
 impl From<TryFromSliceError> for DeserializationError {
@@ -518,6 +527,14 @@ impl From<DirEntryIdError> for DeserializationError {
 impl From<StorageError> for DeserializationError {
     fn from(error: StorageError) -> Self {
         Self::StorageIdError { error }
+    }
+}
+
+impl From<DBError> for DeserializationError {
+    fn from(error: DBError) -> Self {
+        Self::DBError {
+            error: Box::new(error),
+        }
     }
 }
 
@@ -562,7 +579,7 @@ fn deserialize_shaped_directory(
     let shape_id = u32::from_ne_bytes(shape_id.try_into()?);
     let shape_id = ShapeId::from(shape_id);
 
-    let shape = store.get_shape(shape_id).unwrap();
+    let shape = store.get_shape(shape_id)?;
     let mut shape = shape.as_ref().into_iter();
 
     pos += 4;
@@ -574,7 +591,13 @@ fn deserialize_shaped_directory(
 
             pos += 1;
 
-            let key_id = shape.next().copied().unwrap();
+            let key_id = match shape.next().copied() {
+                Some(key_id) => key_id,
+                None => {
+                    eprintln!("Cannot found next shape");
+                    panic!("Cannot found next shape");
+                }
+            };
 
             let kind = descriptor.kind();
             let blob_inline_length = descriptor.blob_inline_length() as usize;
