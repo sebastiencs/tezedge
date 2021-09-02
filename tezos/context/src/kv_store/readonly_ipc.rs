@@ -490,11 +490,7 @@ impl IpcContextListener {
                     if let Err(spawn_error) = std::thread::Builder::new()
                         .name("ctx-ipc-server-thread".to_string())
                         .spawn(move || {
-
-                            info!(
-                                &log_inner,
-                                "IpcContextServer start processing requests",
-                            );
+                            info!(&log_inner, "IpcContextServer start processing requests",);
 
                             if let Err(err) = server.process_context_requests(&log_inner) {
                                 error!(
@@ -512,11 +508,7 @@ impl IpcContextListener {
                         );
                     }
 
-                    info!(
-                        &log,
-                        "IpcContextServer spawned new thread",
-                    );
-
+                    info!(&log, "IpcContextServer spawned new thread",);
                 }
             }
         }
@@ -533,10 +525,7 @@ impl IpcContextServer {
 
             let cmd_clone = cmd.clone();
 
-            info!(
-                log,
-                "IpcContextServer processing {:?}", cmd,
-            );
+            info!(log, "IpcContextServer processing {:?}", cmd,);
 
             match cmd {
                 ContextRequest::GetValue(hash) => match crate::ffi::get_context_index()? {
@@ -659,11 +648,7 @@ impl IpcContextServer {
                 },
             }
 
-            info!(
-                log,
-                "IpcContextServer processed {:?}", cmd_clone,
-            );
-
+            info!(log, "IpcContextServer processed {:?}", cmd_clone,);
         }
 
         Ok(())
