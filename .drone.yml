@@ -215,8 +215,8 @@ steps:
 
 trigger:
   branch:
-    - master
-    - develop
+    - xmaster
+    - xdevelop
   ref:
     - refs/pull/*/head
 
@@ -348,8 +348,8 @@ node:
 
 trigger:
   branch:
-    - master
-    - develop
+    - xmaster
+    - xdevelop
 
 #############################################################################################################
 # This pipeline runs tezedge node with mainnet configuration against octez node with different network cfg
@@ -3523,8 +3523,8 @@ volumes:
 
 trigger:
   branch:
-    - master
-    - develop
+    - xmaster
+    - xdevelop
 
 depends_on:
   - build-tezedge-binaries
@@ -3748,8 +3748,8 @@ volumes:
 
 trigger:
   branch:
-    - master
-    - develop
+    - xmaster
+    - xdevelop
 
 depends_on:
   - build-tezedge-binaries
@@ -3974,8 +3974,8 @@ volumes:
 
 trigger:
   branch:
-    - master
-    - develop
+    - xmaster
+    - xdevelop
 
 depends_on:
   - build-tezedge-binaries
@@ -4202,8 +4202,8 @@ volumes:
 
 trigger:
   branch:
-    - master
-    - develop
+    - xmaster
+    - xdevelop
 
 depends_on:
   - build-tezedge-binaries
@@ -4430,8 +4430,8 @@ volumes:
 
 trigger:
   branch:
-    - master
-    - develop
+    - xmaster
+    - xdevelop
 
 depends_on:
   - build-tezedge-binaries
@@ -4462,8 +4462,8 @@ volumes:
 
 trigger:
   branch:
-    - develop
-    - master
+    - xdevelop
+    - xmaster
 
 steps:
 
@@ -4532,8 +4532,8 @@ depends_on:
 
 trigger:
   branch:
-    - master
-    - develop
+    - xmaster
+    - xdevelop
 
 steps:
 
@@ -4658,8 +4658,8 @@ volumes:
 
 trigger:
   branch:
-    - master
-    - develop
+    - xmaster
+    - xdevelop
 
 depends_on:
   - build-tezedge-binaries
@@ -4761,8 +4761,8 @@ depends_on:
 
 trigger:
   branch:
-    - master
-    - develop
+    - xmaster
+    - xdevelop
 
 steps:
 
@@ -4915,8 +4915,8 @@ volumes:
 
 trigger:
   branch:
-    - master
-    - develop
+    - xmaster
+    - xdevelop
 
 depends_on:
   - build-tezedge-binaries
@@ -5004,8 +5004,8 @@ depends_on:
 
 trigger:
   branch:
-    - master
-    - develop
+    - xmaster
+    - xdevelop
 
 steps:
 
