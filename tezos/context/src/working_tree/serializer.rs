@@ -141,9 +141,9 @@ fn serialize_directory(
     let mut nblobs_inlined: usize = 0;
     let mut blobs_length: usize = 0;
 
-    if let Some(shape_id) = store.make_shape(dir, storage).unwrap() {
-        return serialize_shaped_directory(shape_id, dir, output, storage, stats);
-    };
+    // if let Some(shape_id) = store.make_shape(dir, storage).unwrap() {
+    //     return serialize_shaped_directory(shape_id, dir, output, storage, stats);
+    // };
 
     output.write_all(&[ID_DIRECTORY])?;
 
