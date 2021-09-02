@@ -692,7 +692,16 @@ impl Storage {
             self.dir_find_dir_entry_recursive(inode_id, key)
         } else {
             let dir = self.get_small_dir(dir_id).ok()?;
-            let index = self.binary_search_in_dir(dir, key).ok()?.ok()?;
+
+            println!("DIR_FIND_DIR_ENTRY DIR={:?}", dir);
+
+            let index = self.binary_search_in_dir(dir, key);
+
+            println!("DIR_FIND_DIR_ENTRY BINARY_SEARCH={:?}", index);
+
+            let index = index.ok()?.ok()?;
+
+            //let index = self.binary_search_in_dir(dir, key).ok()?.ok()?;
 
             Some(dir[index].1)
         }
