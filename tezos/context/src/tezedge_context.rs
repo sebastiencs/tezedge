@@ -451,21 +451,37 @@ impl TezedgeIndex {
         key: &ContextKey,
         storage: &mut Storage,
     ) -> Result<BlobId, MerkleError> {
+        println!("TRY_FIND_BLOB={:?}", key);
+
         let dir_entry_id = match self.find_dir_entry(root, key, storage)? {
             Some(dir_entry_id) => dir_entry_id,
             None => {
+                println!("TRY_FIND_BLOB VALUE NOT FOUND");
                 return Err(MerkleError::ValueNotFound {
                     key: self.key_to_string(key),
-                })
+                });
             }
         };
+
+        println!("TRY_FIND_BLOB DIR_ENTRY_ID={:?}", dir_entry_id);
 
         // get blob
         match self.dir_entry_object(dir_entry_id, storage)? {
             Object::Blob(blob) => Ok(blob),
-            _ => Err(MerkleError::ValueIsNotABlob {
-                key: self.key_to_string(key),
-            }),
+            Object::Directory(_) => {
+                println!("TRY_FIND_BLOB FOUND DIRECTORY");
+
+                Err(MerkleError::ValueIsNotABlob {
+                    key: self.key_to_string(key),
+                })
+            }
+            Object::Commit(_) => {
+                println!("TRY_FIND_BLOB FOUND COMMIT");
+
+                Err(MerkleError::ValueIsNotABlob {
+                    key: self.key_to_string(key),
+                })
+            }
         }
     }
 

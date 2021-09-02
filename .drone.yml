@@ -263,8 +263,8 @@ steps:
 
 trigger:
   branch:
-    - master
-    - develop
+    - xmaster
+    - xdevelop
 
 #############################################################################################################
 # This pipeline runs cyclictest routed to the real time node to verify that the environment is indeed
@@ -1030,8 +1030,8 @@ volumes:
 
 trigger:
   branch:
-    - master
-    - develop
+    - xmaster
+    - xdevelop
 
 #############################################################################################################
  # This pipeline runs the python test framework tests from the tezos repository against tezedge nodes
@@ -5198,8 +5198,8 @@ volumes:
 
 trigger:
   branch:
-    - master
-    - develop
+    - xmaster
+    - xdevelop
 
 depends_on:
   - build-monitoring-artifacts
@@ -5280,8 +5280,8 @@ volumes:
 
 trigger:
   branch:
-    - master
-    - develop
+    - xmaster
+    - xdevelop
 
 depends_on:
   - build-monitoring-artifacts
@@ -5361,8 +5361,8 @@ volumes:
 
 trigger:
   branch:
-    - master
-    - develop
+    - xmaster
+    - xdevelop
 
 depends_on:
   - build-monitoring-artifacts
@@ -5446,8 +5446,8 @@ volumes:
 
 trigger:
   branch:
-    - master
-    - develop
+    - xmaster
+    - xdevelop
 
 depends_on:
   - build-monitoring-artifacts
@@ -5708,8 +5708,8 @@ volumes:
 
 trigger:
   branch:
-    - master
-    - develop
+    - xmaster
+    - xdevelop
 
 ---
 ##############################################################################################################
@@ -5750,8 +5750,8 @@ steps:
 
 trigger:
   branch:
-    - master
-    - develop
+    - xmaster
+    - xdevelop
 
 ##############################################################################################################
 # This pipeline runs tezedge node and octez node,
@@ -6008,8 +6008,8 @@ volumes:
 
 trigger:
   branch:
-    - master
-    - develop
+    - xmaster
+    - xdevelop
 
 depends_on:
   - build-tezedge-binaries
@@ -6257,8 +6257,8 @@ volumes:
 
 trigger:
   branch:
-    - master
-    - develop
+    - xmaster
+    - xdevelop
 
 depends_on:
   - build-tezedge-binaries
@@ -6277,8 +6277,8 @@ depends_on:
 
 trigger:
   branch:
-    - master
-    - develop
+    - xmaster
+    - xdevelop
 
 volumes:
   - name: snapshots
@@ -6483,8 +6483,8 @@ node:
 
 trigger:
   branch:
-    - master
-    - develop
+    - xmaster
+    - xdevelop
 
 volumes:
   - name: snapshots
@@ -6799,7 +6799,7 @@ image_pull_secrets:
   - docker_pull_secret
 
 trigger:
-  branch: develop
+  branch: xdevelop
   event: push
 
 depends_on:
