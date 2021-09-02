@@ -399,7 +399,7 @@ impl TezedgeIndex {
             let child_dir_entry_id = match storage.dir_find_dir_entry(root, key) {
                 Some(dir_entry_id) => dir_entry_id,
                 None => {
-                    println!("FIND_DIR_ENTRY PATH DOESNT EXIST");
+                    println!("FIND_DIR_ENTRY PATH DOESNT EXIST STORAGE_STRINGS={:?}", storage.strings);
                     return Ok(None); // Path doesn't exist
                 }
             };
