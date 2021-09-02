@@ -740,7 +740,11 @@ impl ProtocolContextApi for TezedgeContext {
     }
 
     fn find(&self, key: &ContextKey) -> Result<Option<ContextValue>, ContextError> {
-        Ok(self.tree.find(key)?)
+        println!("ProtocolContextApi::find {:?}", key);
+        let res = self.tree.find(key);
+        println!("ProtocolContextApi::find result {:?}", res);
+
+        Ok(res?)
     }
 
     fn mem(&self, key: &ContextKey) -> Result<bool, ContextError> {
