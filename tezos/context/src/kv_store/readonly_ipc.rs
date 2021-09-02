@@ -110,9 +110,14 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
     }
 
     fn get_shape(&self, shape_id: ShapeId) -> Result<Cow<[StringId]>, DBError> {
-        self.client
+        let res = self
+            .client
             .get_shape(shape_id)
-            .map_err(|reason| DBError::IpcAccessError { reason })
+            .map_err(|reason| DBError::IpcAccessError { reason });
+
+        eprintln!("GET_SHAPE RESULT {:?}", res);
+
+        res
     }
 
     fn make_shape(
@@ -128,10 +133,15 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
     }
 
     fn take_new_strings(&self) -> Result<Option<StringInterner>, DBError> {
-        self.client
+        let res = self
+            .client
             .get_string_interner()
             .map(Some)
-            .map_err(|reason| DBError::IpcAccessError { reason })
+            .map_err(|reason| DBError::IpcAccessError { reason });
+
+        eprintln!("TAKE_NEW_STRINGS RESULT={:?}", res);
+
+        res
     }
 
     fn clone_string_interner(&self) -> Option<StringInterner> {
@@ -344,9 +354,10 @@ impl IpcContextClient {
             .rx
             .try_receive(Some(Self::TIMEOUT), Some(IpcContextListener::IO_TIMEOUT))?
         {
-            ContextResponse::GetStringInternerResponse(result) => {
-                result.map_err(|err| ContextError::GetStringInternerError { reason: err }.into())
-            }
+            ContextResponse::GetStringInternerResponse(result) => result.map_err(|err| {
+                eprintln!("Fail to get string interner {:?}", err);
+                ContextError::GetStringInternerError { reason: err }.into()
+            }),
             message => Err(ContextServiceError::UnexpectedMessage {
                 message: message.into(),
             }),

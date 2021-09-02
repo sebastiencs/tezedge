@@ -978,7 +978,8 @@ impl WorkingTree {
             None => Err(MerkleError::ObjectNotFound { hash_id }),
             Some(object_bytes) => {
                 let mut storage = self.index.storage.borrow_mut();
-                let res = deserialize_object(object_bytes.as_ref(), &mut storage, store).map_err(Into::into);
+                let res = deserialize_object(object_bytes.as_ref(), &mut storage, store)
+                    .map_err(Into::into);
 
                 eprintln!("RESULT DESERIALIZE {:?}", res);
 
