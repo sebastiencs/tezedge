@@ -5345,12 +5345,12 @@ steps:
   commands:
     - sleep 10
 
-- name: test-io-and-network-measurements
-  image: tezedge/monitoring-test:latest
-  pid: host
-  network_mode: host
-  user: root
-  command: ["--test-networking-and-io", "512000"]
+# - name: test-io-and-network-measurements
+#   image: tezedge/monitoring-test:latest
+#   pid: host
+#   network_mode: host
+#   user: root
+#   command: ["--test-networking-and-io", "512000"]
 
 volumes:
 - name: tezedge-dummy-data
