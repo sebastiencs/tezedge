@@ -56,7 +56,7 @@ impl StringId {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 struct BigStrings {
     strings: String,
     offsets: Vec<(u32, u32)>,
@@ -93,7 +93,7 @@ impl BigStrings {
     }
 }
 
-#[derive(Default)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct StringInterner {
     /// `Map` of hash of the string to their `StringId`
     /// We don't use `HashMap<String, StringId>` because the map would

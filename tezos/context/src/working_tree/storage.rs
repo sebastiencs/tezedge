@@ -468,7 +468,7 @@ pub struct Storage {
     blobs: Vec<u8>,
     /// Concatenation of all strings in the working tree.
     /// The working tree has `StringId` which refers to a data inside `StringInterner`.
-    strings: StringInterner,
+    pub strings: StringInterner,
     /// Concatenation of all inodes.
     /// Note that the implementation of `Storage` attempt to hide as much as
     /// possible the existence of inodes to the working tree.
@@ -476,8 +476,6 @@ pub struct Storage {
     /// A `DirectoryId` might contains an `InodeId` but it's only the root
     /// of an Inode, any children of that root are not visible to the working tree.
     inodes: Vec<Inode>,
-
-    shapes: Shapes,
 }
 
 #[derive(Debug)]
@@ -523,7 +521,6 @@ impl Storage {
             strings: Default::default(),
             nodes: IndexMap::with_capacity(2048),
             inodes: Vec::with_capacity(256),
-            shapes: Shapes::new(),
         }
     }
 

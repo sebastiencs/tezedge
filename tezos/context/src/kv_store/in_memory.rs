@@ -26,7 +26,7 @@ use crate::{
     working_tree::{
         shape::{ShapeError, ShapeId, Shapes},
         storage::{DirEntryId, Storage},
-        string_interner::StringId,
+        string_interner::{StringId, StringInterner},
     },
     Map,
 };
@@ -152,6 +152,8 @@ pub struct InMemory {
     thread_handle: Option<JoinHandle<()>>,
 
     shapes: Shapes,
+
+    string_interner: StringInterner,
 }
 
 impl GarbageCollector for InMemory {
@@ -233,6 +235,20 @@ impl KeyValueStoreBackend for InMemory {
     ) -> Result<Option<ShapeId>, DBError> {
         self.shapes.make_shape(dir, storage).map_err(Into::into)
     }
+
+    fn update_strings(&mut self, string_interner: &StringInterner) -> Result<(), DBError> {
+        self.string_interner = string_interner.clone();
+
+        Ok(())
+    }
+
+    fn take_new_strings(&self) -> Result<Option<StringInterner>, DBError> {
+        Ok(None)
+    }
+
+    fn clone_string_interner(&self) -> Option<StringInterner> {
+        Some(self.string_interner.clone())
+    }
 }
 
 impl InMemory {
@@ -281,6 +297,7 @@ impl InMemory {
             context_hashes_cycles,
             thread_handle,
             shapes: Shapes::default(),
+            string_interner: StringInterner::default(),
         })
     }
 

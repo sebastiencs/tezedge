@@ -18,7 +18,7 @@ use crate::{
         serializer::DeserializationError,
         shape::{ShapeError, ShapeId},
         storage::{DirEntryId, Storage},
-        string_interner::StringId,
+        string_interner::{StringId, StringInterner},
     },
     ObjectHash,
 };
@@ -77,6 +77,10 @@ pub trait KeyValueStoreBackend {
         dir: &[(StringId, DirEntryId)],
         storage: &Storage,
     ) -> Result<Option<ShapeId>, DBError>;
+
+    fn update_strings(&mut self, string_interner: &StringInterner) -> Result<(), DBError>;
+    fn take_new_strings(&self) -> Result<Option<StringInterner>, DBError>;
+    fn clone_string_interner(&self) -> Option<StringInterner>;
 }
 
 /// Possible errors for schema

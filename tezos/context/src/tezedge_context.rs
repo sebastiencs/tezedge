@@ -598,6 +598,15 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
         let mut storage = self.storage.borrow_mut();
         storage.clear();
 
+        {
+            let mut repository = self.repository.write()?;
+            repository.update_strings(&storage.strings)?;
+
+            if let Some(string_interner) = repository.take_new_strings()? {
+                storage.strings = string_interner;
+            };
+        }
+
         let commit = match self.fetch_commit(hash_id, &mut storage)? {
             Some(commit) => commit,
             None => return Ok(None),

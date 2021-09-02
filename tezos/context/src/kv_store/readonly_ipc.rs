@@ -15,7 +15,7 @@ use tezos_timing::RepositoryMemoryUsage;
 use crate::persistent::{DBError, Flushable, Persistable};
 use crate::working_tree::shape::{ShapeError, ShapeId};
 use crate::working_tree::storage::{DirEntryId, Storage};
-use crate::working_tree::string_interner::StringId;
+use crate::working_tree::string_interner::{StringId, StringInterner};
 use crate::ContextValue;
 use crate::{
     ffi::TezedgeIndexError, gc::NotGarbageCollected, persistent::KeyValueStoreBackend, ObjectHash,
@@ -122,6 +122,21 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
     ) -> Result<Option<ShapeId>, DBError> {
         Ok(None)
     }
+
+    fn update_strings(&mut self, _string_interner: &StringInterner) -> Result<(), DBError> {
+        Ok(())
+    }
+
+    fn take_new_strings(&self) -> Result<Option<StringInterner>, DBError> {
+        self.client
+            .get_string_interner()
+            .map(Some)
+            .map_err(|reason| DBError::IpcAccessError { reason })
+    }
+
+    fn clone_string_interner(&self) -> Option<StringInterner> {
+        None
+    }
 }
 
 impl Flushable for ReadonlyIpcBackend {
@@ -156,6 +171,7 @@ enum ContextRequest {
     GetValue(HashId),
     GetShape(ShapeId),
     ContainsObject(HashId),
+    GetStringInterner,
     ShutdownCall, // TODO: is this required?
 }
 
@@ -167,6 +183,7 @@ enum ContextResponse {
     GetValueResponse(Result<Option<ContextValue>, String>),
     GetShapeResponse(Result<Vec<StringId>, String>),
     ContainsObjectResponse(Result<bool, String>),
+    GetStringInternerResponse(Result<StringInterner, String>),
     ShutdownResult,
 }
 
@@ -182,6 +199,8 @@ pub enum ContextError {
     GetContextHashIdError { reason: String },
     #[fail(display = "Context get hash error: {}", reason)]
     GetContextHashError { reason: String },
+    #[fail(display = "Context get string interner error: {}", reason)]
+    GetStringInternerError { reason: String },
 }
 
 #[derive(Fail, Debug)]
@@ -309,6 +328,25 @@ impl IpcContextClient {
             ContextResponse::GetValueResponse(result) => result
                 .map(|h| h.map(Cow::Owned))
                 .map_err(|err| ContextError::GetValueError { reason: err }.into()),
+            message => Err(ContextServiceError::UnexpectedMessage {
+                message: message.into(),
+            }),
+        }
+    }
+
+    /// Get object by hash id
+    pub fn get_string_interner(&self) -> Result<StringInterner, ContextServiceError> {
+        let mut io = self.io.borrow_mut();
+        io.tx.send(&ContextRequest::GetStringInterner)?;
+
+        // this might take a while, so we will use unusually long timeout
+        match io
+            .rx
+            .try_receive(Some(Self::TIMEOUT), Some(IpcContextListener::IO_TIMEOUT))?
+        {
+            ContextResponse::GetStringInternerResponse(result) => {
+                result.map_err(|err| ContextError::GetStringInternerError { reason: err }.into())
+            }
             message => Err(ContextServiceError::UnexpectedMessage {
                 message: message.into(),
             }),
@@ -547,6 +585,20 @@ impl IpcContextServer {
                             .map_err(|err| format!("Context error: {:?}", err));
 
                         io.tx.send(&ContextResponse::GetContextHashResponse(res))?;
+                    }
+                },
+                ContextRequest::GetStringInterner => match crate::ffi::get_context_index()? {
+                    None => io.tx.send(&ContextResponse::GetStringInternerResponse(Err(
+                        "Context index unavailable".to_owned(),
+                    )))?,
+                    Some(index) => {
+                        let repo = index.repository.read().unwrap();
+
+                        let string_interner = repo.clone_string_interner().unwrap();
+
+                        io.tx.send(&ContextResponse::GetStringInternerResponse(Ok(
+                            string_interner,
+                        )))?;
                     }
                 },
             }
