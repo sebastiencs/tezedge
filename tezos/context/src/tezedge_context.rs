@@ -97,11 +97,13 @@ impl TezedgeIndex {
 
         match repo.get_value(hash_id)? {
             None => Ok(None),
-            Some(object_bytes) => Ok(Some(deserialize_object(
-                object_bytes.as_ref(),
-                storage,
-                &*repo,
-            )?)),
+            Some(object_bytes) => {
+                let res = deserialize_object(object_bytes.as_ref(), storage, &*repo);
+
+                eprintln!("INDEX DESERIALIZE RESULT={:?}", res);
+
+                Ok(Some(res?))
+            }
         }
     }
 
