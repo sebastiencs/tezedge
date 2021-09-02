@@ -535,10 +535,28 @@ impl IpcContextServer {
                         "Context index unavailable".to_owned(),
                     )))?,
                     Some(index) => {
-                        let repo = index.repository.read().unwrap();
-                        let shape = repo.get_shape(shape_id).unwrap();
-                        io.tx
-                            .send(&ContextResponse::GetShapeResponse(Ok(shape.to_vec())))?;
+                        let res = index
+                            .repository
+                            .read()
+                            .map_err(|_| ContextError::GetShapeError {
+                                reason: "Fail to get repo".to_string(),
+                            })
+                            .and_then(|repo| {
+                                repo.get_shape(shape_id).map(|s| s.to_vec()).map_err(|_| {
+                                    ContextError::GetStringInternerError {
+                                        reason: "Fail to get string interner".to_string(),
+                                    }
+                                })
+                            })
+                            .map_err(|err| format!("Context error: {:?}", err));
+
+                        // let repo = index.repository.read().unwrap();
+                        // let shape = repo.get_shape(shape_id).unwrap();
+
+                        io.tx.send(&ContextResponse::GetShapeResponse(res))?;
+
+                        // io.tx
+                        //     .send(&ContextResponse::GetShapeResponse(Ok(shape.to_vec())))?;
                     }
                 },
                 ContextRequest::ContainsObject(hash) => match crate::ffi::get_context_index()? {
