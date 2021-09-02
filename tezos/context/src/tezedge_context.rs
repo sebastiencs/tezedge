@@ -394,9 +394,14 @@ impl TezedgeIndex {
         let last_key_index = path.len() - 1;
 
         for (index, key) in path.iter().enumerate() {
+            println!("FIND_DIR_ENTRY INDEX={:?} KEY={:?}", index, key);
+
             let child_dir_entry_id = match storage.dir_find_dir_entry(root, key) {
                 Some(dir_entry_id) => dir_entry_id,
-                None => return Ok(None), // Path doesn't exist
+                None => {
+                    println!("FIND_DIR_ENTRY PATH DOESNT EXIST");
+                    return Ok(None); // Path doesn't exist
+                }
             };
 
             if index == last_key_index {
@@ -409,7 +414,10 @@ impl TezedgeIndex {
                     // Go to next key
                     root = dir_id;
                 }
-                Object::Blob(_) => return Ok(None),
+                Object::Blob(_) => {
+                    println!("FIND_DIR_ENTRY FOUND BLOB");
+                    return Ok(None);
+                }
                 Object::Commit(_) => {
                     return Err(MerkleError::FoundUnexpectedStructure {
                         sought: "Directory/Blob".to_string(),
