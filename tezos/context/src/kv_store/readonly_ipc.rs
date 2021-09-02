@@ -592,13 +592,31 @@ impl IpcContextServer {
                         "Context index unavailable".to_owned(),
                     )))?,
                     Some(index) => {
-                        let repo = index.repository.read().unwrap();
+                        let res = index
+                            .repository
+                            .read()
+                            .map_err(|_| ContextError::GetStringInternerError {
+                                reason: "Fail to get repo".to_string(),
+                            })
+                            .and_then(|repo| {
+                                repo.clone_string_interner().ok_or(
+                                    ContextError::GetStringInternerError {
+                                        reason: "Fail to get string interner".to_string(),
+                                    },
+                                )
+                            })
+                            .map_err(|err| format!("Context error: {:?}", err));
 
-                        let string_interner = repo.clone_string_interner().unwrap();
+                        io.tx
+                            .send(&ContextResponse::GetStringInternerResponse(res))?;
 
-                        io.tx.send(&ContextResponse::GetStringInternerResponse(Ok(
-                            string_interner,
-                        )))?;
+                        // let repo = index.repository.read().unwrap();
+
+                        // let string_interner = repo.clone_string_interner().unwrap();
+
+                        // io.tx.send(&ContextResponse::GetStringInternerResponse(Ok(
+                        //     string_interner,
+                        // )))?;
                     }
                 },
             }
