@@ -13,7 +13,7 @@ use slog::{error, info};
 use tezos_timing::RepositoryMemoryUsage;
 
 use crate::persistent::{DBError, Flushable, Persistable};
-use crate::working_tree::shape::{ShapeError, ShapeId};
+use crate::working_tree::shape::{ShapeError, ShapeId, ShapeStrings};
 use crate::working_tree::storage::{DirEntryId, Storage};
 use crate::working_tree::string_interner::{StringId, StringInterner};
 use crate::ContextValue;
@@ -109,7 +109,7 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
         self.hashes.get_memory_usage()
     }
 
-    fn get_shape(&self, shape_id: ShapeId) -> Result<Cow<[StringId]>, DBError> {
+    fn get_shape(&self, shape_id: ShapeId) -> Result<ShapeStrings, DBError> {
         let res = self
             .client
             .get_shape(shape_id)
@@ -117,7 +117,7 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
 
         eprintln!("GET_SHAPE RESULT {:?}", res);
 
-        res
+        res.map(ShapeStrings::Owned)
     }
 
     fn make_shape(
@@ -191,7 +191,7 @@ enum ContextResponse {
     GetContextHashResponse(Result<Option<ObjectHash>, String>),
     GetContextHashIdResponse(Result<Option<HashId>, String>),
     GetValueResponse(Result<Option<ContextValue>, String>),
-    GetShapeResponse(Result<Vec<StringId>, String>),
+    GetShapeResponse(Result<Vec<String>, String>),
     ContainsObjectResponse(Result<bool, String>),
     GetStringInternerResponse(Result<StringInterner, String>),
     ShutdownResult,
@@ -429,7 +429,7 @@ impl IpcContextClient {
     }
 
     /// Get object by hash id
-    pub fn get_shape(&self, shape_id: ShapeId) -> Result<Cow<[StringId]>, ContextServiceError> {
+    pub fn get_shape(&self, shape_id: ShapeId) -> Result<Vec<String>, ContextServiceError> {
         let mut io = self.io.borrow_mut();
         io.tx.send(&ContextRequest::GetShape(shape_id))?;
 
@@ -439,7 +439,7 @@ impl IpcContextClient {
             .try_receive(Some(Self::TIMEOUT), Some(IpcContextListener::IO_TIMEOUT))?
         {
             ContextResponse::GetShapeResponse(result) => result
-                .map(Cow::Owned)
+                // .map()
                 .map_err(|err| ContextError::GetShapeError { reason: err }.into()),
             message => Err(ContextServiceError::UnexpectedMessage {
                 message: message.into(),
@@ -562,11 +562,20 @@ impl IpcContextServer {
                                 reason: "Fail to get repo".to_string(),
                             })
                             .and_then(|repo| {
-                                repo.get_shape(shape_id).map(|s| s.to_vec()).map_err(|_| {
+                                let storage = index.storage.borrow();
+
+                                let shape = repo.get_shape(shape_id).map_err(|_| {
                                     ContextError::GetStringInternerError {
                                         reason: "Fail to get string interner".to_string(),
                                     }
-                                })
+                                })?;
+
+                                let shape = match shape {
+                                    ShapeStrings::Ids(slice) => storage.string_to_owned(slice),
+                                    ShapeStrings::Owned(_) => todo!(),
+                                };
+
+                                Ok(shape.unwrap())
                             })
                             .map_err(|err| format!("Context error: {:?}", err));
 

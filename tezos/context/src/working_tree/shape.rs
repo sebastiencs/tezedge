@@ -74,6 +74,11 @@ impl Default for Shapes {
     }
 }
 
+pub enum ShapeStrings<'a> {
+    Ids(&'a [StringId]),
+    Owned(Vec<String>),
+}
+
 impl Shapes {
     pub fn new() -> Self {
         Self {
@@ -93,6 +98,24 @@ impl Shapes {
             .get(&hash)
             .map(|s| &*s.1)
             .ok_or(ShapeError::ShapeIdNotFound)
+    }
+
+    pub fn get_shape_owned(
+        &self,
+        shape_id: ShapeId,
+        storage: &Storage,
+    ) -> Result<Vec<String>, ShapeError> {
+        let shape = self.get_shape(shape_id)?;
+
+        shape
+            .iter()
+            .map(|s| {
+                storage
+                    .get_str(*s)
+                    .map_err(|_| ShapeError::CannotFindKey)
+                    .map(|s| s.to_string())
+            })
+            .collect()
     }
 
     pub fn make_shape(

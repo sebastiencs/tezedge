@@ -563,6 +563,13 @@ impl Storage {
             .ok_or(StorageError::StringNotFound)
     }
 
+    pub fn string_to_owned(&self, slice: &[StringId]) -> Result<Vec<String>, StorageError> {
+        slice
+            .iter()
+            .map(|s| self.get_str(*s).map_err(Into::into).map(|s| s.to_string()))
+            .collect()
+    }
+
     pub fn add_blob_by_ref(&mut self, blob: &[u8]) -> Result<BlobId, StorageError> {
         if BLOB_INLINED_RANGE.contains(&blob.len()) {
             BlobId::try_new_inline(blob)

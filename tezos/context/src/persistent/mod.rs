@@ -16,7 +16,7 @@ use crate::{
     kv_store::{readonly_ipc::ContextServiceError, HashId, HashIdError, VacantObjectHash},
     working_tree::{
         serializer::DeserializationError,
-        shape::{ShapeError, ShapeId},
+        shape::{ShapeError, ShapeId, ShapeStrings},
         storage::{DirEntryId, Storage},
         string_interner::{StringId, StringInterner},
     },
@@ -71,7 +71,7 @@ pub trait KeyValueStoreBackend {
     /// Memory usage
     fn memory_usage(&self) -> RepositoryMemoryUsage;
 
-    fn get_shape(&self, shape_id: ShapeId) -> Result<Cow<[StringId]>, DBError>;
+    fn get_shape(&self, shape_id: ShapeId) -> Result<ShapeStrings, DBError>;
     fn make_shape(
         &mut self,
         dir: &[(StringId, DirEntryId)],

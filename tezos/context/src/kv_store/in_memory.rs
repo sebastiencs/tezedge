@@ -24,7 +24,7 @@ use crate::{
     hash::ObjectHash,
     persistent::{DBError, Flushable, KeyValueStoreBackend, Persistable},
     working_tree::{
-        shape::{ShapeError, ShapeId, Shapes},
+        shape::{ShapeError, ShapeId, ShapeStrings, Shapes},
         storage::{DirEntryId, Storage},
         string_interner::{StringId, StringInterner},
     },
@@ -221,10 +221,10 @@ impl KeyValueStoreBackend for InMemory {
         self.hashes.get_memory_usage()
     }
 
-    fn get_shape(&self, shape_id: ShapeId) -> Result<Cow<[StringId]>, DBError> {
+    fn get_shape(&self, shape_id: ShapeId) -> Result<ShapeStrings, DBError> {
         self.shapes
             .get_shape(shape_id)
-            .map(Cow::Borrowed)
+            .map(ShapeStrings::Ids)
             .map_err(Into::into)
     }
 

@@ -5,8 +5,8 @@
 //! saved/loaded to/from the repository.
 
 use std::{
-    array::TryFromSliceError, convert::TryInto, io::Write, num::TryFromIntError, str::Utf8Error,
-    string::FromUtf8Error, sync::Arc,
+    array::TryFromSliceError, borrow::Cow, convert::TryInto, io::Write, num::TryFromIntError,
+    str::Utf8Error, string::FromUtf8Error, sync::Arc,
 };
 
 use modular_bitfield::prelude::*;
@@ -17,6 +17,7 @@ use crate::{
     kv_store::HashId,
     persistent::DBError,
     working_tree::{
+        shape::ShapeStrings,
         storage::{DirectoryId, Inode, PointerToInode},
         Commit, DirEntryKind,
     },
@@ -579,8 +580,26 @@ fn deserialize_shaped_directory(
     let shape_id = u32::from_ne_bytes(shape_id.try_into()?);
     let shape_id = ShapeId::from(shape_id);
 
-    let shape = store.get_shape(shape_id)?;
+    let shape = match store.get_shape(shape_id)? {
+        ShapeStrings::Ids(slice) => Cow::Borrowed(slice),
+        ShapeStrings::Owned(strings) => {
+            let string_ids: Vec<_> = strings.iter().map(|s| storage.get_string_id(s)).collect();
+            Cow::Owned(string_ids)
+        }
+    };
+
     let mut shape = shape.as_ref().into_iter();
+
+    // let mut shape = match shape {
+    //     ShapeStrings::Ids(slice) => slice.as_ref().into_iter(),
+    //     ShapeStrings::Owned(strings) => {
+    //         let mut strings: Vec<_> = strings.iter().map(|s| storage.get_string_id(s)).collect();
+    //         strings.as_slice().into_iter()
+    //         // todo!()
+    //     },
+    // };
+
+    // let mut shape = shape.as_ref().into_iter();
 
     pos += 4;
 
