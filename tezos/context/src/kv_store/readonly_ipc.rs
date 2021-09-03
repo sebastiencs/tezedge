@@ -115,7 +115,7 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
             .get_shape(shape_id)
             .map_err(|reason| DBError::IpcAccessError { reason });
 
-        eprintln!("GET_SHAPE RESULT {:?}", res);
+        // eprintln!("GET_SHAPE RESULT {:?}", res);
 
         res.map(ShapeStrings::Owned)
     }
@@ -574,11 +574,11 @@ impl IpcContextServer {
 
                                 let shape = match shape {
                                     ShapeStrings::Ids(slice) => {
-                                        println!(
-                                            "GOT BIG STRING={:?} SLICE={:?}",
-                                            slice.iter().any(|s| s.is_big()),
-                                            slice
-                                        );
+                                        // println!(
+                                        //     "GOT BIG STRING={:?} SLICE={:?}",
+                                        //     slice.iter().any(|s| s.is_big()),
+                                        //     slice
+                                        // );
                                         // println!(
                                         //     "SLICE={:?} STRING_LEN={:?} STRINGS={:?}",
                                         //     slice
@@ -615,7 +615,7 @@ impl IpcContextServer {
                             })
                             .map_err(|err| format!("Context error: {:?}", err));
 
-                        println!("SEND GET_SHAPE_RESPONSE {:?}", res);
+                        // println!("SEND GET_SHAPE_RESPONSE {:?}", res);
 
                         // let repo = index.repository.read().unwrap();
                         // let shape = repo.get_shape(shape_id).unwrap();
