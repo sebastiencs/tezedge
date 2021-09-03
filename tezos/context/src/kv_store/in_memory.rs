@@ -237,8 +237,6 @@ impl KeyValueStoreBackend for InMemory {
     }
 
     fn update_strings(&mut self, string_interner: &StringInterner) -> Result<(), DBError> {
-        println!("NEW INTERNER={:?}", string_interner);
-
         self.string_interner = string_interner.clone();
 
         Ok(())
@@ -246,14 +244,6 @@ impl KeyValueStoreBackend for InMemory {
 
     fn get_str(&self, string_id: StringId) -> Option<&str> {
         self.string_interner.get(string_id)
-    }
-
-    fn take_new_strings(&self) -> Result<Option<StringInterner>, DBError> {
-        Ok(None)
-    }
-
-    fn clone_string_interner(&self) -> Option<StringInterner> {
-        Some(self.string_interner.clone())
     }
 }
 

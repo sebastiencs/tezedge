@@ -81,8 +81,6 @@ pub trait KeyValueStoreBackend {
     fn get_str(&self, string_id: StringId) -> Option<&str>;
 
     fn update_strings(&mut self, string_interner: &StringInterner) -> Result<(), DBError>;
-    fn take_new_strings(&self) -> Result<Option<StringInterner>, DBError>;
-    fn clone_string_interner(&self) -> Option<StringInterner>;
 }
 
 /// Possible errors for schema
