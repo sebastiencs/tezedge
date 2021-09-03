@@ -48,7 +48,7 @@ impl StringId {
         self.bits as usize & FULL_31_BITS
     }
 
-    fn get_start_end(self) -> (usize, usize) {
+    pub fn get_start_end(self) -> (usize, usize) {
         let start = (self.bits >> FULL_5_BITS.count_ones()) as usize;
         let length = self.bits as usize & FULL_5_BITS;
 
@@ -101,7 +101,7 @@ pub struct StringInterner {
     string_to_offset: Map<u64, StringId>,
     /// Concatenation of all strings < STRING_INTERN_THRESHOLD.
     /// This is never cleared/deallocated
-    all_strings: String,
+    pub all_strings: String,
     /// Concatenation of big strings. This is cleared/deallocated
     /// before every checkouts
     big_strings: BigStrings,

@@ -572,10 +572,19 @@ impl IpcContextServer {
 
                                 let shape = match shape {
                                     ShapeStrings::Ids(slice) => {
-                                        println!("SLICE={:?}", slice);
                                         println!(
-                                            "GOT BIG STRING={:?}",
-                                            slice.iter().any(|s| s.is_big())
+                                            "GOT BIG STRING={:?} SLICE={:?}",
+                                            slice.iter().any(|s| s.is_big()),
+                                            slice
+                                        );
+                                        println!(
+                                            "SLICE={:?} STRING_LEN={:?} STRINGS={:?}",
+                                            slice
+                                                .iter()
+                                                .map(|s| s.get_start_end())
+                                                .collect::<Vec<_>>(),
+                                            storage.strings.all_strings.len(),
+                                            &storage.strings.all_strings
                                         );
 
                                         storage.string_to_owned(slice).map_err(|e| {
