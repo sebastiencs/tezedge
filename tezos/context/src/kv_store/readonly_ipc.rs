@@ -128,6 +128,10 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
         Ok(None)
     }
 
+    fn get_str(&self, _: StringId) -> Option<&str> {
+        None
+    }
+
     fn update_strings(&mut self, _string_interner: &StringInterner) -> Result<(), DBError> {
         Ok(())
     }
@@ -562,8 +566,6 @@ impl IpcContextServer {
                                 reason: "Fail to get repo".to_string(),
                             })
                             .and_then(|repo| {
-                                let storage = index.storage.borrow();
-
                                 let shape = repo.get_shape(shape_id).map_err(|_| {
                                     ContextError::GetStringInternerError {
                                         reason: "Fail to get string interner".to_string(),
@@ -577,21 +579,32 @@ impl IpcContextServer {
                                             slice.iter().any(|s| s.is_big()),
                                             slice
                                         );
-                                        println!(
-                                            "SLICE={:?} STRING_LEN={:?} STRINGS={:?}",
-                                            slice
-                                                .iter()
-                                                .map(|s| s.get_start_end())
-                                                .collect::<Vec<_>>(),
-                                            storage.strings.all_strings.len(),
-                                            &storage.strings.all_strings
-                                        );
+                                        // println!(
+                                        //     "SLICE={:?} STRING_LEN={:?} STRINGS={:?}",
+                                        //     slice
+                                        //         .iter()
+                                        //         .map(|s| s.get_start_end())
+                                        //         .collect::<Vec<_>>(),
+                                        //     storage.strings.all_strings.len(),
+                                        //     &storage.strings.all_strings
+                                        // );
 
-                                        storage.string_to_owned(slice).map_err(|e| {
-                                            ContextError::GetShapeError {
-                                                reason: format!("{:?}", e),
-                                            }
-                                        })
+                                        slice
+                                            .iter()
+                                            .map(|s| {
+                                                repo.get_str(*s)
+                                                    .ok_or_else(|| ContextError::GetShapeError {
+                                                        reason: format!("String NOT FOUND"),
+                                                    })
+                                                    .map(|s| s.to_string())
+                                            })
+                                            .collect()
+
+                                        // storage.string_to_owned(slice).map_err(|e| {
+                                        //     ContextError::GetShapeError {
+                                        //         reason: format!("{:?}", e),
+                                        //     }
+                                        // })
                                     }
                                     ShapeStrings::Owned(_) => Err(ContextError::GetShapeError {
                                         reason: "Should receive slice".to_string(),

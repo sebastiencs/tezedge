@@ -242,6 +242,10 @@ impl KeyValueStoreBackend for InMemory {
         Ok(())
     }
 
+    fn get_str(&self, string_id: StringId) -> Option<&str> {
+        self.string_interner.get(string_id)
+    }
+
     fn take_new_strings(&self) -> Result<Option<StringInterner>, DBError> {
         Ok(None)
     }
