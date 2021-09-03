@@ -678,14 +678,8 @@ impl WorkingTree {
                 let blob = storage.get_blob(blob_id)?;
                 Ok(Some(blob.to_vec()))
             }
-            Err(MerkleError::ValueNotFound { .. }) => {
-                println!("VALUE NOT FOUND");
-                Ok(None)
-            }
-            Err(MerkleError::ValueIsNotABlob { .. }) => {
-                println!("VALUE NOT A BLOB");
-                Ok(None)
-            }
+            Err(MerkleError::ValueNotFound { .. }) => Ok(None),
+            Err(MerkleError::ValueIsNotABlob { .. }) => Ok(None),
             Err(err) => Err(err),
         }
     }

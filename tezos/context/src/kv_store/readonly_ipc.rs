@@ -498,10 +498,6 @@ impl IpcContextServer {
         loop {
             let cmd = io.rx.receive()?;
 
-            let cmd_clone = cmd.clone();
-
-            // info!(log, "IpcContextServer processing {:?}", cmd,);
-
             match cmd {
                 ContextRequest::GetValue(hash) => match crate::ffi::get_context_index()? {
                     None => io.tx.send(&ContextResponse::GetValueResponse(Err(
@@ -528,62 +524,29 @@ impl IpcContextServer {
                             .and_then(|repo| {
                                 let shape = repo.get_shape(shape_id).map_err(|_| {
                                     ContextError::GetShapeError {
-                                        reason: "Fail to get string interner".to_string(),
+                                        reason: "Fail to get shape".to_string(),
                                     }
                                 })?;
 
-                                let shape = match shape {
-                                    ShapeStrings::Ids(slice) => {
-                                        // println!(
-                                        //     "GOT BIG STRING={:?} SLICE={:?}",
-                                        //     slice.iter().any(|s| s.is_big()),
-                                        //     slice
-                                        // );
-                                        // println!(
-                                        //     "SLICE={:?} STRING_LEN={:?} STRINGS={:?}",
-                                        //     slice
-                                        //         .iter()
-                                        //         .map(|s| s.get_start_end())
-                                        //         .collect::<Vec<_>>(),
-                                        //     storage.strings.all_strings.len(),
-                                        //     &storage.strings.all_strings
-                                        // );
-
-                                        slice
-                                            .iter()
-                                            .map(|s| {
-                                                repo.get_str(*s)
-                                                    .ok_or_else(|| ContextError::GetShapeError {
-                                                        reason: format!("String NOT FOUND"),
-                                                    })
-                                                    .map(|s| s.to_string())
-                                            })
-                                            .collect()
-
-                                        // storage.string_to_owned(slice).map_err(|e| {
-                                        //     ContextError::GetShapeError {
-                                        //         reason: format!("{:?}", e),
-                                        //     }
-                                        // })
-                                    }
+                                match shape {
+                                    ShapeStrings::Ids(slice) => slice
+                                        .iter()
+                                        .map(|s| {
+                                            repo.get_str(*s)
+                                                .ok_or_else(|| ContextError::GetShapeError {
+                                                    reason: format!("String not found"),
+                                                })
+                                                .map(|s| s.to_string())
+                                        })
+                                        .collect(),
                                     ShapeStrings::Owned(_) => Err(ContextError::GetShapeError {
                                         reason: "Should receive slice".to_string(),
                                     }),
-                                };
-
-                                shape
+                                }
                             })
                             .map_err(|err| format!("Context error: {:?}", err));
 
-                        // println!("SEND GET_SHAPE_RESPONSE {:?}", res);
-
-                        // let repo = index.repository.read().unwrap();
-                        // let shape = repo.get_shape(shape_id).unwrap();
-
                         io.tx.send(&ContextResponse::GetShapeResponse(res))?;
-
-                        // io.tx
-                        //     .send(&ContextResponse::GetShapeResponse(Ok(shape.to_vec())))?;
                     }
                 },
                 ContextRequest::ContainsObject(hash) => match crate::ffi::get_context_index()? {
@@ -633,8 +596,6 @@ impl IpcContextServer {
                     }
                 },
             }
-
-            // info!(log, "IpcContextServer processed {:?}", cmd_clone,);
         }
 
         Ok(())
