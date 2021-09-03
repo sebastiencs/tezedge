@@ -439,7 +439,7 @@ impl IpcContextClient {
             .try_receive(Some(Self::TIMEOUT), Some(IpcContextListener::IO_TIMEOUT))?
         {
             ContextResponse::GetShapeResponse(result) => result
-            // .map()
+                // .map()
                 .map_err(|err| ContextError::GetShapeError { reason: err }.into()),
             message => Err(ContextServiceError::UnexpectedMessage {
                 message: message.into(),
@@ -571,11 +571,22 @@ impl IpcContextServer {
                                 })?;
 
                                 let shape = match shape {
-                                    ShapeStrings::Ids(slice) => storage.string_to_owned(slice)
-                                        .map_err(|e| ContextError::GetShapeError { reason: format!("{:?}", e) }),
-                                    ShapeStrings::Owned(_) => {
-                                        Err(ContextError::GetShapeError { reason: "Should receive slice".to_string() })
-                                    },
+                                    ShapeStrings::Ids(slice) => {
+                                        println!("SLICE={:?}", slice);
+                                        println!(
+                                            "GOT BIG STRING={:?}",
+                                            slice.iter().any(|s| s.is_big())
+                                        );
+
+                                        storage.string_to_owned(slice).map_err(|e| {
+                                            ContextError::GetShapeError {
+                                                reason: format!("{:?}", e),
+                                            }
+                                        })
+                                    }
+                                    ShapeStrings::Owned(_) => Err(ContextError::GetShapeError {
+                                        reason: "Should receive slice".to_string(),
+                                    }),
                                 };
 
                                 shape
