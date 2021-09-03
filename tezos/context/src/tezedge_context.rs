@@ -100,7 +100,9 @@ impl TezedgeIndex {
             Some(object_bytes) => {
                 let res = deserialize_object(object_bytes.as_ref(), storage, &*repo);
 
-                eprintln!("INDEX DESERIALIZE RESULT={:?}", res);
+                if res.is_err() {
+                    eprintln!("INDEX DESERIALIZE RESULT={:?}", res);
+                }
 
                 Ok(Some(res?))
             }
@@ -394,7 +396,7 @@ impl TezedgeIndex {
         let last_key_index = path.len() - 1;
 
         for (index, key) in path.iter().enumerate() {
-            println!("FIND_DIR_ENTRY INDEX={:?} KEY={:?}", index, key);
+            // println!("FIND_DIR_ENTRY INDEX={:?} KEY={:?}", index, key);
 
             let child_dir_entry_id = match storage.dir_find_dir_entry(root, key) {
                 Some(dir_entry_id) => dir_entry_id,
@@ -459,32 +461,32 @@ impl TezedgeIndex {
         key: &ContextKey,
         storage: &mut Storage,
     ) -> Result<BlobId, MerkleError> {
-        println!("TRY_FIND_BLOB={:?}", key);
+        // println!("TRY_FIND_BLOB={:?}", key);
 
         let dir_entry_id = match self.find_dir_entry(root, key, storage)? {
             Some(dir_entry_id) => dir_entry_id,
             None => {
-                println!("TRY_FIND_BLOB VALUE NOT FOUND");
+                // println!("TRY_FIND_BLOB VALUE NOT FOUND");
                 return Err(MerkleError::ValueNotFound {
                     key: self.key_to_string(key),
                 });
             }
         };
 
-        println!("TRY_FIND_BLOB DIR_ENTRY_ID={:?}", dir_entry_id);
+        // println!("TRY_FIND_BLOB DIR_ENTRY_ID={:?}", dir_entry_id);
 
         // get blob
         match self.dir_entry_object(dir_entry_id, storage)? {
             Object::Blob(blob) => Ok(blob),
             Object::Directory(_) => {
-                println!("TRY_FIND_BLOB FOUND DIRECTORY");
+                // println!("TRY_FIND_BLOB FOUND DIRECTORY");
 
                 Err(MerkleError::ValueIsNotABlob {
                     key: self.key_to_string(key),
                 })
             }
             Object::Commit(_) => {
-                println!("TRY_FIND_BLOB FOUND COMMIT");
+                // println!("TRY_FIND_BLOB FOUND COMMIT");
 
                 Err(MerkleError::ValueIsNotABlob {
                     key: self.key_to_string(key),

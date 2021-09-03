@@ -987,7 +987,9 @@ impl WorkingTree {
                 let res = deserialize_object(object_bytes.as_ref(), &mut storage, store)
                     .map_err(Into::into);
 
-                eprintln!("RESULT DESERIALIZE {:?}", res);
+                if res.is_err() {
+                    eprintln!("RESULT DESERIALIZE {:?}", res);
+                }
 
                 res
             }
