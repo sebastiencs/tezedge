@@ -540,7 +540,7 @@ impl IpcContextServer {
 
             let cmd_clone = cmd.clone();
 
-            info!(log, "IpcContextServer processing {:?}", cmd,);
+            // info!(log, "IpcContextServer processing {:?}", cmd,);
 
             match cmd {
                 ContextRequest::GetValue(hash) => match crate::ffi::get_context_index()? {
@@ -706,7 +706,7 @@ impl IpcContextServer {
                 },
             }
 
-            info!(log, "IpcContextServer processed {:?}", cmd_clone,);
+            // info!(log, "IpcContextServer processed {:?}", cmd_clone,);
         }
 
         Ok(())
