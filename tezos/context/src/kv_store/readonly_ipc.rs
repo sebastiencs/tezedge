@@ -439,7 +439,7 @@ impl IpcContextClient {
             .try_receive(Some(Self::TIMEOUT), Some(IpcContextListener::IO_TIMEOUT))?
         {
             ContextResponse::GetShapeResponse(result) => result
-                // .map()
+            // .map()
                 .map_err(|err| ContextError::GetShapeError { reason: err }.into()),
             message => Err(ContextServiceError::UnexpectedMessage {
                 message: message.into(),
@@ -578,6 +578,8 @@ impl IpcContextServer {
                                 Ok(shape.unwrap())
                             })
                             .map_err(|err| format!("Context error: {:?}", err));
+
+                        println!("SEND GET_SHAPE_RESPONSE {:?}", res);
 
                         // let repo = index.repository.read().unwrap();
                         // let shape = repo.get_shape(shape_id).unwrap();
