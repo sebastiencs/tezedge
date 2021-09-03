@@ -571,11 +571,14 @@ impl IpcContextServer {
                                 })?;
 
                                 let shape = match shape {
-                                    ShapeStrings::Ids(slice) => storage.string_to_owned(slice),
-                                    ShapeStrings::Owned(_) => todo!(),
+                                    ShapeStrings::Ids(slice) => storage.string_to_owned(slice)
+                                        .map_err(|e| ContextError::GetShapeError { reason: format!("{:?}", e) }),
+                                    ShapeStrings::Owned(_) => {
+                                        Err(ContextError::GetShapeError { reason: "Should receive slice".to_string() })
+                                    },
                                 };
 
-                                Ok(shape.unwrap())
+                                shape
                             })
                             .map_err(|err| format!("Context error: {:?}", err));
 
