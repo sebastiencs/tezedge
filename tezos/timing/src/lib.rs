@@ -84,7 +84,7 @@ pub struct StorageMemoryUsage {
     pub total_bytes: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct StringsMemoryUsage {
     pub all_strings_map_cap: usize,
     pub all_strings_map_len: usize,

@@ -604,6 +604,13 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
             }
         };
 
+        {
+            let storage = self.storage.borrow();
+            let mut repository = self.repository.write()?;
+            repository.update_strings(&storage.strings)?;
+            println!("UPDATE STRINGS");
+        }
+
         let mut storage = self.storage.borrow_mut();
 
         if let Some(Object::Commit(_)) = self.fetch_object(hash_id, &mut storage)? {
@@ -631,11 +638,6 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
             let mut repository = self.repository.write()?;
             repository.update_strings(&storage.strings)?;
             println!("UPDATE STRINGS");
-
-            //     if let Some(string_interner) = repository.take_new_strings()? {
-            //         println!("UPDATE STRINGS WITH {:?}", string_interner);
-            //         storage.strings = string_interner;
-            //     };
         }
 
         let commit = match self.fetch_commit(hash_id, &mut storage)? {
@@ -673,6 +675,13 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
         context_hash: &ContextHash,
         key: &ContextKey,
     ) -> Result<Option<ContextValue>, ContextError> {
+        {
+            let storage = self.storage.borrow();
+            let mut repository = self.repository.write()?;
+            repository.update_strings(&storage.strings)?;
+            println!("UPDATE STRINGS");
+        }
+
         let hash_id = {
             let repository = self.repository.read()?;
 
@@ -699,6 +708,13 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
         context_hash: &ContextHash,
         prefix: &ContextKey,
     ) -> Result<Option<Vec<(ContextKeyOwned, ContextValue)>>, ContextError> {
+        {
+            let storage = self.storage.borrow();
+            let mut repository = self.repository.write()?;
+            repository.update_strings(&storage.strings)?;
+            println!("UPDATE STRINGS");
+        }
+
         let hash_id = {
             let repository = self.repository.read()?;
             match repository.get_context_hash(context_hash)? {
@@ -721,6 +737,13 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
         prefix: &ContextKey,
         depth: Option<usize>,
     ) -> Result<StringTreeObject, ContextError> {
+        {
+            let storage = self.storage.borrow();
+            let mut repository = self.repository.write()?;
+            repository.update_strings(&storage.strings)?;
+            println!("UPDATE STRINGS");
+        }
+
         let hash_id = {
             let repository = self.repository.read()?;
             match repository.get_context_hash(context_hash)? {
@@ -769,9 +792,9 @@ impl ProtocolContextApi for TezedgeContext {
     }
 
     fn find(&self, key: &ContextKey) -> Result<Option<ContextValue>, ContextError> {
-        println!("ProtocolContextApi::find {:?}", key);
+        // println!("ProtocolContextApi::find {:?}", key);
         let res = self.tree.find(key);
-        println!("ProtocolContextApi::find result {:?}", res);
+        // println!("ProtocolContextApi::find result {:?}", res);
 
         Ok(res?)
     }
@@ -825,6 +848,13 @@ impl ShellContextApi for TezedgeContext {
         message: String,
         date: i64,
     ) -> Result<ContextHash, ContextError> {
+        {
+            let storage = self.index.storage.borrow();
+            let mut repository = self.index.repository.write()?;
+            repository.update_strings(&storage.strings)?;
+            println!("UPDATE STRINGS");
+        }
+
         // Objects to be inserted are obtained from the commit call and written here
         let date: u64 = date.try_into()?;
         let mut repository = self.index.repository.write()?;
@@ -866,6 +896,13 @@ impl ShellContextApi for TezedgeContext {
         message: String,
         date: i64,
     ) -> Result<ContextHash, ContextError> {
+        {
+            let storage = self.index.storage.borrow();
+            let mut repository = self.index.repository.write()?;
+            repository.update_strings(&storage.strings)?;
+            println!("UPDATE STRINGS");
+        }
+
         let date: u64 = date.try_into()?;
         let mut repository = self.index.repository.write()?;
 
@@ -884,6 +921,13 @@ impl ShellContextApi for TezedgeContext {
     }
 
     fn get_last_commit_hash(&self) -> Result<Option<Vec<u8>>, ContextError> {
+        {
+            let storage = self.index.storage.borrow();
+            let mut repository = self.index.repository.write()?;
+            repository.update_strings(&storage.strings)?;
+            println!("UPDATE STRINGS");
+        }
+
         let repository = self.index.repository.read()?;
 
         let value = match self.parent_commit_hash {

@@ -16,7 +16,7 @@ use std::{
 
 use modular_bitfield::prelude::*;
 use static_assertions::assert_eq_size;
-use tezos_timing::StorageMemoryUsage;
+use tezos_timing::{StorageMemoryUsage, StringsMemoryUsage};
 
 use crate::hash::index as index_of_key;
 use crate::kv_store::{index_map::IndexMap, HashId};

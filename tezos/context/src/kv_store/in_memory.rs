@@ -237,6 +237,8 @@ impl KeyValueStoreBackend for InMemory {
     }
 
     fn update_strings(&mut self, string_interner: &StringInterner) -> Result<(), DBError> {
+        println!("NEW INTERNER={:?}", string_interner);
+
         self.string_interner = string_interner.clone();
 
         Ok(())
