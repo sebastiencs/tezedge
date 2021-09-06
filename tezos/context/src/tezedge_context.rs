@@ -417,7 +417,6 @@ impl TezedgeIndex {
                     root = dir_id;
                 }
                 Object::Blob(_) => {
-                    println!("FIND_DIR_ENTRY FOUND BLOB");
                     return Ok(None);
                 }
                 Object::Commit(_) => {
@@ -608,7 +607,6 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
             let storage = self.storage.borrow();
             let mut repository = self.repository.write()?;
             repository.update_strings(&storage.strings)?;
-            println!("UPDATE STRINGS");
         }
 
         let mut storage = self.storage.borrow_mut();
@@ -630,14 +628,12 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
             }
         };
 
-        println!("CLEARING STORAGE");
         let mut storage = self.storage.borrow_mut();
         storage.clear();
 
         {
             let mut repository = self.repository.write()?;
             repository.update_strings(&storage.strings)?;
-            println!("UPDATE STRINGS");
         }
 
         let commit = match self.fetch_commit(hash_id, &mut storage)? {
@@ -679,7 +675,6 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
             let storage = self.storage.borrow();
             let mut repository = self.repository.write()?;
             repository.update_strings(&storage.strings)?;
-            println!("UPDATE STRINGS");
         }
 
         let hash_id = {
@@ -712,7 +707,6 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
             let storage = self.storage.borrow();
             let mut repository = self.repository.write()?;
             repository.update_strings(&storage.strings)?;
-            println!("UPDATE STRINGS");
         }
 
         let hash_id = {
@@ -741,7 +735,6 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
             let storage = self.storage.borrow();
             let mut repository = self.repository.write()?;
             repository.update_strings(&storage.strings)?;
-            println!("UPDATE STRINGS");
         }
 
         let hash_id = {
@@ -852,7 +845,6 @@ impl ShellContextApi for TezedgeContext {
             let storage = self.index.storage.borrow();
             let mut repository = self.index.repository.write()?;
             repository.update_strings(&storage.strings)?;
-            println!("UPDATE STRINGS");
         }
 
         // Objects to be inserted are obtained from the commit call and written here
@@ -900,7 +892,6 @@ impl ShellContextApi for TezedgeContext {
             let storage = self.index.storage.borrow();
             let mut repository = self.index.repository.write()?;
             repository.update_strings(&storage.strings)?;
-            println!("UPDATE STRINGS");
         }
 
         let date: u64 = date.try_into()?;
@@ -925,7 +916,6 @@ impl ShellContextApi for TezedgeContext {
             let storage = self.index.storage.borrow();
             let mut repository = self.index.repository.write()?;
             repository.update_strings(&storage.strings)?;
-            println!("UPDATE STRINGS");
         }
 
         let repository = self.index.repository.read()?;

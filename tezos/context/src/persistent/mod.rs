@@ -110,7 +110,7 @@ pub enum DBError {
     HashIdFailed,
     #[error("Deserialization error: {error:?}")]
     DeserializationError { error: DeserializationError },
-    #[fail(display = "Shape error: {:?}", error)]
+    #[error("Shape error: {error:?}")]
     ShapeError { error: ShapeError },
 }
 

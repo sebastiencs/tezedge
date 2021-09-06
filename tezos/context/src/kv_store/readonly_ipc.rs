@@ -464,8 +464,6 @@ impl IpcContextListener {
                     if let Err(spawn_error) = std::thread::Builder::new()
                         .name("ctx-ipc-server-thread".to_string())
                         .spawn(move || {
-                            info!(&log_inner, "IpcContextServer start processing requests",);
-
                             if let Err(err) = server.process_context_requests(&log_inner) {
                                 error!(
                                     &log_inner,
@@ -481,8 +479,6 @@ impl IpcContextListener {
                             "reason" => spawn_error,
                         );
                     }
-
-                    info!(&log, "IpcContextServer spawned new thread",);
                 }
             }
         }
