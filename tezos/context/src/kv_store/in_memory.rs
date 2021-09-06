@@ -174,7 +174,7 @@ impl GarbageCollector for InMemory {
 }
 
 impl Flushable for InMemory {
-    fn flush(&self) -> Result<(), failure::Error> {
+    fn flush(&self) -> Result<(), anyhow::Error> {
         Ok(())
     }
 }
