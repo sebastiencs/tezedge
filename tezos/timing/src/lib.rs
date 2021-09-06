@@ -112,6 +112,8 @@ pub struct RepositoryMemoryUsage {
     pub hashes_length: usize,
     /// Total bytes occupied in the repository
     pub total_bytes: usize,
+    pub npending_free_ids: usize,
+    pub gc_npending_free_ids: usize,
 }
 
 #[derive(Debug)]
@@ -590,6 +592,8 @@ impl Timing {
               repo_hashes_capacity = :repo_hashes_capacity,
               repo_hashes_length = :repo_hashes_length,
               repo_total_bytes = :repo_total_bytes,
+              repo_npending_free_ids = :repo_npending_free_ids,
+              repo_gc_npending_free_ids = :repo_gc_npending_free_ids,
               storage_nodes_capacity = :storage_nodes_capacity,
               storage_nodes_length = :storage_nodes_length,
               storage_trees_capacity = :storage_trees_capacity,
@@ -628,6 +632,8 @@ impl Timing {
             ":repo_hashes_capacity": stats.context.repo.hashes_capacity,
             ":repo_hashes_length": stats.context.repo.hashes_length,
             ":repo_total_bytes": stats.context.repo.total_bytes,
+            ":repo_npending_free_ids": stats.context.repo.npending_free_ids,
+            ":repo_gc_npending_free_ids": stats.context.repo.gc_npending_free_ids,
             ":storage_nodes_length": stats.context.storage.nodes_len,
             ":storage_nodes_capacity": stats.context.storage.nodes_cap,
             ":storage_trees_length": stats.context.storage.directories_len,

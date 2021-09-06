@@ -8,7 +8,7 @@ use std::{
     collections::{hash_map::DefaultHasher, BTreeMap, VecDeque},
     hash::Hasher,
     mem::size_of,
-    sync::Arc,
+    sync::{atomic::Ordering, Arc},
     thread::JoinHandle,
 };
 
@@ -18,7 +18,7 @@ use tezos_timing::RepositoryMemoryUsage;
 
 use crate::{
     gc::{
-        worker::{Command, Cycles, GCThread, PRESERVE_CYCLE_COUNT},
+        worker::{Command, Cycles, GCThread, GC_PENDING_HASHIDS, PRESERVE_CYCLE_COUNT},
         GarbageCollectionError, GarbageCollector,
     },
     hash::ObjectHash,
@@ -75,6 +75,8 @@ impl HashValueStore {
             hashes_capacity,
             hashes_length: self.hashes.len(),
             total_bytes,
+            npending_free_ids: self.free_ids.as_ref().map(|c| c.len()).unwrap_or(0),
+            gc_npending_free_ids: GC_PENDING_HASHIDS.load(Ordering::Acquire),
         }
     }
 
