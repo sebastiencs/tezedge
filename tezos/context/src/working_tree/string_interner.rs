@@ -107,6 +107,14 @@ pub struct StringInterner {
     big_strings: BigStrings,
 }
 
+impl PartialEq for StringInterner {
+    fn eq(&self, other: &Self) -> bool {
+        self.all_strings.len() == other.all_strings.len()
+    }
+}
+
+impl Eq for StringInterner {}
+
 impl StringInterner {
     pub fn get_string_id(&mut self, s: &str) -> StringId {
         if s.len() >= STRING_INTERN_THRESHOLD {
