@@ -72,11 +72,7 @@ pub trait KeyValueStoreBackend {
     fn memory_usage(&self) -> RepositoryMemoryUsage;
 
     fn get_shape(&self, shape_id: ShapeId) -> Result<ShapeStrings, DBError>;
-    fn make_shape(
-        &mut self,
-        dir: &[(StringId, DirEntryId)],
-        storage: &Storage,
-    ) -> Result<Option<ShapeId>, DBError>;
+    fn make_shape(&mut self, dir: &[(StringId, DirEntryId)]) -> Result<Option<ShapeId>, DBError>;
 
     fn get_str(&self, string_id: StringId) -> Option<&str>;
 

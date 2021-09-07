@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS blocks (
   repo_total_bytes INTEGER,
   repo_npending_free_ids INTEGER,
   repo_gc_npending_free_ids INTEGER,
+  repo_nshapes INTEGER,
   storage_nodes_length INTEGER,
   storage_nodes_capacity INTEGER,
   storage_trees_length INTEGER,
@@ -45,6 +46,7 @@ CREATE TABLE IF NOT EXISTS blocks (
   serialize_ntree INTEGER,
   serialize_nblobs INTEGER,
   serialize_nblobs_inlined INTEGER,
+  serialize_nshapes INTEGER,
   serialize_total_bytes INTEGER,
   total_bytes INTEGER
 );

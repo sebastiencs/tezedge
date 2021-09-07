@@ -14,10 +14,7 @@ use std::{
 use crate::kv_store::index_map::IndexMap;
 use serde::{Deserialize, Serialize};
 
-use super::{
-    storage::{DirEntryId, Storage},
-    string_interner::StringId,
-};
+use super::{storage::DirEntryId, string_interner::StringId};
 
 #[derive(Debug)]
 pub enum ShapeError {
@@ -61,7 +58,7 @@ impl From<u32> for ShapeId {
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct ShapeHash(u64);
 
-/// Contains the shape (keys) of a directory.
+/// Contains the shape (key fragments) of a directory.
 ///
 /// A `ShapeId` maps to a slice of `StringId`
 pub struct Shapes {
@@ -92,6 +89,10 @@ impl Shapes {
         }
     }
 
+    pub fn nshapes(&self) -> usize {
+        self.id_to_hash.len()
+    }
+
     pub fn get_shape(&self, shape_id: ShapeId) -> Result<&[StringId], ShapeError> {
         let hash = match self.id_to_hash.get(shape_id)?.copied() {
             Some(hash) => hash,
@@ -104,28 +105,9 @@ impl Shapes {
             .ok_or(ShapeError::ShapeIdNotFound)
     }
 
-    pub fn get_shape_owned(
-        &self,
-        shape_id: ShapeId,
-        storage: &Storage,
-    ) -> Result<Vec<String>, ShapeError> {
-        let shape = self.get_shape(shape_id)?;
-
-        shape
-            .iter()
-            .map(|s| {
-                storage
-                    .get_str(*s)
-                    .map_err(|_| ShapeError::CannotFindKey)
-                    .map(|s| s.to_string())
-            })
-            .collect()
-    }
-
     pub fn make_shape(
         &mut self,
         dir: &[(StringId, DirEntryId)],
-        storage: &Storage,
     ) -> Result<Option<ShapeId>, ShapeError> {
         self.temp.clear();
 
@@ -137,11 +119,7 @@ impl Shapes {
                 return Ok(None);
             }
 
-            let key = storage
-                .get_str(*key_id)
-                .map_err(|_| ShapeError::CannotFindKey)?;
-
-            hasher.write(key.as_bytes());
+            hasher.write_u32(key_id.as_u32());
             self.temp.push(*key_id);
         }
 

@@ -24,8 +24,8 @@ use crate::{
     hash::ObjectHash,
     persistent::{DBError, Flushable, KeyValueStoreBackend, Persistable},
     working_tree::{
-        shape::{ShapeError, ShapeId, ShapeStrings, Shapes},
-        storage::{DirEntryId, Storage},
+        shape::{ShapeId, ShapeStrings, Shapes},
+        storage::DirEntryId,
         string_interner::{StringId, StringInterner},
     },
     Map,
@@ -77,6 +77,7 @@ impl HashValueStore {
             total_bytes,
             npending_free_ids: self.free_ids.as_ref().map(|c| c.len()).unwrap_or(0),
             gc_npending_free_ids: GC_PENDING_HASHIDS.load(Ordering::Acquire),
+            nshapes: 0,
         }
     }
 
@@ -220,7 +221,9 @@ impl KeyValueStoreBackend for InMemory {
     }
 
     fn memory_usage(&self) -> RepositoryMemoryUsage {
-        self.hashes.get_memory_usage()
+        let mut mem = self.hashes.get_memory_usage();
+        mem.nshapes = self.shapes.nshapes();
+        mem
     }
 
     fn get_shape(&self, shape_id: ShapeId) -> Result<ShapeStrings, DBError> {
@@ -230,12 +233,8 @@ impl KeyValueStoreBackend for InMemory {
             .map_err(Into::into)
     }
 
-    fn make_shape(
-        &mut self,
-        dir: &[(StringId, DirEntryId)],
-        storage: &Storage,
-    ) -> Result<Option<ShapeId>, DBError> {
-        self.shapes.make_shape(dir, storage).map_err(Into::into)
+    fn make_shape(&mut self, dir: &[(StringId, DirEntryId)]) -> Result<Option<ShapeId>, DBError> {
+        self.shapes.make_shape(dir).map_err(Into::into)
     }
 
     fn update_strings(&mut self, string_interner: &StringInterner) -> Result<(), DBError> {

@@ -17,6 +17,9 @@ use tezos_spsc::Producer;
 
 pub(crate) const PRESERVE_CYCLE_COUNT: usize = 7;
 
+/// Used for statistics
+///
+/// Number of items in `GCThread::pending`.
 pub(crate) static GC_PENDING_HASHIDS: AtomicUsize = AtomicUsize::new(0);
 
 pub(crate) struct GCThread {

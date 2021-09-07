@@ -134,6 +134,8 @@ fn serialize_shaped_directory(
         }
     }
 
+    stats.nshapes = stats.nshapes.saturating_add(1);
+
     Ok(())
 }
 
@@ -150,7 +152,7 @@ fn serialize_directory(
     let mut nblobs_inlined: usize = 0;
     let mut blobs_length: usize = 0;
 
-    if let Some(shape_id) = store.make_shape(dir, storage)? {
+    if let Some(shape_id) = store.make_shape(dir)? {
         return serialize_shaped_directory(shape_id, dir, output, storage, stats);
     };
 

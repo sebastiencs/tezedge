@@ -54,6 +54,10 @@ impl StringId {
 
         (start, start + length)
     }
+
+    pub fn as_u32(self) -> u32 {
+        self.bits
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]

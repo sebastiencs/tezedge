@@ -116,11 +116,7 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
             .map_err(|reason| DBError::IpcAccessError { reason })
     }
 
-    fn make_shape(
-        &mut self,
-        _dir: &[(StringId, DirEntryId)],
-        _storage: &Storage,
-    ) -> Result<Option<ShapeId>, DBError> {
+    fn make_shape(&mut self, _dir: &[(StringId, DirEntryId)]) -> Result<Option<ShapeId>, DBError> {
         // Readonly protocol runner doesn't make shapes.
         Ok(None)
     }
