@@ -16,13 +16,12 @@ use std::{
 
 use modular_bitfield::prelude::*;
 use static_assertions::assert_eq_size;
-use tezos_timing::{StorageMemoryUsage, StringsMemoryUsage};
+use tezos_timing::StorageMemoryUsage;
 
 use crate::hash::index as index_of_key;
 use crate::kv_store::{index_map::IndexMap, HashId};
 
 use super::{
-    shape::Shapes,
     string_interner::{StringId, StringInterner},
     working_tree::MerkleError,
     DirEntry,

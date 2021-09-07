@@ -13,8 +13,8 @@ use tezos_timing::RepositoryMemoryUsage;
 use thiserror::Error;
 
 use crate::persistent::{DBError, Flushable, Persistable};
-use crate::working_tree::shape::{ShapeError, ShapeId, ShapeStrings};
-use crate::working_tree::storage::{DirEntryId, Storage};
+use crate::working_tree::shape::{ShapeId, ShapeStrings};
+use crate::working_tree::storage::DirEntryId;
 use crate::working_tree::string_interner::{StringId, StringInterner};
 use crate::ContextValue;
 use crate::{

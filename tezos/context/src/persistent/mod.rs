@@ -17,7 +17,7 @@ use crate::{
     working_tree::{
         serializer::DeserializationError,
         shape::{ShapeError, ShapeId, ShapeStrings},
-        storage::{DirEntryId, Storage},
+        storage::DirEntryId,
         string_interner::{StringId, StringInterner},
     },
     ObjectHash,
