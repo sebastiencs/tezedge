@@ -243,7 +243,6 @@ pub fn serialize_object(
                     store,
                 )?;
             } else {
-                // output.write_all(&[ID_DIRECTORY])?;
                 let dir = storage.get_small_dir(*dir_id)?;
 
                 serialize_directory(dir, output, storage, store, stats)?;
@@ -474,7 +473,6 @@ fn serialize_inode(
             // We don't check if it's a new inode because the parent
             // caller (recursively) confirmed it's a new one.
 
-            // output.write_all(&[ID_DIRECTORY])?;
             let dir = storage.get_small_dir(*dir_id)?;
             serialize_directory(dir, output, storage, store, stats)?;
 
@@ -499,6 +497,7 @@ pub enum DeserializationError {
     InodeNotFoundInRepository,
     InodeEmptyInRepository,
     DBError { error: Box<DBError> },
+    CannotFindNextShape,
 }
 
 impl From<TryFromSliceError> for DeserializationError {
@@ -581,25 +580,17 @@ fn deserialize_shaped_directory(
     let shape_id = ShapeId::from(shape_id);
 
     let shape = match store.get_shape(shape_id)? {
-        ShapeStrings::Ids(slice) => Cow::Borrowed(slice),
+        ShapeStrings::Ids(slice_ids) => Cow::Borrowed(slice_ids),
         ShapeStrings::Owned(strings) => {
-            let string_ids: Vec<_> = strings.iter().map(|s| storage.get_string_id(s)).collect();
+            // We are in the readonly protocol runner.
+            // Store the `String` in the `StringInterner`.
+            let string_ids: Vec<StringId> =
+                strings.iter().map(|s| storage.get_string_id(s)).collect();
             Cow::Owned(string_ids)
         }
     };
 
-    let mut shape = shape.as_ref().into_iter();
-
-    // let mut shape = match shape {
-    //     ShapeStrings::Ids(slice) => slice.as_ref().into_iter(),
-    //     ShapeStrings::Owned(strings) => {
-    //         let mut strings: Vec<_> = strings.iter().map(|s| storage.get_string_id(s)).collect();
-    //         strings.as_slice().into_iter()
-    //         // todo!()
-    //     },
-    // };
-
-    // let mut shape = shape.as_ref().into_iter();
+    let mut shape = shape.as_ref().iter();
 
     pos += 4;
 
@@ -610,13 +601,7 @@ fn deserialize_shaped_directory(
 
             pos += 1;
 
-            let key_id = match shape.next().copied() {
-                Some(key_id) => key_id,
-                None => {
-                    eprintln!("Cannot found next shape");
-                    panic!("Cannot found next shape");
-                }
-            };
+            let key_id = shape.next().copied().ok_or(CannotFindNextShape)?;
 
             let kind = descriptor.kind();
             let blob_inline_length = descriptor.blob_inline_length() as usize;
@@ -947,6 +932,8 @@ impl<'a> Iterator for HashIdIterator<'a> {
                 pos += 1;
 
                 if id != ID_SHAPED_DIRECTORY {
+                    // ID_SHAPED_DIRECTORY do not contain the keys
+
                     let offset = match descriptor.key_inline_length() as usize {
                         len if len > 0 => len,
                         _ => {

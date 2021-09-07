@@ -11,7 +11,7 @@ use std::{
     hash::Hasher,
 };
 
-use crate::{kv_store::index_map::IndexMap, Map};
+use crate::kv_store::index_map::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -58,13 +58,17 @@ impl From<u32> for ShapeId {
     }
 }
 
-//#[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct ShapeHash(u64);
 
+/// Contains the shape (keys) of a directory.
+///
+/// A `ShapeId` maps to a slice of `StringId`
 pub struct Shapes {
-    hashes: BTreeMap<ShapeHash, (ShapeId, Box<[StringId]>)>,
-    ids: IndexMap<ShapeId, ShapeHash>,
+    /// Map `ShapeHash` to its `ShapeId` and strings
+    hash_to_strings: BTreeMap<ShapeHash, (ShapeId, Box<[StringId]>)>,
+    /// Map the `ShapeId` to its `ShapeHash`.
+    id_to_hash: IndexMap<ShapeId, ShapeHash>,
     temp: Vec<StringId>,
 }
 
@@ -82,19 +86,19 @@ pub enum ShapeStrings<'a> {
 impl Shapes {
     pub fn new() -> Self {
         Self {
-            hashes: BTreeMap::default(),
-            ids: IndexMap::with_capacity(1024),
+            hash_to_strings: BTreeMap::default(),
+            id_to_hash: IndexMap::with_capacity(1024),
             temp: Vec::with_capacity(256),
         }
     }
 
     pub fn get_shape(&self, shape_id: ShapeId) -> Result<&[StringId], ShapeError> {
-        let hash = match self.ids.get(shape_id)?.copied() {
+        let hash = match self.id_to_hash.get(shape_id)?.copied() {
             Some(hash) => hash,
             None => return Err(ShapeError::ShapeIdNotFound),
         };
 
-        self.hashes
+        self.hash_to_strings
             .get(&hash)
             .map(|s| &*s.1)
             .ok_or(ShapeError::ShapeIdNotFound)
@@ -143,10 +147,10 @@ impl Shapes {
 
         let shape_hash = ShapeHash(hasher.finish());
 
-        match self.hashes.entry(shape_hash) {
+        match self.hash_to_strings.entry(shape_hash) {
             Occupied(entry) => Ok(Some(entry.get().0)),
             Vacant(entry) => {
-                let shape_id = self.ids.push(shape_hash)?;
+                let shape_id = self.id_to_hash.push(shape_hash)?;
                 entry.insert((shape_id, Box::from(self.temp.as_slice())));
                 Ok(Some(shape_id))
             }
