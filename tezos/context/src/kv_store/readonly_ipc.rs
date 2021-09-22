@@ -62,14 +62,15 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
         }
     }
 
-    fn put_context_hash(&mut self, _hash_id: HashId) -> Result<(), DBError> {
+    fn put_context_hash(&mut self, _hash_id: HashId, _offset: u64) -> Result<(), DBError> {
         // This context is readonly
         Ok(())
     }
 
-    fn get_context_hash(&self, context_hash: &ContextHash) -> Result<Option<HashId>, DBError> {
+    fn get_context_hash(&self, context_hash: &ContextHash) -> Result<Option<(HashId, u64)>, DBError> {
         self.client
             .get_context_hash_id(context_hash)
+            .map(|v| v.map(|v| (v, 0)))
             .map_err(|reason| DBError::IpcAccessError { reason })
     }
 
@@ -135,6 +136,21 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
 
     fn synchronize_strings_into(&self, _string_interner: &mut StringInterner) {
         // Readonly protocol runner doesn't update strings.
+    }
+
+    fn get_current_offset(&self) -> Result<u64, DBError> {
+        unimplemented!()
+    }
+
+    fn append_serialized_data(&mut self, data: &[u8]) -> Result<(), DBError> {
+        unimplemented!()
+    }
+
+    fn synchronize_full(&mut self) -> Result<(), DBError> {
+        unimplemented!()
+    }
+    fn get_value_from_offset(&self, buffer: &mut Vec<u8>, offset: u64) -> Result<(), DBError> {
+        unimplemented!()
     }
 }
 

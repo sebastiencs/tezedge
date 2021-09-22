@@ -91,19 +91,28 @@ impl TezedgeIndex {
     /// If the object has not be found, this returns Ok(None).
     pub fn fetch_object(
         &self,
-        hash_id: HashId,
+        // hash_id: HashId,
+        offset: u64,
         storage: &mut Storage,
     ) -> Result<Option<Object>, DBError> {
         let repo = self.repository.read()?;
 
-        match repo.get_value(hash_id)? {
-            None => Ok(None),
-            Some(object_bytes) => Ok(Some(deserialize_object(
-                object_bytes.as_ref(),
-                storage,
-                &*repo,
-            )?)),
-        }
+        repo.get_value_from_offset(&mut storage.data, offset)?;
+
+        Ok(Some(deserialize_object(
+            // &storage.data,
+            storage,
+            &*repo,
+        )?))
+
+        // match repo.get_value_from_offset(&mut storage.data, offset)? {
+        //     None => Ok(None),
+        //     Some(object_bytes) => Ok(Some(deserialize_object(
+        //         object_bytes.as_ref(),
+        //         storage,
+        //         &*repo,
+        //     )?)),
+        // }
     }
 
     /// Returns the raw `ObjectHash` associated to this `hash_id`.
@@ -123,11 +132,12 @@ impl TezedgeIndex {
     /// Use `Self::fetch_object` to get `None` when it has not be found.
     pub fn get_object(
         &self,
-        hash_id: HashId,
+        offset: u64,
+        //hash_id: HashId,
         storage: &mut Storage,
     ) -> Result<Object, MerkleError> {
-        match self.fetch_object(hash_id, storage)? {
-            None => Err(MerkleError::ObjectNotFound { hash_id }),
+        match self.fetch_object(offset, storage)? {
+            None => Err(MerkleError::ObjectNotFound { hash_id: (offset as usize).try_into().unwrap() }),
             Some(object) => Ok(object),
         }
     }
@@ -135,10 +145,11 @@ impl TezedgeIndex {
     /// Fetches the commit associated to this `hash` from the repository.
     pub fn fetch_commit(
         &self,
-        hash: HashId,
+        offset: u64,
+        //hash: HashId,
         storage: &mut Storage,
     ) -> Result<Option<Commit>, DBError> {
-        match self.fetch_object(hash, storage)? {
+        match self.fetch_object(offset, storage)? {
             Some(Object::Commit(commit)) => Ok(Some(*commit)),
             Some(Object::Directory(_)) => Err(DBError::FoundUnexpectedStructure {
                 sought: "commit".to_string(),
@@ -157,11 +168,12 @@ impl TezedgeIndex {
     /// Returns an error when the commit was not found.
     pub fn get_commit(
         &self,
-        hash_id: HashId,
+        offset: u64,
+        //hash_id: HashId,
         storage: &mut Storage,
     ) -> Result<Commit, MerkleError> {
-        match self.fetch_commit(hash_id, storage)? {
-            None => Err(MerkleError::ObjectNotFound { hash_id }),
+        match self.fetch_commit(offset, storage)? {
+            None => Err(MerkleError::ObjectNotFound { hash_id: HashId::new(offset as u32).unwrap() }),
             Some(object) => Ok(object),
         }
     }
@@ -172,10 +184,12 @@ impl TezedgeIndex {
     /// Returns an error when the object is not a directory.
     pub fn fetch_directory(
         &self,
-        hash_id: HashId,
+        offset: u64,
+        //hash_id: HashId,
         storage: &mut Storage,
     ) -> Result<Option<DirectoryId>, DBError> {
-        match self.fetch_object(hash_id, storage)? {
+
+        match self.fetch_object(offset, storage)? {
             Some(Object::Directory(dir_id)) => Ok(Some(dir_id)),
             Some(Object::Blob(_)) => Err(DBError::FoundUnexpectedStructure {
                 sought: "dir".to_string(),
@@ -194,11 +208,12 @@ impl TezedgeIndex {
     /// Returns an error when the commit was not found.
     pub fn get_directory(
         &self,
-        hash_id: HashId,
+        offset: u64,
+        //hash_id: HashId,
         storage: &mut Storage,
     ) -> Result<DirectoryId, MerkleError> {
-        match self.fetch_directory(hash_id, storage)? {
-            None => Err(MerkleError::ObjectNotFound { hash_id }),
+        match self.fetch_directory(offset, storage)? {
+            None => Err(MerkleError::ObjectNotFound { hash_id: HashId::new(offset as u32).unwrap() }),
             Some(object) => Ok(object),
         }
     }
@@ -217,7 +232,7 @@ impl TezedgeIndex {
         context_hash: &ContextHash,
     ) -> Result<Option<HashId>, MerkleError> {
         let db = self.repository.read()?;
-        Ok(db.get_context_hash(context_hash)?)
+        Ok(db.get_context_hash(context_hash)?.map(|v| v.0))
     }
 
     /// Convert key in array form to string form
@@ -249,7 +264,10 @@ impl TezedgeIndex {
         // get object by hash (from the repository)
 
         let hash_id = dir_entry.get_hash_id()?;
-        let object = self.get_object(hash_id, storage)?;
+        let offset = dir_entry.get_offset();
+
+        let object = self.get_object(offset, storage)?;
+//        let object = self.get_object(hash_id, storage)?;
 
         let dir_entry = storage.get_dir_entry(dir_entry_id)?;
         dir_entry.set_object(&object)?;
@@ -261,7 +279,8 @@ impl TezedgeIndex {
     /// depth - None returns full tree
     pub fn _get_context_tree_by_prefix(
         &self,
-        context_hash: HashId,
+        offset: u64,
+        //context_hash: HashId,
         prefix: &ContextKey,
         depth: Option<usize>,
         storage: &mut Storage,
@@ -271,9 +290,9 @@ impl TezedgeIndex {
         }
 
         let mut out = StringDirectoryMap::new();
-        let commit = self.get_commit(context_hash, storage)?;
+        let commit = self.get_commit(offset, storage)?;
 
-        let root_dir_id = self.get_directory(commit.root_hash, storage)?;
+        let root_dir_id = self.get_directory(commit.root_hash_offset, storage)?;
         let prefixed_dir_id = self.find_or_create_directory(root_dir_id, prefix, storage)?;
         let delimiter = if prefix.is_empty() { "" } else { "/" };
 
@@ -424,13 +443,14 @@ impl TezedgeIndex {
     /// Get value from historical context identified by commit hash.
     pub fn get_history(
         &self,
-        commit_hash: HashId,
+        offset: u64,
+        //commit_hash: HashId,
         key: &ContextKey,
     ) -> Result<ContextValue, MerkleError> {
         let mut storage = (&*self.storage).borrow_mut();
 
-        let commit = self.get_commit(commit_hash, &mut storage)?;
-        let dir_id = self.get_directory(commit.root_hash, &mut storage)?;
+        let commit = self.get_commit(offset, &mut storage)?;
+        let dir_id = self.get_directory(commit.root_hash_offset, &mut storage)?;
 
         let blob_id = self.try_find_blob(dir_id, key, &mut storage)?;
         let blob = storage.get_blob(blob_id)?;
@@ -474,13 +494,14 @@ impl TezedgeIndex {
     /// Construct Vec of all context key-values under given prefix
     pub fn get_context_key_values_by_prefix(
         &self,
-        context_hash: HashId,
+        offset: u64,
+        //context_hash: HashId,
         prefix: &ContextKey,
     ) -> Result<Option<Vec<(ContextKeyOwned, ContextValue)>>, MerkleError> {
         let mut storage = (&*self.storage).borrow_mut();
 
-        let commit = self.get_commit(context_hash, &mut storage)?;
-        let root_dir_id = self.get_directory(commit.root_hash, &mut storage)?;
+        let commit = self.get_commit(offset, &mut storage)?;
+        let root_dir_id = self.get_directory(commit.root_hash_offset, &mut storage)?;
         self.get_context_key_values_by_prefix_impl(root_dir_id, prefix, &mut storage)
     }
 
@@ -558,7 +579,7 @@ impl TezedgeIndex {
                     })
                     .unwrap_or(Ok(()))
             }
-            Object::Commit(commit) => match self.get_object(commit.root_hash, storage) {
+            Object::Commit(commit) => match self.get_object(commit.root_hash_offset, storage) {
                 Err(err) => Err(err),
                 Ok(object) => {
                     self.collect_key_values_from_tree_recursively(path, &object, entries, storage)
@@ -602,7 +623,7 @@ impl TezedgeIndex {
 impl IndexApi<TezedgeContext> for TezedgeIndex {
     /// Checks if `context_hash` exists in the repository.
     fn exists(&self, context_hash: &ContextHash) -> Result<bool, ContextError> {
-        let hash_id = {
+        let (hash_id, offset) = {
             let repository = self.repository.read()?;
 
             match repository.get_context_hash(context_hash)? {
@@ -613,15 +634,11 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
 
         let mut storage = self.storage.borrow_mut();
 
-        if let Some(Object::Commit(_)) = self.fetch_object(hash_id, &mut storage)? {
-            Ok(true)
-        } else {
-            Ok(false)
-        }
+        Ok(self.get_commit(offset, &mut storage).is_ok())
     }
 
     fn checkout(&self, context_hash: &ContextHash) -> Result<Option<TezedgeContext>, ContextError> {
-        let hash_id = {
+        let (hash_id, offset) = {
             let repository = self.repository.read()?;
 
             match repository.get_context_hash(context_hash)? {
@@ -637,12 +654,12 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
         let dir_id = {
             let mut storage = index.storage.borrow_mut();
 
-            let commit = match self.fetch_commit(hash_id, &mut storage)? {
+            let commit = match self.fetch_commit(offset, &mut storage)? {
                 Some(commit) => commit,
                 None => return Ok(None),
             };
 
-            match self.fetch_directory(commit.root_hash, &mut storage)? {
+            match self.fetch_directory(commit.root_hash_offset, &mut storage)? {
                 Some(dir_id) => dir_id,
                 None => return Ok(None),
             }
@@ -673,7 +690,7 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
         context_hash: &ContextHash,
         key: &ContextKey,
     ) -> Result<Option<ContextValue>, ContextError> {
-        let hash_id = {
+        let (hash_id, offset) = {
             let repository = self.repository.read()?;
 
             match repository.get_context_hash(context_hash)? {
@@ -686,7 +703,9 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
             }
         };
 
-        match self.get_history(hash_id, key) {
+        println!("HASH_ID={:?}, OFFSET={:?}", hash_id, offset);
+
+        match self.get_history(offset, key) {
             Err(MerkleError::ValueNotFound { key: _ }) => Ok(None),
             Err(MerkleError::ObjectNotFound { hash_id: _ }) => Ok(None),
             Err(err) => Err(ContextError::MerkleStorageError { error: err }),
@@ -699,7 +718,7 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
         context_hash: &ContextHash,
         prefix: &ContextKey,
     ) -> Result<Option<Vec<(ContextKeyOwned, ContextValue)>>, ContextError> {
-        let hash_id = {
+        let (hash_id, offset) = {
             let repository = self.repository.read()?;
             match repository.get_context_hash(context_hash)? {
                 Some(hash_id) => hash_id,
@@ -711,7 +730,7 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
             }
         };
 
-        self.get_context_key_values_by_prefix(hash_id, prefix)
+        self.get_context_key_values_by_prefix(offset, prefix)
             .map_err(Into::into)
     }
 
@@ -721,7 +740,7 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
         prefix: &ContextKey,
         depth: Option<usize>,
     ) -> Result<StringTreeObject, ContextError> {
-        let hash_id = {
+        let (hash_id, offset) = {
             let repository = self.repository.read()?;
             match repository.get_context_hash(context_hash)? {
                 Some(hash_id) => hash_id,
@@ -735,7 +754,7 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
 
         let mut storage = self.storage.borrow_mut();
 
-        self._get_context_tree_by_prefix(hash_id, prefix, depth, &mut storage)
+        self._get_context_tree_by_prefix(offset, prefix, depth, &mut storage)
             .map_err(ContextError::from)
     }
 }
@@ -829,9 +848,11 @@ impl ShellContextApi for TezedgeContext {
 
         let PostCommitData {
             commit_hash_id,
+            commit_offset,
             batch,
             reused,
             serialize_stats,
+            output,
         } = self.tree.prepare_commit(
             date,
             author,
@@ -841,9 +862,13 @@ impl ShellContextApi for TezedgeContext {
             true,
         )?;
 
+        // println!("POST COMMIT HASH_ID={:?} OFFSET={:?} DATA_LENGTH={:?}", commit_hash_id, commit_offset, output.len());
+
+        repository.append_serialized_data(&output)?;
+
         // FIXME: only write objects if there are any, empty commits should not produce anything
         repository.write_batch(batch)?;
-        repository.put_context_hash(commit_hash_id)?;
+        repository.put_context_hash(commit_hash_id, commit_offset)?;
         repository.block_applied(reused)?;
 
         let commit_hash = self.get_commit_hash(commit_hash_id, &*repository)?;
