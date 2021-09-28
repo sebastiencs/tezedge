@@ -599,9 +599,12 @@ impl TezedgeIndex {
     /// - The repository needs those interned strings when it sends the directory shapes to the
     ///   read only protocol runner.
     fn synchronize_interned_strings_to_repository(&self) -> Result<(), MerkleError> {
-        let storage = self.storage.borrow();
+        let mut storage = self.storage.borrow_mut();
         let mut repository = self.repository.write()?;
         repository.synchronize_strings_from(&storage.strings);
+
+        // TODO: Don't do this hack
+        storage.strings.all_strings_to_serialize.clear();
 
         Ok(())
     }
