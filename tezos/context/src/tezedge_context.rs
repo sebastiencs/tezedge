@@ -100,8 +100,7 @@ impl TezedgeIndex {
         repo.get_value_from_offset(&mut storage.data, offset)?;
 
         Ok(Some(deserialize_object(
-            offset,
-            // &storage.data,
+            offset, // &storage.data,
             storage, &*repo,
         )?))
 
