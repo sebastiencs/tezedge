@@ -139,7 +139,7 @@ enum OffsetLength {
     RelativeOneByte,
     RelativeTwoBytes,
     RelativeFourBytes,
-    RelativeHeightBytes,
+    RelativeEightBytes,
 }
 
 fn get_relative_offset(current_offset: u64, target_offset: u64) -> (u64, OffsetLength) {
@@ -155,7 +155,7 @@ fn get_relative_offset(current_offset: u64, target_offset: u64) -> (u64, OffsetL
     } else if relative_offset <= 0xFFFFFFFF {
         (relative_offset, OffsetLength::RelativeFourBytes)
     } else {
-        (relative_offset, OffsetLength::RelativeHeightBytes)
+        (relative_offset, OffsetLength::RelativeEightBytes)
     }
 }
 
@@ -180,7 +180,7 @@ fn serialize_offset(
             let offset: u32 = relative_offset as u32;
             output.write_all(&offset.to_le_bytes()).unwrap();
         }
-        OffsetLength::RelativeHeightBytes => {
+        OffsetLength::RelativeEightBytes => {
             output.write_all(&relative_offset.to_le_bytes()).unwrap();
         }
     }
@@ -623,7 +623,7 @@ impl PointersOffsetsHeader {
             OffsetLength::RelativeOneByte => 0,
             OffsetLength::RelativeTwoBytes => 1,
             OffsetLength::RelativeFourBytes => 2,
-            OffsetLength::RelativeHeightBytes => 3,
+            OffsetLength::RelativeEightBytes => 3,
         };
 
         self.bitfield |= bits << (index * 2);
@@ -640,7 +640,7 @@ impl PointersOffsetsHeader {
             0 => OffsetLength::RelativeOneByte,
             1 => OffsetLength::RelativeTwoBytes,
             2 => OffsetLength::RelativeFourBytes,
-            _ => OffsetLength::RelativeHeightBytes,
+            _ => OffsetLength::RelativeEightBytes,
         }
     }
 
@@ -922,7 +922,7 @@ fn deserialize_offset_length(
             let offset = object_offset - relative_offset as u64;
             (offset, 4)
         }
-        OffsetLength::RelativeHeightBytes => {
+        OffsetLength::RelativeEightBytes => {
             let bytes = data.get(..8).unwrap();
             let relative_offset: u64 = u64::from_le_bytes(bytes.try_into().unwrap());
             let offset = object_offset - relative_offset;
