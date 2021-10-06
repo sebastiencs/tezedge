@@ -234,9 +234,9 @@ impl TezedgeIndex {
     pub fn fetch_context_hash_id(
         &self,
         context_hash: &ContextHash,
-    ) -> Result<Option<HashId>, MerkleError> {
+    ) -> Result<Option<(HashId, u64)>, MerkleError> {
         let db = self.repository.read()?;
-        Ok(db.get_context_hash(context_hash)?.map(|v| v.0))
+        Ok(db.get_context_hash(context_hash)?)
     }
 
     /// Convert key in array form to string form

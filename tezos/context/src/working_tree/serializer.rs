@@ -2044,7 +2044,9 @@ mod tests {
 
         assert_eq!(batch.len(), 1);
 
-        let new_inode_id = deserialize_inode(&batch.last().unwrap().1, offset as u64, &mut storage, &repo).unwrap();
+        let new_inode_id =
+            deserialize_inode(&batch.last().unwrap().1, offset as u64, &mut storage, &repo)
+                .unwrap();
         let new_inode = storage.get_inode(new_inode_id).unwrap();
 
         if let Inode::Directory(new_dir_id) = new_inode {

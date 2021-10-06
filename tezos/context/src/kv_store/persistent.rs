@@ -347,7 +347,11 @@ impl KeyValueStoreBackend for Persistent {
     }
 }
 
-pub(super) fn get_value_from_offset(data_file: &File, buffer: &mut Vec<u8>, offset: u64) -> Result<(), DBError> {
+pub(super) fn get_value_from_offset(
+    data_file: &File,
+    buffer: &mut Vec<u8>,
+    offset: u64,
+) -> Result<(), DBError> {
     let mut header: [u8; 5] = Default::default();
     data_file.read_exact_at(&mut header[..1], FileOffset(offset));
 

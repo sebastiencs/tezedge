@@ -73,7 +73,6 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
     ) -> Result<Option<(HashId, u64)>, DBError> {
         self.client
             .get_context_hash_id(context_hash)
-            .map(|v| v.map(|v| (v, 0)))
             .map_err(|reason| DBError::IpcAccessError { reason })
     }
 
@@ -204,7 +203,7 @@ enum ContextRequest {
 #[derive(Serialize, Deserialize, Debug, IntoStaticStr)]
 enum ContextResponse {
     GetContextHashResponse(Result<Option<ObjectHash>, String>),
-    GetContextHashIdResponse(Result<Option<HashId>, String>),
+    GetContextHashIdResponse(Result<Option<(HashId, u64)>, String>),
     GetValueResponse(Result<Option<ContextValue>, String>),
     GetValueFromOffsetResponse(Result<ContextValue, String>),
     GetShapeResponse(Result<Vec<String>, String>),
@@ -382,7 +381,7 @@ impl IpcContextClient {
     pub fn get_context_hash_id(
         &self,
         context_hash: &ContextHash,
-    ) -> Result<Option<HashId>, ContextServiceError> {
+    ) -> Result<Option<(HashId, u64)>, ContextServiceError> {
         let mut io = self.io.borrow_mut();
         io.tx
             .send(&ContextRequest::GetContextHashId(context_hash.clone()))?;
@@ -405,7 +404,7 @@ impl IpcContextClient {
         &self,
         buffer: &mut Vec<u8>,
         offset: u64,
-    )  -> Result<(), ContextServiceError> {
+    ) -> Result<(), ContextServiceError> {
         let mut io = self.io.borrow_mut();
         io.tx.send(&ContextRequest::GetValueFromOffset(offset))?;
 
@@ -417,12 +416,14 @@ impl IpcContextClient {
             ContextResponse::GetValueFromOffsetResponse(result) => {
                 let mut result = match result {
                     Ok(result) => result,
-                    Err(err) => return Err(ContextError::GetValueFromOffsetError { reason: err }.into()),
+                    Err(err) => {
+                        return Err(ContextError::GetValueFromOffsetError { reason: err }.into())
+                    }
                 };
                 buffer.clear();
                 buffer.append(&mut result);
                 Ok(())
-            },
+            }
             message => Err(ContextServiceError::UnexpectedMessage {
                 message: message.into(),
             }),
@@ -656,23 +657,28 @@ impl IpcContextServer {
                         io.tx.send(&ContextResponse::GetContextHashResponse(res))?;
                     }
                 },
-                ContextRequest::GetValueFromOffset(offset) => match crate::ffi::get_context_index()? {
-                    None => io.tx.send(&ContextResponse::GetValueFromOffsetResponse(Err(
-                        "Context index unavailable".to_owned(),
-                    )))?,
-                    Some(index) => {
-                        let repo = index.repository.read().unwrap();
+                ContextRequest::GetValueFromOffset(offset) => {
+                    match crate::ffi::get_context_index()? {
+                        None => io
+                            .tx
+                            .send(&ContextResponse::GetValueFromOffsetResponse(Err(
+                                "Context index unavailable".to_owned(),
+                            )))?,
+                        Some(index) => {
+                            let repo = index.repository.read().unwrap();
 
-                        let mut buffer = Vec::with_capacity(1000);
-                        repo.get_value_from_offset(&mut buffer, offset).unwrap();
+                            let mut buffer = Vec::with_capacity(1000);
+                            repo.get_value_from_offset(&mut buffer, offset).unwrap();
 
-                        // let res = index
-                        //     .fetch_hash(hash_id)
-                        //     .map_err(|err| format!("Context error: {:?}", err));
+                            // let res = index
+                            //     .fetch_hash(hash_id)
+                            //     .map_err(|err| format!("Context error: {:?}", err));
 
-                        io.tx.send(&ContextResponse::GetValueFromOffsetResponse(Ok(buffer)))?;
+                            io.tx
+                                .send(&ContextResponse::GetValueFromOffsetResponse(Ok(buffer)))?;
+                        }
                     }
-                },
+                }
             }
         }
 
