@@ -343,50 +343,36 @@ impl KeyValueStoreBackend for Persistent {
     }
 
     fn get_value_from_offset(&self, buffer: &mut Vec<u8>, offset: u64) -> Result<(), DBError> {
-        let mut header: [u8; 5] = Default::default();
-        self.data_file
-            .read_exact_at(&mut header[..1], FileOffset(offset));
-
-        let object_header: ObjectHeader = ObjectHeader::from_bytes([header[0]]);
-
-        let header = match object_header.get_length() {
-            ObjectLength::OneByte => &mut header[..2],
-            ObjectLength::TwoBytes => &mut header[..3],
-            ObjectLength::FourBytes => &mut header[..5],
-        };
-
-        self.data_file.read_exact_at(header, FileOffset(offset));
-        let (_, length) = read_object_length(header, &object_header);
-
-        // println!("LENGTH={:?}", length);
-
-        // let length = u32::from_ne_bytes(header[1..].try_into().unwrap());
-        // let total_length = length as usize;
-        //let total_length = 5 + length as usize;
-
-        buffer.resize(length, 0);
-        // self.data.clear();
-        // self.data.reserve(total_length);
-
-        self.data_file.read_exact_at(buffer, FileOffset(offset));
-
-        Ok(())
+        get_value_from_offset(&self.data_file, buffer, offset)
     }
+}
 
-    // fn get_value_from_offset(&self, buffer: &mut Vec<u8>, offset: u64) -> Result<(), DBError> {
-    //     let mut header: [u8; 5] = Default::default();
-    //     self.data_file.read_exact_at(&mut header, FileOffset(offset));
+pub(super) fn get_value_from_offset(data_file: &File, buffer: &mut Vec<u8>, offset: u64) -> Result<(), DBError> {
+    let mut header: [u8; 5] = Default::default();
+    data_file.read_exact_at(&mut header[..1], FileOffset(offset));
 
-    //     let length = u32::from_ne_bytes(header[1..].try_into().unwrap());
-    //     let total_length = length as usize;
-    //     //let total_length = 5 + length as usize;
+    let object_header: ObjectHeader = ObjectHeader::from_bytes([header[0]]);
 
-    //     buffer.resize(total_length, 0);
-    //     // self.data.clear();
-    //     // self.data.reserve(total_length);
+    let header = match object_header.get_length() {
+        ObjectLength::OneByte => &mut header[..2],
+        ObjectLength::TwoBytes => &mut header[..3],
+        ObjectLength::FourBytes => &mut header[..5],
+    };
 
-    //     self.data_file.read_exact_at(buffer, FileOffset(offset));
+    data_file.read_exact_at(header, FileOffset(offset));
+    let (_, length) = read_object_length(header, &object_header);
 
-    //     Ok(())
-    // }
+    // println!("LENGTH={:?}", length);
+
+    // let length = u32::from_ne_bytes(header[1..].try_into().unwrap());
+    // let total_length = length as usize;
+    //let total_length = 5 + length as usize;
+
+    buffer.resize(length, 0);
+    // self.data.clear();
+    // self.data.reserve(total_length);
+
+    data_file.read_exact_at(buffer, FileOffset(offset));
+
+    Ok(())
 }
