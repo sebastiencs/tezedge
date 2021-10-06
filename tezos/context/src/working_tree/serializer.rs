@@ -347,6 +347,9 @@ fn serialize_directory(
         let blob_inline = get_inline_blob(storage, &dir_entry);
         let blob_inline_length = blob_inline.as_ref().map(|b| b.len()).unwrap_or(0);
 
+        let dir_entry_offset = dir_entry.get_offset();
+        let (relative_offset, offset_length) = get_relative_offset(offset, dir_entry_offset);
+
         match key.len() {
             len if len != 0 && len < 4 => {
                 let byte: [u8; 1] = KeyDirEntryHeader::new()
@@ -384,8 +387,7 @@ fn serialize_directory(
             hash_ids_length += nbytes;
             highest_hash_id = highest_hash_id.max(hash_id);
 
-            let dir_entry_offset = dir_entry.get_offset();
-            output.write_all(&dir_entry_offset.to_ne_bytes())?;
+            serialize_offset(output, relative_offset, offset_length);
         }
     }
 
