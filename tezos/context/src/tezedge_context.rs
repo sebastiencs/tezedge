@@ -645,6 +645,8 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
     }
 
     fn checkout(&self, context_hash: &ContextHash) -> Result<Option<TezedgeContext>, ContextError> {
+        println!("CHECKOUT {:?}", context_hash);
+
         let (hash_id, offset) = {
             let repository = self.repository.read()?;
 
@@ -653,6 +655,8 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
                 None => return Ok(None),
             }
         };
+
+        println!("CHECKOUT HASH_ID={:?} OFFSET={:?}", hash_id, offset);
 
         // TODO: should we always be copying this value? is it possibe
         // to keep the latest version around and copy only when not different?
@@ -665,6 +669,8 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
                 Some(commit) => commit,
                 None => return Ok(None),
             };
+
+            println!("CHECKOUT COMMIT={:?}", commit);
 
             match self.fetch_directory(commit.root_hash_offset, &mut storage)? {
                 Some(dir_id) => dir_id,

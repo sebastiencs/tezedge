@@ -132,6 +132,7 @@ pub enum ObjectTag {
 }
 
 #[bitfield(bits = 8)]
+#[derive(Debug)]
 pub struct ObjectHeader {
     tag: ObjectTag,
     length: ObjectLength,
@@ -1175,6 +1176,8 @@ pub fn deserialize_object(
 
     let header = data.get(0).copied().ok_or(UnexpectedEOF)?;
     let header: ObjectHeader = ObjectHeader::from_bytes([header]);
+
+    println!("DESERIALIZE_OBJECT HEADER={:?}", header);
 
     let (header_nbytes, _) = read_object_length(data, &header);
 
