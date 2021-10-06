@@ -88,7 +88,7 @@ fn get_inline_blob<'a>(storage: &'a Storage, dir_entry: &DirEntry) -> Option<Blo
 
 #[bitfield(bits = 8)]
 #[derive(Clone, Debug, Eq, PartialEq, Copy)]
-pub struct KeyDirEntryShapeHeader {
+pub struct DirEntryShapeHeader {
     kind: DirEntryKind,
     blob_inline_length: B3,
     offset_length: OffsetLength,
@@ -97,11 +97,11 @@ pub struct KeyDirEntryShapeHeader {
 }
 
 // Must fit in 1 byte
-assert_eq_size!(KeyDirEntryShapeHeader, u8);
+assert_eq_size!(DirEntryShapeHeader, u8);
 
 #[bitfield(bits = 8)]
 #[derive(Clone, Debug, Eq, PartialEq, Copy)]
-pub struct KeyDirEntryHeader {
+pub struct DirEntryHeader {
     kind: DirEntryKind,
     blob_inline_length: B3,
     key_inline_length: B2,
@@ -109,7 +109,7 @@ pub struct KeyDirEntryHeader {
 }
 
 // Must fit in 1 byte
-assert_eq_size!(KeyDirEntryHeader, u8);
+assert_eq_size!(DirEntryHeader, u8);
 
 #[derive(BitfieldSpecifier)]
 #[bits = 5]
@@ -232,7 +232,7 @@ fn serialize_shaped_directory(
         let blob_inline = get_inline_blob(storage, &dir_entry);
         let blob_inline_length = blob_inline.as_ref().map(|b| b.len()).unwrap_or(0);
 
-        let byte: [u8; 1] = KeyDirEntryShapeHeader::new()
+        let byte: [u8; 1] = DirEntryShapeHeader::new()
             .with_kind(kind)
             .with_offset_length(offset_length)
             // .with_key_inline_length(0)
@@ -349,7 +349,6 @@ fn serialize_directory(
 
     for (key_id, dir_entry_id) in dir {
         let key = storage.get_str(*key_id)?;
-
         let dir_entry = storage.get_dir_entry(*dir_entry_id)?;
 
         let hash_id: u32 = dir_entry.hash_id().map(|h| h.as_u32()).unwrap_or(0);
@@ -363,20 +362,23 @@ fn serialize_directory(
 
         match key.len() {
             len if len != 0 && len < 4 => {
-                let byte: [u8; 1] = KeyDirEntryHeader::new()
+                let byte: [u8; 1] = DirEntryHeader::new()
                     .with_kind(kind)
                     .with_key_inline_length(len as u8)
                     .with_blob_inline_length(blob_inline_length as u8)
+                    .with_offset_length(offset_length)
                     .into_bytes();
+
                 output.write_all(&byte[..])?;
                 output.write_all(key.as_bytes())?;
                 keys_length += len;
             }
             len => {
-                let byte: [u8; 1] = KeyDirEntryHeader::new()
+                let byte: [u8; 1] = DirEntryHeader::new()
                     .with_kind(kind)
                     .with_key_inline_length(0)
                     .with_blob_inline_length(blob_inline_length as u8)
+                    .with_offset_length(offset_length)
                     .into_bytes();
                 output.write_all(&byte[..])?;
 
@@ -395,10 +397,10 @@ fn serialize_directory(
         } else {
             let nbytes = serialize_hash_id(hash_id, output)?;
 
+            serialize_offset(output, relative_offset, offset_length);
+
             hash_ids_length += nbytes;
             highest_hash_id = highest_hash_id.max(hash_id);
-
-            serialize_offset(output, relative_offset, offset_length);
         }
     }
 
@@ -554,11 +556,11 @@ fn serialize_hash_id(hash_id: u32, output: &mut Vec<u8>) -> Result<usize, Serial
 /// `0b01000001_00000000_00000000`
 ///
 #[derive(Copy, Clone, Default, Debug)]
-struct PointersDescriptor {
+struct PointersHeader {
     bitfield: u32,
 }
 
-impl PointersDescriptor {
+impl PointersHeader {
     /// Set bit at index in the bitfield
     fn set(&mut self, index: usize) {
         self.bitfield |= 1 << index;
@@ -595,7 +597,7 @@ impl PointersDescriptor {
     }
 }
 
-impl From<&[Option<PointerToInode>; 32]> for PointersDescriptor {
+impl From<&[Option<PointerToInode>; 32]> for PointersHeader {
     fn from(pointers: &[Option<PointerToInode>; 32]) -> Self {
         let mut bitfield = Self::default();
 
@@ -613,7 +615,7 @@ impl From<&[Option<PointerToInode>; 32]> for PointersDescriptor {
 ///
 /// The iterator returns the index of the bit.
 struct PointersDescriptorIterator {
-    bitfield: PointersDescriptor,
+    bitfield: PointersHeader,
     current: usize,
 }
 
@@ -766,7 +768,7 @@ fn serialize_inode(
             output.write_all(&depth.to_ne_bytes())?;
             output.write_all(&nchildren.to_ne_bytes())?;
 
-            let bitfield = PointersDescriptor::from(pointers);
+            let bitfield = PointersHeader::from(pointers);
             output.write_all(&bitfield.to_bytes())?;
 
             let bitfield_offsets = PointersOffsetsHeader::from_pointers(offset, pointers);
@@ -992,16 +994,16 @@ fn deserialize_shaped_directory(
 
     let dir_id = storage.with_new_dir::<_, Result<_, Error>>(|storage, new_dir| {
         while pos < data_length {
-            let descriptor = data.get(pos..pos + 1).ok_or(UnexpectedEOF)?;
-            let descriptor = KeyDirEntryShapeHeader::from_bytes([descriptor[0]; 1]);
+            let dir_entry_header = data.get(pos..pos + 1).ok_or(UnexpectedEOF)?;
+            let dir_entry_header = DirEntryShapeHeader::from_bytes([dir_entry_header[0]; 1]);
 
             pos += 1;
 
             let key_id = directory_shape.next().copied().ok_or(CannotFindNextShape)?;
 
-            let kind = descriptor.kind();
-            let blob_inline_length = descriptor.blob_inline_length() as usize;
-            let offset_length: OffsetLength = descriptor.offset_length();
+            let kind = dir_entry_header.kind();
+            let blob_inline_length = dir_entry_header.blob_inline_length() as usize;
+            let offset_length: OffsetLength = dir_entry_header.offset_length();
 
             let dir_entry = if blob_inline_length > 0 {
                 // The blob is inlined
@@ -1062,12 +1064,12 @@ fn deserialize_directory(
 
     let dir_id = storage.with_new_dir::<_, Result<_, Error>>(|storage, new_dir| {
         while pos < data_length {
-            let descriptor = data.get(pos..pos + 1).ok_or(UnexpectedEOF)?;
-            let descriptor = KeyDirEntryHeader::from_bytes([descriptor[0]; 1]);
+            let dir_entry_header = data.get(pos..pos + 1).ok_or(UnexpectedEOF)?;
+            let dir_entry_header = DirEntryHeader::from_bytes([dir_entry_header[0]; 1]);
 
             pos += 1;
 
-            let key_id = match descriptor.key_inline_length() as usize {
+            let key_id = match dir_entry_header.key_inline_length() as usize {
                 len if len > 0 => {
                     // The key is in the next `len` bytes
                     let key_bytes = data.get(pos..pos + len).ok_or(UnexpectedEOF)?;
@@ -1090,9 +1092,9 @@ fn deserialize_directory(
                 }
             };
 
-            let kind = descriptor.kind();
-            let blob_inline_length = descriptor.blob_inline_length() as usize;
-            let offset_length = descriptor.offset_length();
+            let kind = dir_entry_header.kind();
+            let blob_inline_length = dir_entry_header.blob_inline_length() as usize;
+            let offset_length = dir_entry_header.offset_length();
 
             let dir_entry = if blob_inline_length > 0 {
                 // The blob is inlined
@@ -1262,16 +1264,16 @@ fn deserialize_inode_pointers(
 
     pos += 8;
 
-    let descriptor = data.get(pos..pos + 4).ok_or(UnexpectedEOF)?;
-    let descriptor = PointersDescriptor::from_bytes(descriptor.try_into()?);
+    let pointers_header = data.get(pos..pos + 4).ok_or(UnexpectedEOF)?;
+    let pointers_header = PointersHeader::from_bytes(pointers_header.try_into()?);
 
-    let npointers = descriptor.count();
-    let indexes_iter = descriptor.iter();
+    let npointers = pointers_header.count();
+    let indexes_iter = pointers_header.iter();
 
     pos += 4;
 
-    let header_offsets = data.get(pos..pos + 8).ok_or(UnexpectedEOF)?;
-    let header_offsets = PointersOffsetsHeader::from_bytes(header_offsets.try_into()?);
+    let offsets_header = data.get(pos..pos + 8).ok_or(UnexpectedEOF)?;
+    let offsets_header = PointersOffsetsHeader::from_bytes(offsets_header.try_into()?);
 
     // println!(
     //     "DES START OBJECT_OFFSET={:?} HEADER_OFFSET={:?}",
@@ -1288,7 +1290,7 @@ fn deserialize_inode_pointers(
 
         pos += nbytes;
 
-        let offset_length = header_offsets.get(index);
+        let offset_length = offsets_header.get(index);
         let (offset, nbytes) =
             deserialize_offset_length(&data[pos..], offset_length, object_offset);
 
@@ -1491,7 +1493,7 @@ impl<'a> Iterator for HashIdIterator<'a> {
                 }
                 ObjectTag::Directory | ObjectTag::ShapedDirectory => {
                     let descriptor = self.data.get(pos..pos + 1)?;
-                    let descriptor = KeyDirEntryShapeHeader::from_bytes([descriptor[0]; 1]);
+                    let descriptor = DirEntryShapeHeader::from_bytes([descriptor[0]; 1]);
 
                     pos += 1;
 
@@ -1977,13 +1979,6 @@ mod tests {
                     _ => panic!(),
                 }
 
-                println!(
-                    "RES INDEX={:?} P_OFFSET={:?} OFFSET={:?}",
-                    index,
-                    pointer.offset(),
-                    offsets[index]
-                );
-
                 assert_eq!(pointer.offset(), offsets[index]);
             }
         } else {
@@ -1997,59 +1992,64 @@ mod tests {
         //     (1..33).collect::<Vec<_>>()
         // );
 
-        // // Test Inode::Value
+        // Test Inode::Value
 
-        // let dir_id = DirectoryId::empty();
-        // let dir_id = storage
-        //     .dir_insert(
-        //         dir_id,
-        //         "a",
-        //         DirEntry::new_commited(DirEntryKind::Blob, HashId::new(1), None),
-        //     )
-        //     .unwrap();
-        // let dir_id = storage
-        //     .dir_insert(
-        //         dir_id,
-        //         "bab",
-        //         DirEntry::new_commited(DirEntryKind::Blob, HashId::new(2), None),
-        //     )
-        //     .unwrap();
-        // let dir_id = storage
-        //     .dir_insert(
-        //         dir_id,
-        //         "0aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        //         DirEntry::new_commited(DirEntryKind::Blob, HashId::new(3), None),
-        //     )
-        //     .unwrap();
+        let dir_id = DirectoryId::empty();
+        let dir_id = storage
+            .dir_insert(
+                dir_id,
+                "a",
+                DirEntry::new_commited(DirEntryKind::Blob, HashId::new(1), None).with_offset(1),
+            )
+            .unwrap();
+        let dir_id = storage
+            .dir_insert(
+                dir_id,
+                "bab",
+                DirEntry::new_commited(DirEntryKind::Blob, HashId::new(2), None).with_offset(2),
+            )
+            .unwrap();
+        let dir_id = storage
+            .dir_insert(
+                dir_id,
+                "0aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                DirEntry::new_commited(DirEntryKind::Blob, HashId::new(3), None).with_offset(3),
+            )
+            .unwrap();
 
-        // let inode = Inode::Directory(dir_id);
-        // let inode_id = storage.add_inode(inode).unwrap();
-
-        // batch.clear();
-        // serialize_inode(
-        //     inode_id,
-        //     &mut data,
-        //     hash_id,
-        //     &storage,
-        //     &mut stats,
-        //     &mut batch,
-        //     &mut older_objects,
-        //     &mut repo,
-        //     0,
-        // )
-        // .unwrap();
+        let inode = Inode::Directory(dir_id);
+        let inode_id = storage.add_inode(inode).unwrap();
 
         // let offset = data.len();
 
-        // let new_inode_id = deserialize_inode(&batch[0].1, offset as u64, &mut storage, &repo).unwrap();
-        // let new_inode = storage.get_inode(new_inode_id).unwrap();
+        batch.clear();
+        let offset = serialize_inode(
+            inode_id,
+            &mut data,
+            hash_id,
+            &storage,
+            &mut stats,
+            &mut batch,
+            &mut older_objects,
+            &mut repo,
+            offset as u64,
+        )
+        .unwrap();
 
-        // if let Inode::Directory(new_dir_id) = new_inode {
-        //     assert_eq!(
-        //         storage.get_owned_dir(dir_id).unwrap(),
-        //         storage.get_owned_dir(*new_dir_id).unwrap()
-        //     )
-        // }
+        // let offset = data.len();
+        repo.append_serialized_data(&data).unwrap();
+
+        assert_eq!(batch.len(), 1);
+
+        let new_inode_id = deserialize_inode(&batch.last().unwrap().1, offset as u64, &mut storage, &repo).unwrap();
+        let new_inode = storage.get_inode(new_inode_id).unwrap();
+
+        if let Inode::Directory(new_dir_id) = new_inode {
+            assert_eq!(
+                storage.get_owned_dir(dir_id).unwrap(),
+                storage.get_owned_dir(*new_dir_id).unwrap()
+            )
+        }
 
         // let iter = iter_hash_ids(&batch[0].1);
         // assert_eq!(iter.map(|h| h.as_u32()).collect::<Vec<_>>(), &[3, 1, 2]);
