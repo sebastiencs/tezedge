@@ -16,20 +16,10 @@ use crossbeam_channel::Sender;
 use crypto::hash::ContextHash;
 use tezos_timing::RepositoryMemoryUsage;
 
-use crate::{
-    gc::{
+use crate::{Map, gc::{
         worker::{Command, Cycles, GCThread, GC_PENDING_HASHIDS, PRESERVE_CYCLE_COUNT},
         GarbageCollectionError, GarbageCollector,
-    },
-    hash::ObjectHash,
-    persistent::{DBError, Flushable, KeyValueStoreBackend, Persistable},
-    working_tree::{
-        shape::{DirectoryShapeId, DirectoryShapes, ShapeStrings},
-        storage::DirEntryId,
-        string_interner::{StringId, StringInterner},
-    },
-    Map,
-};
+    }, hash::ObjectHash, persistent::{DBError, Flushable, KeyValueStoreBackend, Persistable}, working_tree::{shape::{DirectoryShapeId, DirectoryShapes, ShapeStrings}, storage::{DirEntryId, Storage}, string_interner::{StringId, StringInterner}}};
 
 use tezos_spsc::Consumer;
 
@@ -238,8 +228,9 @@ impl KeyValueStoreBackend for InMemory {
     fn make_shape(
         &mut self,
         dir: &[(StringId, DirEntryId)],
+        storage: &Storage,
     ) -> Result<Option<DirectoryShapeId>, DBError> {
-        self.shapes.make_shape(dir).map_err(Into::into)
+        self.shapes.make_shape(dir, storage).map_err(Into::into)
     }
 
     fn synchronize_strings_from(&mut self, string_interner: &StringInterner) {

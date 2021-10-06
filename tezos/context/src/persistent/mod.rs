@@ -14,16 +14,7 @@ use thiserror::Error;
 
 use tezos_timing::RepositoryMemoryUsage;
 
-use crate::{
-    kv_store::{readonly_ipc::ContextServiceError, HashId, HashIdError, VacantObjectHash},
-    working_tree::{
-        serializer::DeserializationError,
-        shape::{DirectoryShapeError, DirectoryShapeId, ShapeStrings},
-        storage::DirEntryId,
-        string_interner::{StringId, StringInterner},
-    },
-    ObjectHash,
-};
+use crate::{ObjectHash, kv_store::{readonly_ipc::ContextServiceError, HashId, HashIdError, VacantObjectHash}, working_tree::{serializer::DeserializationError, shape::{DirectoryShapeError, DirectoryShapeId, ShapeStrings}, storage::{DirEntryId, Storage}, string_interner::{StringId, StringInterner}}};
 
 pub trait Flushable {
     fn flush(&self) -> Result<(), anyhow::Error>;
@@ -85,6 +76,7 @@ pub trait KeyValueStoreBackend {
     fn make_shape(
         &mut self,
         dir: &[(StringId, DirEntryId)],
+        storage: &Storage,
     ) -> Result<Option<DirectoryShapeId>, DBError>;
     /// Returns the string associated to this `string_id`.
     ///

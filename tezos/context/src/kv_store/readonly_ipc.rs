@@ -14,7 +14,7 @@ use thiserror::Error;
 
 use crate::persistent::{DBError, Flushable, Persistable};
 use crate::working_tree::shape::{DirectoryShapeId, ShapeStrings};
-use crate::working_tree::storage::DirEntryId;
+use crate::working_tree::storage::{DirEntryId, Storage};
 use crate::working_tree::string_interner::{StringId, StringInterner};
 use crate::ContextValue;
 use crate::{
@@ -123,6 +123,7 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
     fn make_shape(
         &mut self,
         _dir: &[(StringId, DirEntryId)],
+        _storage: &Storage,
     ) -> Result<Option<DirectoryShapeId>, DBError> {
         // Readonly protocol runner doesn't make shapes.
         Ok(None)

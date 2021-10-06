@@ -11,20 +11,10 @@ use std::{
 use crypto::hash::ContextHash;
 use tezos_timing::RepositoryMemoryUsage;
 
-use crate::{
-    gc::{worker::PRESERVE_CYCLE_COUNT, GarbageCollectionError, GarbageCollector},
-    persistent::{
+use crate::{Map, ObjectHash, gc::{worker::PRESERVE_CYCLE_COUNT, GarbageCollectionError, GarbageCollector}, persistent::{
         get_persistent_base_path, DBError, File, FileOffset, FileType, Flushable,
         KeyValueStoreBackend, Persistable,
-    },
-    working_tree::{
-        serializer::{read_object_length, ObjectHeader, ObjectLength},
-        shape::{DirectoryShapeId, DirectoryShapes, ShapeStrings},
-        storage::DirEntryId,
-        string_interner::{StringId, StringInterner},
-    },
-    Map, ObjectHash,
-};
+    }, working_tree::{serializer::{read_object_length, ObjectHeader, ObjectLength}, shape::{DirectoryShapeId, DirectoryShapes, ShapeStrings}, storage::{DirEntryId, Storage}, string_interner::{StringId, StringInterner}}};
 
 use super::{HashId, VacantObjectHash};
 
@@ -291,8 +281,9 @@ impl KeyValueStoreBackend for Persistent {
     fn make_shape(
         &mut self,
         dir: &[(StringId, DirEntryId)],
+        storage: &Storage,
     ) -> Result<Option<DirectoryShapeId>, DBError> {
-        self.shapes.make_shape(dir).map_err(Into::into)
+        self.shapes.make_shape(dir, storage).map_err(Into::into)
     }
 
     fn get_str(&self, string_id: StringId) -> Option<&str> {

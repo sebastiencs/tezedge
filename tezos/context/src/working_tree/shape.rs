@@ -16,7 +16,7 @@ use modular_bitfield::prelude::*;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use super::{storage::DirEntryId, string_interner::StringId};
+use super::{storage::{DirEntryId, Storage}, string_interner::StringId};
 
 #[derive(Debug, Error)]
 pub enum DirectoryShapeError {
@@ -147,19 +147,33 @@ impl DirectoryShapes {
     pub fn make_shape(
         &mut self,
         dir: &[(StringId, DirEntryId)],
+        storage: &Storage,
     ) -> Result<Option<DirectoryShapeId>, DirectoryShapeError> {
         self.temp.clear();
 
         let mut hasher = DefaultHasher::new();
         hasher.write_usize(dir.len());
 
+        let mut is_2bytes_only = true;
+        let mut is_big_only = true;
+
         for (key_id, _) in dir {
-            // if key_id.is_big() {
-            //     return Ok(None);
-            // }
+            let key = storage.get_str(*key_id).map_err(|_| DirectoryShapeError::CannotFindKey)?;
+
+            if !key_id.is_big() {
+                is_big_only = false;
+            }
+
+            if !(key.len() == 2) {
+                is_2bytes_only = false;
+            }
 
             hasher.write_u32(key_id.as_u32());
             self.temp.push(*key_id);
+        }
+
+        if is_big_only || is_2bytes_only {
+            return Ok(None);
         }
 
         let shape_hash = DirectoryShapeHash(hasher.finish());

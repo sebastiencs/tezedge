@@ -88,17 +88,28 @@ fn get_inline_blob<'a>(storage: &'a Storage, dir_entry: &DirEntry) -> Option<Blo
 
 #[bitfield(bits = 8)]
 #[derive(Clone, Debug, Eq, PartialEq, Copy)]
-pub struct KeyDirEntryDescriptor {
+pub struct KeyDirEntryShapeHeader {
     kind: DirEntryKind,
     blob_inline_length: B3,
     offset_length: OffsetLength,
     #[skip]
     _unused: B2,
-    // key_inline_length: B4,
 }
 
 // Must fit in 1 byte
-assert_eq_size!(KeyDirEntryDescriptor, u8);
+assert_eq_size!(KeyDirEntryShapeHeader, u8);
+
+#[bitfield(bits = 8)]
+#[derive(Clone, Debug, Eq, PartialEq, Copy)]
+pub struct KeyDirEntryHeader {
+    kind: DirEntryKind,
+    blob_inline_length: B3,
+    key_inline_length: B2,
+    offset_length: OffsetLength,
+}
+
+// Must fit in 1 byte
+assert_eq_size!(KeyDirEntryHeader, u8);
 
 #[derive(BitfieldSpecifier)]
 #[bits = 5]
@@ -221,7 +232,7 @@ fn serialize_shaped_directory(
         let blob_inline = get_inline_blob(storage, &dir_entry);
         let blob_inline_length = blob_inline.as_ref().map(|b| b.len()).unwrap_or(0);
 
-        let byte: [u8; 1] = KeyDirEntryDescriptor::new()
+        let byte: [u8; 1] = KeyDirEntryShapeHeader::new()
             .with_kind(kind)
             .with_offset_length(offset_length)
             // .with_key_inline_length(0)
@@ -311,89 +322,87 @@ fn serialize_directory(
     let mut nblobs_inlined: usize = 0;
     let mut blobs_length: usize = 0;
 
-    if let Some(shape_id) = repository.make_shape(dir)? {
+    if let Some(shape_id) = repository.make_shape(dir, storage)? {
         return serialize_shaped_directory(shape_id, dir, offset, output, storage, stats);
     };
 
-    todo!()
+    let start = output.len();
 
-    // let start = output.len();
+    // Replaced by ObjectHeader
+    output.write_all(&[0, 0])?;
 
-    // // Replaced by ObjectHeader
-    // output.write_all(&[0, 0])?;
+    // output.write_all(&[ID_DIRECTORY])?;
 
-    // // output.write_all(&[ID_DIRECTORY])?;
+    // // Replaced by the length
+    // output.write_all(&[0, 0, 0, 0])?;
 
-    // // // Replaced by the length
-    // // output.write_all(&[0, 0, 0, 0])?;
+    for (key_id, dir_entry_id) in dir {
+        let key = storage.get_str(*key_id)?;
 
-    // for (key_id, dir_entry_id) in dir {
-    //     let key = storage.get_str(*key_id)?;
+        let dir_entry = storage.get_dir_entry(*dir_entry_id)?;
 
-    //     let dir_entry = storage.get_dir_entry(*dir_entry_id)?;
+        let hash_id: u32 = dir_entry.hash_id().map(|h| h.as_u32()).unwrap_or(0);
+        let kind = dir_entry.dir_entry_kind();
 
-    //     let hash_id: u32 = dir_entry.hash_id().map(|h| h.as_u32()).unwrap_or(0);
-    //     let kind = dir_entry.dir_entry_kind();
+        let blob_inline = get_inline_blob(storage, &dir_entry);
+        let blob_inline_length = blob_inline.as_ref().map(|b| b.len()).unwrap_or(0);
 
-    //     let blob_inline = get_inline_blob(storage, &dir_entry);
-    //     let blob_inline_length = blob_inline.as_ref().map(|b| b.len()).unwrap_or(0);
+        match key.len() {
+            len if len != 0 && len < 4 => {
+                let byte: [u8; 1] = KeyDirEntryHeader::new()
+                    .with_kind(kind)
+                    .with_key_inline_length(len as u8)
+                    .with_blob_inline_length(blob_inline_length as u8)
+                    .into_bytes();
+                output.write_all(&byte[..])?;
+                output.write_all(key.as_bytes())?;
+                keys_length += len;
+            }
+            len => {
+                let byte: [u8; 1] = KeyDirEntryHeader::new()
+                    .with_kind(kind)
+                    .with_key_inline_length(0)
+                    .with_blob_inline_length(blob_inline_length as u8)
+                    .into_bytes();
+                output.write_all(&byte[..])?;
 
-    //     match key.len() {
-    //         len if len != 0 && len < 16 => {
-    //             let byte: [u8; 1] = KeyDirEntryDescriptor::new()
-    //                 .with_kind(kind)
-    //                 .with_key_inline_length(len as u8)
-    //                 .with_blob_inline_length(blob_inline_length as u8)
-    //                 .into_bytes();
-    //             output.write_all(&byte[..])?;
-    //             output.write_all(key.as_bytes())?;
-    //             keys_length += len;
-    //         }
-    //         len => {
-    //             let byte: [u8; 1] = KeyDirEntryDescriptor::new()
-    //                 .with_kind(kind)
-    //                 .with_key_inline_length(0)
-    //                 .with_blob_inline_length(blob_inline_length as u8)
-    //                 .into_bytes();
-    //             output.write_all(&byte[..])?;
+                let key_length: u16 = len.try_into()?;
+                output.write_all(&key_length.to_ne_bytes())?;
+                output.write_all(key.as_bytes())?;
+                keys_length += 2 + key.len();
+            }
+        }
 
-    //             let key_length: u16 = len.try_into()?;
-    //             output.write_all(&key_length.to_ne_bytes())?;
-    //             output.write_all(key.as_bytes())?;
-    //             keys_length += 2 + key.len();
-    //         }
-    //     }
+        if let Some(blob_inline) = blob_inline {
+            nblobs_inlined += 1;
+            blobs_length += blob_inline.len();
 
-    //     if let Some(blob_inline) = blob_inline {
-    //         nblobs_inlined += 1;
-    //         blobs_length += blob_inline.len();
+            output.write_all(&blob_inline)?;
+        } else {
+            let nbytes = serialize_hash_id(hash_id, output)?;
 
-    //         output.write_all(&blob_inline)?;
-    //     } else {
-    //         let nbytes = serialize_hash_id(hash_id, output)?;
+            hash_ids_length += nbytes;
+            highest_hash_id = highest_hash_id.max(hash_id);
 
-    //         hash_ids_length += nbytes;
-    //         highest_hash_id = highest_hash_id.max(hash_id);
+            let dir_entry_offset = dir_entry.get_offset();
+            output.write_all(&dir_entry_offset.to_ne_bytes())?;
+        }
+    }
 
-    //         let dir_entry_offset = dir_entry.get_offset();
-    //         output.write_all(&dir_entry_offset.to_ne_bytes())?;
-    //     }
-    // }
+    write_object_header(output, start, ObjectTag::Directory);
 
-    // write_object_header(output, start, ObjectTag::Directory);
+    // let length = output.len() as u32 - start as u32;
+    // output[start as usize + 1..start as usize + 5].copy_from_slice(&length.to_ne_bytes());
 
-    // // let length = output.len() as u32 - start as u32;
-    // // output[start as usize + 1..start as usize + 5].copy_from_slice(&length.to_ne_bytes());
+    stats.add_directory(
+        hash_ids_length,
+        keys_length,
+        highest_hash_id,
+        nblobs_inlined,
+        blobs_length,
+    );
 
-    // stats.add_directory(
-    //     hash_ids_length,
-    //     keys_length,
-    //     highest_hash_id,
-    //     nblobs_inlined,
-    //     blobs_length,
-    // );
-
-    // Ok(())
+    Ok(())
 }
 
 pub fn serialize_object(
@@ -965,7 +974,7 @@ fn deserialize_shaped_directory(
     let dir_id = storage.with_new_dir::<_, Result<_, Error>>(|storage, new_dir| {
         while pos < data_length {
             let descriptor = data.get(pos..pos + 1).ok_or(UnexpectedEOF)?;
-            let descriptor = KeyDirEntryDescriptor::from_bytes([descriptor[0]; 1]);
+            let descriptor = KeyDirEntryShapeHeader::from_bytes([descriptor[0]; 1]);
 
             pos += 1;
 
@@ -1021,86 +1030,91 @@ fn deserialize_shaped_directory(
 
 fn deserialize_directory(
     data: &[u8],
+    object_offset: u64,
     storage: &mut Storage,
 ) -> Result<DirectoryId, DeserializationError> {
     use DeserializationError as Error;
     use DeserializationError::*;
 
-    todo!()
+    let mut pos = 0;
+    let data_length = data.len();
 
-    // let mut pos = 0;
-    // let data_length = data.len();
+    let dir_id = storage.with_new_dir::<_, Result<_, Error>>(|storage, new_dir| {
+        while pos < data_length {
+            let descriptor = data.get(pos..pos + 1).ok_or(UnexpectedEOF)?;
+            let descriptor = KeyDirEntryHeader::from_bytes([descriptor[0]; 1]);
 
-    // let dir_id = storage.with_new_dir::<_, Result<_, Error>>(|storage, new_dir| {
-    //     while pos < data_length {
-    //         let descriptor = data.get(pos..pos + 1).ok_or(UnexpectedEOF)?;
-    //         let descriptor = KeyDirEntryDescriptor::from_bytes([descriptor[0]; 1]);
+            pos += 1;
 
-    //         pos += 1;
+            let key_id = match descriptor.key_inline_length() as usize {
+                len if len > 0 => {
+                    // The key is in the next `len` bytes
+                    let key_bytes = data.get(pos..pos + len).ok_or(UnexpectedEOF)?;
+                    let key_str = std::str::from_utf8(key_bytes)?;
+                    pos += len;
+                    storage.get_string_id(key_str)
+                }
+                _ => {
+                    // The key length is in 2 bytes, followed by the key itself
+                    let key_length = data.get(pos..pos + 2).ok_or(UnexpectedEOF)?;
+                    let key_length = u16::from_ne_bytes(key_length.try_into()?);
+                    let key_length = key_length as usize;
 
-    //         let key_id = match descriptor.key_inline_length() as usize {
-    //             len if len > 0 => {
-    //                 // The key is in the next `len` bytes
-    //                 let key_bytes = data.get(pos..pos + len).ok_or(UnexpectedEOF)?;
-    //                 let key_str = std::str::from_utf8(key_bytes)?;
-    //                 pos += len;
-    //                 storage.get_string_id(key_str)
-    //             }
-    //             _ => {
-    //                 // The key length is in 2 bytes, followed by the key itself
-    //                 let key_length = data.get(pos..pos + 2).ok_or(UnexpectedEOF)?;
-    //                 let key_length = u16::from_ne_bytes(key_length.try_into()?);
-    //                 let key_length = key_length as usize;
+                    let key_bytes = data
+                        .get(pos + 2..pos + 2 + key_length)
+                        .ok_or(UnexpectedEOF)?;
+                    let key_str = std::str::from_utf8(key_bytes)?;
+                    pos += 2 + key_length;
+                    storage.get_string_id(key_str)
+                }
+            };
 
-    //                 let key_bytes = data
-    //                     .get(pos + 2..pos + 2 + key_length)
-    //                     .ok_or(UnexpectedEOF)?;
-    //                 let key_str = std::str::from_utf8(key_bytes)?;
-    //                 pos += 2 + key_length;
-    //                 storage.get_string_id(key_str)
-    //             }
-    //         };
+            let kind = descriptor.kind();
+            let blob_inline_length = descriptor.blob_inline_length() as usize;
+            let offset_length = descriptor.offset_length();
 
-    //         let kind = descriptor.kind();
-    //         let blob_inline_length = descriptor.blob_inline_length() as usize;
+            let dir_entry = if blob_inline_length > 0 {
+                // The blob is inlined
 
-    //         let dir_entry = if blob_inline_length > 0 {
-    //             // The blob is inlined
+                let blob = data
+                    .get(pos..pos + blob_inline_length)
+                    .ok_or(UnexpectedEOF)?;
+                let blob_id = storage.add_blob_by_ref(blob)?;
 
-    //             let blob = data
-    //                 .get(pos..pos + blob_inline_length)
-    //                 .ok_or(UnexpectedEOF)?;
-    //             let blob_id = storage.add_blob_by_ref(blob)?;
+                pos += blob_inline_length;
 
-    //             pos += blob_inline_length;
+                DirEntry::new_commited(kind, None, Some(Object::Blob(blob_id)))
+            } else {
+                let bytes = data.get(pos..).ok_or(UnexpectedEOF)?;
+                let (hash_id, nbytes) = deserialize_hash_id(bytes)?;
 
-    //             DirEntry::new_commited(kind, None, Some(Object::Blob(blob_id)))
-    //         } else {
-    //             let bytes = data.get(pos..).ok_or(UnexpectedEOF)?;
-    //             let (hash_id, nbytes) = deserialize_hash_id(bytes)?;
+                pos += nbytes;
 
-    //             pos += nbytes;
+                let bytes = data.get(pos..).ok_or(UnexpectedEOF)?;
+                let (offset, nbytes) = deserialize_offset_length(bytes, offset_length, object_offset);
 
-    //             let offset = data.get(pos..pos + 8).ok_or(UnexpectedEOF)?;
-    //             let offset = u64::from_ne_bytes(offset.try_into()?);
+                pos += nbytes;
 
-    //             pos += 8;
+                // let offset = data.get(pos..pos + 8).ok_or(UnexpectedEOF)?;
+                // let offset = u64::from_ne_bytes(offset.try_into()?);
 
-    //             let dir_entry =
-    //                 DirEntry::new_commited(kind, Some(hash_id.ok_or(MissingHash)?), None);
-    //             dir_entry.set_offset(offset);
-    //             dir_entry
-    //         };
+                // pos += 8;
 
-    //         let dir_entry_id = storage.add_dir_entry(dir_entry)?;
+                let dir_entry =
+                    DirEntry::new_commited(kind, Some(hash_id.ok_or(MissingHash)?), None);
+                dir_entry.set_offset(offset);
+                dir_entry
+            };
 
-    //         new_dir.push((key_id, dir_entry_id));
-    //     }
+            let dir_entry_id = storage.add_dir_entry(dir_entry)?;
 
-    //     Ok(storage.append_to_directories(new_dir))
-    // })??;
+            new_dir.push((key_id, dir_entry_id));
+        }
 
-    // Ok(dir_id)
+        Ok(storage.append_to_directories(new_dir))
+    })??;
+
+    Ok(dir_id)
 }
 
 pub fn read_object_length(data: &[u8], header: &ObjectHeader) -> (usize, usize) {
@@ -1144,7 +1158,7 @@ pub fn deserialize_object(
 
     match header.tag_or_err().map_err(|_| UnknownID)? {
         ObjectTag::Directory => {
-            let dir_id = deserialize_directory(&data[pos..], storage)?;
+            let dir_id = deserialize_directory(&data[pos..], object_offset, storage)?;
             Ok(Object::Directory(dir_id))
         }
         ObjectTag::ShapedDirectory => {
@@ -1330,7 +1344,7 @@ pub fn deserialize_inode(
             storage.add_inode(inode).map_err(Into::into)
         }
         ObjectTag::Directory => {
-            let dir_id = deserialize_directory(&data[header_nbytes..], storage)?;
+            let dir_id = deserialize_directory(&data[header_nbytes..], object_offset, storage)?;
             storage
                 .add_inode(Inode::Directory(dir_id))
                 .map_err(Into::into)
@@ -1455,7 +1469,7 @@ impl<'a> Iterator for HashIdIterator<'a> {
                 }
                 ObjectTag::Directory | ObjectTag::ShapedDirectory => {
                     let descriptor = self.data.get(pos..pos + 1)?;
-                    let descriptor = KeyDirEntryDescriptor::from_bytes([descriptor[0]; 1]);
+                    let descriptor = KeyDirEntryShapeHeader::from_bytes([descriptor[0]; 1]);
 
                     pos += 1;
 
