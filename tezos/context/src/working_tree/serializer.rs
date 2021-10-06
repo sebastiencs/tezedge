@@ -643,7 +643,7 @@ impl PointersOffsetsHeader {
     fn get(&self, index: usize) -> OffsetLength {
         assert!(index < 32);
 
-        let bits = self.bitfield & 2 << (index * 2);
+        let bits = (self.bitfield >> (index * 2)) & 0b11;
 
         match bits {
             0 => OffsetLength::RelativeOneByte,
@@ -651,6 +651,12 @@ impl PointersOffsetsHeader {
             2 => OffsetLength::RelativeFourBytes,
             _ => OffsetLength::RelativeEightBytes,
         }
+    }
+
+    /// Sets bits to zero at `index`
+    #[cfg(test)]
+    fn clear(&mut self, index: usize) {
+        self.bitfield = self.bitfield & !(0b11 << (index * 2));
     }
 
     fn from_pointers(object_offset: u64, pointers: &[Option<PointerToInode>; 32]) -> Self {
@@ -1013,6 +1019,8 @@ fn deserialize_shaped_directory(
 
                 let dir_entry =
                     DirEntry::new_commited(kind, Some(hash_id.ok_or(MissingHash)?), None);
+                // let dir_entry =
+                //     DirEntry::new_commited(kind, None, None);
                 dir_entry.set_offset(offset);
                 dir_entry
             };
@@ -2084,6 +2092,28 @@ mod tests {
             )
         } else {
             panic!();
+        }
+    }
+
+    #[test]
+    fn test_inode_headers() {
+        let mut header = PointersOffsetsHeader::default();
+
+        for index in 0..32 {
+            header.set(index, OffsetLength::RelativeOneByte);
+            assert_eq!(header.get(index), OffsetLength::RelativeOneByte);
+
+            header.clear(index);
+            header.set(index, OffsetLength::RelativeTwoBytes);
+            assert_eq!(header.get(index), OffsetLength::RelativeTwoBytes);
+
+            header.clear(index);
+            header.set(index, OffsetLength::RelativeFourBytes);
+            assert_eq!(header.get(index), OffsetLength::RelativeFourBytes);
+
+            header.clear(index);
+            header.set(index, OffsetLength::RelativeEightBytes);
+            assert_eq!(header.get(index), OffsetLength::RelativeEightBytes);
         }
     }
 }
