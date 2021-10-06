@@ -1619,54 +1619,54 @@ mod tests {
 
         // Test Object::Directory
 
-        // let dir_id = DirectoryId::empty();
-        // let dir_id = storage
-        //     .dir_insert(
-        //         dir_id,
-        //         "a",
-        //         DirEntry::new_commited(DirEntryKind::Blob, HashId::new(1), None),
-        //     )
-        //     .unwrap();
-        // let dir_id = storage
-        //     .dir_insert(
-        //         dir_id,
-        //         "bab",
-        //         DirEntry::new_commited(DirEntryKind::Blob, HashId::new(2), None),
-        //     )
-        //     .unwrap();
-        // let dir_id = storage
-        //     .dir_insert(
-        //         dir_id,
-        //         "0aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        //         DirEntry::new_commited(DirEntryKind::Blob, HashId::new(3), None),
-        //     )
-        //     .unwrap();
+        let dir_id = DirectoryId::empty();
+        let dir_id = storage
+            .dir_insert(
+                dir_id,
+                "a",
+                DirEntry::new_commited(DirEntryKind::Blob, HashId::new(1), None),
+            )
+            .unwrap();
+        let dir_id = storage
+            .dir_insert(
+                dir_id,
+                "bab",
+                DirEntry::new_commited(DirEntryKind::Blob, HashId::new(2), None),
+            )
+            .unwrap();
+        let dir_id = storage
+            .dir_insert(
+                dir_id,
+                "0aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                DirEntry::new_commited(DirEntryKind::Blob, HashId::new(3), None),
+            )
+            .unwrap();
 
-        // let mut data = Vec::with_capacity(1024);
-        // serialize_object(
-        //     &Object::Directory(dir_id),
-        //     fake_hash_id,
-        //     &mut data,
-        //     &storage,
-        //     &mut stats,
-        //     &mut batch,
-        //     &mut older_objects,
-        //     &mut repo,
-        //     0,
-        // )
-        // .unwrap();
+        let mut data = Vec::with_capacity(1024);
+        let offset = serialize_object(
+            &Object::Directory(dir_id),
+            fake_hash_id,
+            &mut data,
+            &storage,
+            &mut stats,
+            &mut batch,
+            &mut older_objects,
+            &mut repo,
+            0,
+        )
+        .unwrap();
 
-        // storage.data = data.clone(); // TODO: Do not do this
-        // let object = deserialize_object(&mut storage, &repo).unwrap();
+        storage.data = data.clone(); // TODO: Do not do this
+        let object = deserialize_object(offset, &mut storage, &repo).unwrap();
 
-        // if let Object::Directory(object) = object {
-        //     assert_eq!(
-        //         storage.get_owned_dir(dir_id).unwrap(),
-        //         storage.get_owned_dir(object).unwrap()
-        //     )
-        // } else {
-        //     panic!();
-        // }
+        if let Object::Directory(object) = object {
+            assert_eq!(
+                storage.get_owned_dir(dir_id).unwrap(),
+                storage.get_owned_dir(object).unwrap()
+            )
+        } else {
+            panic!();
+        }
 
         // let iter = iter_hash_ids(&data);
         // assert_eq!(iter.map(|h| h.as_u32()).collect::<Vec<_>>(), &[3, 1, 2]);
