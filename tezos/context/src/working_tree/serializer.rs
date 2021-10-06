@@ -1101,7 +1101,8 @@ fn deserialize_directory(
                 pos += nbytes;
 
                 let bytes = data.get(pos..).ok_or(UnexpectedEOF)?;
-                let (offset, nbytes) = deserialize_offset_length(bytes, offset_length, object_offset);
+                let (offset, nbytes) =
+                    deserialize_offset_length(bytes, offset_length, object_offset);
 
                 pos += nbytes;
 

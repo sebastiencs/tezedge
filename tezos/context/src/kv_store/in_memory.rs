@@ -16,10 +16,20 @@ use crossbeam_channel::Sender;
 use crypto::hash::ContextHash;
 use tezos_timing::RepositoryMemoryUsage;
 
-use crate::{Map, gc::{
+use crate::{
+    gc::{
         worker::{Command, Cycles, GCThread, GC_PENDING_HASHIDS, PRESERVE_CYCLE_COUNT},
         GarbageCollectionError, GarbageCollector,
-    }, hash::ObjectHash, persistent::{DBError, Flushable, KeyValueStoreBackend, Persistable}, working_tree::{shape::{DirectoryShapeId, DirectoryShapes, ShapeStrings}, storage::{DirEntryId, Storage}, string_interner::{StringId, StringInterner}}};
+    },
+    hash::ObjectHash,
+    persistent::{DBError, Flushable, KeyValueStoreBackend, Persistable},
+    working_tree::{
+        shape::{DirectoryShapeId, DirectoryShapes, ShapeStrings},
+        storage::{DirEntryId, Storage},
+        string_interner::{StringId, StringInterner},
+    },
+    Map,
+};
 
 use tezos_spsc::Consumer;
 

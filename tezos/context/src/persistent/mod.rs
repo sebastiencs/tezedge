@@ -14,7 +14,16 @@ use thiserror::Error;
 
 use tezos_timing::RepositoryMemoryUsage;
 
-use crate::{ObjectHash, kv_store::{readonly_ipc::ContextServiceError, HashId, HashIdError, VacantObjectHash}, working_tree::{serializer::DeserializationError, shape::{DirectoryShapeError, DirectoryShapeId, ShapeStrings}, storage::{DirEntryId, Storage}, string_interner::{StringId, StringInterner}}};
+use crate::{
+    kv_store::{readonly_ipc::ContextServiceError, HashId, HashIdError, VacantObjectHash},
+    working_tree::{
+        serializer::DeserializationError,
+        shape::{DirectoryShapeError, DirectoryShapeId, ShapeStrings},
+        storage::{DirEntryId, Storage},
+        string_interner::{StringId, StringInterner},
+    },
+    ObjectHash,
+};
 
 pub trait Flushable {
     fn flush(&self) -> Result<(), anyhow::Error>;

@@ -11,10 +11,20 @@ use std::{
 use crypto::hash::ContextHash;
 use tezos_timing::RepositoryMemoryUsage;
 
-use crate::{Map, ObjectHash, gc::{worker::PRESERVE_CYCLE_COUNT, GarbageCollectionError, GarbageCollector}, persistent::{
+use crate::{
+    gc::{worker::PRESERVE_CYCLE_COUNT, GarbageCollectionError, GarbageCollector},
+    persistent::{
         get_persistent_base_path, DBError, File, FileOffset, FileType, Flushable,
         KeyValueStoreBackend, Persistable,
-    }, working_tree::{serializer::{read_object_length, ObjectHeader, ObjectLength}, shape::{DirectoryShapeId, DirectoryShapes, ShapeStrings}, storage::{DirEntryId, Storage}, string_interner::{StringId, StringInterner}}};
+    },
+    working_tree::{
+        serializer::{read_object_length, ObjectHeader, ObjectLength},
+        shape::{DirectoryShapeId, DirectoryShapes, ShapeStrings},
+        storage::{DirEntryId, Storage},
+        string_interner::{StringId, StringInterner},
+    },
+    Map, ObjectHash,
+};
 
 use super::{HashId, VacantObjectHash};
 

@@ -16,7 +16,10 @@ use modular_bitfield::prelude::*;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use super::{storage::{DirEntryId, Storage}, string_interner::StringId};
+use super::{
+    storage::{DirEntryId, Storage},
+    string_interner::StringId,
+};
 
 #[derive(Debug, Error)]
 pub enum DirectoryShapeError {
@@ -158,7 +161,9 @@ impl DirectoryShapes {
         let mut is_big_only = true;
 
         for (key_id, _) in dir {
-            let key = storage.get_str(*key_id).map_err(|_| DirectoryShapeError::CannotFindKey)?;
+            let key = storage
+                .get_str(*key_id)
+                .map_err(|_| DirectoryShapeError::CannotFindKey)?;
 
             if !key_id.is_big() {
                 is_big_only = false;
