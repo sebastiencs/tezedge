@@ -290,10 +290,12 @@ impl KeyValueStoreBackend for Persistent {
         self.string_interner.get(string_id)
     }
 
-    fn synchronize_strings(&mut self, string_interner: &StringInterner) -> Result<(), DBError> {
+    fn synchronize_strings_from(&mut self, string_interner: &StringInterner) {
         self.string_interner.extend_from(string_interner);
+    }
 
-        Ok(())
+    fn synchronize_strings_into(&self, string_interner: &mut StringInterner) {
+        string_interner.extend_from(&self.string_interner);
     }
 
     fn get_current_offset(&self) -> Result<u64, DBError> {
