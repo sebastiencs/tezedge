@@ -419,6 +419,7 @@ impl IpcContextClient {
                     Ok(result) => result,
                     Err(err) => return Err(ContextError::GetValueFromOffsetError { reason: err }.into()),
                 };
+                buffer.clear();
                 buffer.append(&mut result);
                 Ok(())
             },
