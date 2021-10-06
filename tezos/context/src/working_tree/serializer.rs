@@ -1177,7 +1177,7 @@ pub fn deserialize_object(
     let header = data.get(0).copied().ok_or(UnexpectedEOF)?;
     let header: ObjectHeader = ObjectHeader::from_bytes([header]);
 
-    println!("DESERIALIZE_OBJECT HEADER={:?}", header);
+    // println!("DESERIALIZE_OBJECT HEADER={:?}", header);
 
     let (header_nbytes, _) = read_object_length(data, &header);
 
