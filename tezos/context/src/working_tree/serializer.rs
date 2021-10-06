@@ -308,6 +308,21 @@ fn write_object_header(
     }
 }
 
+fn serialize_directory_or_shape(
+    dir: &[(StringId, DirEntryId)],
+    offset: u64,
+    output: &mut Vec<u8>,
+    storage: &Storage,
+    repository: &mut ContextKeyValueStore,
+    stats: &mut SerializeStats,
+) -> Result<(), SerializationError> {
+    if let Some(shape_id) = repository.make_shape(dir, storage)? {
+        serialize_shaped_directory(shape_id, dir, offset, output, storage, stats)
+    } else {
+        serialize_directory(dir, offset, output, storage, repository, stats)
+    }
+}
+
 fn serialize_directory(
     dir: &[(StringId, DirEntryId)],
     offset: u64,
@@ -321,10 +336,6 @@ fn serialize_directory(
     let mut highest_hash_id: u32 = 0;
     let mut nblobs_inlined: usize = 0;
     let mut blobs_length: usize = 0;
-
-    if let Some(shape_id) = repository.make_shape(dir, storage)? {
-        return serialize_shaped_directory(shape_id, dir, offset, output, storage, stats);
-    };
 
     let start = output.len();
 
@@ -440,7 +451,7 @@ pub fn serialize_object(
             } else {
                 let dir = storage.get_small_dir(*dir_id)?;
 
-                serialize_directory(dir, offset, output, storage, repository, stats)?;
+                serialize_directory_or_shape(dir, offset, output, storage, repository, stats)?;
 
                 batch.push((object_hash_id, Arc::from(&output[start..])));
             }
