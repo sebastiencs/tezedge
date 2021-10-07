@@ -141,8 +141,8 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
         // Readonly protocol runner doesn't update strings.
     }
 
-    fn get_current_offset(&self) -> Result<u64, DBError> {
-        unimplemented!()
+    fn get_current_offset(&self) -> Result<Option<u64>, DBError> {
+        Ok(None)
     }
 
     fn append_serialized_data(&mut self, data: &[u8]) -> Result<(), DBError> {

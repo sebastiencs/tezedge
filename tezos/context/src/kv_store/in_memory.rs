@@ -254,7 +254,7 @@ impl KeyValueStoreBackend for InMemory {
         self.string_interner.get(string_id)
     }
 
-    fn get_current_offset(&self) -> Result<u64, DBError> {
+    fn get_current_offset(&self) -> Result<Option<u64>, DBError> {
         unimplemented!()
     }
 

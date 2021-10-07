@@ -308,8 +308,8 @@ impl KeyValueStoreBackend for Persistent {
         string_interner.extend_from(&self.string_interner);
     }
 
-    fn get_current_offset(&self) -> Result<u64, DBError> {
-        Ok(self.data_file.offset())
+    fn get_current_offset(&self) -> Result<Option<u64>, DBError> {
+        Ok(Some(self.data_file.offset()))
     }
 
     fn append_serialized_data(&mut self, data: &[u8]) -> Result<(), DBError> {

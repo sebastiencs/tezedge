@@ -759,7 +759,8 @@ impl WorkingTree {
         let object = Object::Commit(Box::new(new_commit.clone()));
         let commit_hash = hash_commit(&new_commit, store)?;
 
-        let offset = store.get_current_offset()?;
+        // TODO: Don't unwrap_or(0)
+        let offset = store.get_current_offset()?.unwrap_or(0);
 
         let mut commit_offset = 0;
 

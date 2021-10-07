@@ -96,7 +96,7 @@ pub trait KeyValueStoreBackend {
     /// Update `string_interner` to be in sync with the repository `StringInterner`.
     fn synchronize_strings_into(&self, string_interner: &mut StringInterner);
 
-    fn get_current_offset(&self) -> Result<u64, DBError>;
+    fn get_current_offset(&self) -> Result<Option<u64>, DBError>;
     fn append_serialized_data(&mut self, data: &[u8]) -> Result<(), DBError>;
     fn synchronize_full(&mut self) -> Result<(), DBError>;
     fn get_value_from_offset(&self, buffer: &mut Vec<u8>, offset: u64) -> Result<(), DBError>;
