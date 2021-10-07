@@ -683,6 +683,7 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
         Ok(Some(TezedgeContext::new(
             index,
             Some(hash_id),
+            Some(offset),
             Some(Rc::new(tree)),
         )))
     }
@@ -779,6 +780,7 @@ pub struct TezedgeContext {
     /// Index used for fetching and saving objects from/to the repository.
     pub index: TezedgeIndex,
     pub parent_commit_hash: Option<HashId>,
+    pub parent_commit_hash_offset: Option<u64>,
     // NOTE: tree ids are not being used right now, but were used before to
     // identify specific versions of the tree in the context actions replayer.
     pub tree_id: TreeId,
@@ -921,13 +923,19 @@ impl ShellContextApi for TezedgeContext {
 
     fn get_last_commit_hash(&self) -> Result<Option<Vec<u8>>, ContextError> {
         let repository = self.index.repository.read()?;
+        let mut buffer = Vec::with_capacity(1000);
 
-        let value = match self.parent_commit_hash {
-            Some(hash_id) => repository.get_value(hash_id)?,
+        match self.parent_commit_hash_offset {
+            Some(offset) => repository.get_value_from_offset(&mut buffer, offset)?,
             None => return Ok(None),
         };
 
-        Ok(value.map(|v| v.to_vec()))
+        // let value = match self.parent_commit_hash {
+        //     Some(hash_id) => repository.get_value(hash_id)?,
+        //     None => return Ok(None),
+        // };
+
+        Ok(Some(buffer))
     }
 
     fn get_memory_usage(&self) -> Result<ContextMemoryUsage, ContextError> {
@@ -970,6 +978,7 @@ impl TezedgeContext {
     pub fn new(
         index: TezedgeIndex,
         parent_commit_hash: Option<HashId>,
+        parent_commit_hash_offset: Option<u64>,
         tree: Option<Rc<WorkingTree>>,
     ) -> Self {
         let tree = if let Some(tree) = tree {
@@ -982,6 +991,7 @@ impl TezedgeContext {
         Self {
             index,
             parent_commit_hash,
+            parent_commit_hash_offset,
             tree_id,
             tree_id_generator,
             tree,

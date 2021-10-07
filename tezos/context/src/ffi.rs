@@ -359,7 +359,7 @@ ocaml_export! {
         let ocaml_index = rt.get(index);
         let index: &TezedgeIndexFFI = ocaml_index.borrow();
         let index = index.0.borrow().clone();
-        let empty_context = TezedgeContext::new(index, None, None);
+        let empty_context = TezedgeContext::new(index, None, None, None);
 
         OCaml::box_value(rt, empty_context.into())
     }

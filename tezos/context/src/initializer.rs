@@ -61,5 +61,5 @@ pub fn initialize_tezedge_context(
     configuration: &TezosContextTezEdgeStorageConfiguration,
 ) -> Result<TezedgeContext, IndexInitializationError> {
     let index = initialize_tezedge_index(configuration, None)?;
-    Ok(TezedgeContext::new(index, None, None))
+    Ok(TezedgeContext::new(index, None, None, None))
 }
