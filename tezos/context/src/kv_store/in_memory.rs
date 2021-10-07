@@ -102,11 +102,10 @@ impl HashValueStore {
         };
         self.new_ids.push(hash_id);
 
-        todo!()
-        // Ok(VacantObjectHash {
-        //     entry: Some(entry),
-        //     hash_id,
-        // })
+        Ok(VacantObjectHash {
+            entry: Some(entry),
+            hash_id,
+        })
     }
 
     fn get_free_id(&mut self) -> Option<HashId> {
