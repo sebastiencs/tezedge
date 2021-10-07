@@ -720,7 +720,7 @@ mod tests {
                 let mut data = Vec::with_capacity(1000);
                 output.clear();
 
-                let offset = repo.get_current_offset().unwrap();
+                let offset = repo.get_current_offset().unwrap().unwrap();
 
                 let offset = serialize_object(
                     &Object::Directory(dir_id),

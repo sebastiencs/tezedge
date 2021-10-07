@@ -1866,7 +1866,7 @@ mod tests {
         // data.extend_from_slice(&[1,2,3,4,5]);
 
         repo.append_serialized_data(&data).unwrap();
-        let offset = repo.get_current_offset().unwrap();
+        let offset = repo.get_current_offset().unwrap().unwrap();
 
         data.clear();
 
