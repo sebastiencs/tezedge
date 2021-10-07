@@ -1237,7 +1237,10 @@ pub fn deserialize_object(
 
             Ok(Object::Commit(Box::new(Commit {
                 parent_commit_hash,
-                root_hash_ref: ObjectReference::new(Some(root_hash.ok_or(MissingRootHash)?), root_hash_offset),
+                root_hash_ref: ObjectReference::new(
+                    Some(root_hash.ok_or(MissingRootHash)?),
+                    root_hash_offset,
+                ),
                 // root_hash: root_hash.ok_or(MissingRootHash)?,
                 // root_hash_offset,
                 time,
