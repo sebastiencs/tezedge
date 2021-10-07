@@ -341,6 +341,9 @@ impl IpcContextClient {
 
     /// Get object by hash id
     pub fn get_value(&self, hash_id: HashId) -> Result<Option<Cow<[u8]>>, ContextServiceError> {
+
+        eprintln!("IpcContextClient::get_value called !");
+
         let mut io = self.io.borrow_mut();
         io.tx.send(&ContextRequest::GetValue(hash_id))?;
 

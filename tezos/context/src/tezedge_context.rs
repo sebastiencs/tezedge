@@ -925,10 +925,14 @@ impl ShellContextApi for TezedgeContext {
         let repository = self.index.repository.read()?;
         let mut buffer = Vec::with_capacity(1000);
 
+        eprintln!("GET_LAST_COMMIT_HASH");
+
         match self.parent_commit_hash_offset {
             Some(offset) => repository.get_value_from_offset(&mut buffer, offset)?,
             None => return Ok(None),
         };
+
+        eprintln!("GET_LAST_COMMIT_HASH FOUND");
 
         // let value = match self.parent_commit_hash {
         //     Some(hash_id) => repository.get_value(hash_id)?,
