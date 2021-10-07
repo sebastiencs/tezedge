@@ -66,12 +66,18 @@ assert_eq_size!([u8; 20], DirEntry);
 #[derive(Debug, Hash, Clone, Eq, PartialEq)]
 pub struct Commit {
     pub(crate) parent_commit_hash: Option<HashId>,
-    // TODO: pub(crate) root_hash_ref: ObjectReference,
-    pub(crate) root_hash: HashId,
-    pub(crate) root_hash_offset: u64,
+    pub(crate) root_hash_ref: ObjectReference,
+    // pub(crate) root_hash: HashId,
+    // pub(crate) root_hash_offset: u64,
     pub(crate) time: u64,
     pub(crate) author: String,
     pub(crate) message: String,
+}
+
+impl Commit {
+    pub fn set_root_hash_offset(&mut self, offset: u64) {
+        self.root_hash_ref.offset.replace(offset);
+    }
 }
 
 /// An object in the context repository
@@ -82,7 +88,7 @@ pub enum Object {
     Commit(Box<Commit>),
 }
 
-#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, Hash, PartialEq, Eq)]
 pub struct ObjectReference {
     hash_id: Option<HashId>,
     offset: Option<u64>,

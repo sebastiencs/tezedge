@@ -752,9 +752,10 @@ impl WorkingTree {
 
         let new_commit = Commit {
             parent_commit_hash: parent_commit_ref.map(|r| r.hash_id()), // TODO: Clean this
+            root_hash_ref: ObjectReference::new(Some(root_hash), 0), // offset is modified later
             // parent_commit_hash,
-            root_hash,
-            root_hash_offset: 0,
+            // root_hash,
+            // root_hash_offset: 0,
             time,
             author,
             message,
@@ -974,14 +975,13 @@ impl WorkingTree {
                 let object = match root {
                     Some(root) => Object::Directory(root),
                     None => {
-                        let object_ref =
-                            ObjectReference::new(Some(commit.root_hash), commit.root_hash_offset);
-                        self.fetch_object_from_repo(object_ref, data.repository)?
+                        self.fetch_object_from_repo(commit.root_hash_ref, data.repository)?
                     }
                 };
                 let root_hash_offset =
-                    self.write_objects_recursively(object, commit.root_hash, None, data, storage)?;
-                commit.root_hash_offset = root_hash_offset;
+                    self.write_objects_recursively(object, commit.root_hash_ref.hash_id(), None, data, storage)?;
+                commit.set_root_hash_offset(root_hash_offset);
+                // commit.root_hash_offset = root_hash_offset;
 
                 // TODO: returns the root hash offset here
             }
@@ -1036,12 +1036,10 @@ impl WorkingTree {
                 let object = match root {
                     Some(root) => Object::Directory(root),
                     None => {
-                        let object_ref =
-                            ObjectReference::new(Some(commit.root_hash), commit.root_hash_offset);
-                        self.fetch_object_from_repo(object_ref, data.repository)?
+                        self.fetch_object_from_repo(commit.root_hash_ref, data.repository)?
                     }
                 };
-                self.serialize_objects_recursively(&object, commit.root_hash, None, data, storage)?;
+                self.serialize_objects_recursively(&object, commit.root_hash_ref.hash_id(), None, data, storage)?;
             }
         }
 

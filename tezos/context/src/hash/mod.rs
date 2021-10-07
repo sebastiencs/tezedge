@@ -344,7 +344,7 @@ pub(crate) fn hash_commit(
     hasher.update(&(OBJECT_HASH_LEN as u64).to_be_bytes());
 
     let root_hash = store
-        .get_hash(commit.root_hash)?
+        .get_hash(commit.root_hash_ref.hash_id())?
         .ok_or(HashingError::ValueExpected("root_hash"))?;
     hasher.update(root_hash.as_ref());
 
@@ -433,8 +433,9 @@ mod tests {
 
         let dummy_commit = Commit {
             parent_commit_hash: None,
-            root_hash: hash_id,
-            root_hash_offset: 0,
+            root_hash_ref: ObjectReference::new(Some(hash_id), 0),
+            // root_hash: hash_id,
+            // root_hash_offset: 0,
             time: 0,
             author: "Tezedge".to_string(),
             message: "persist changes".to_string(),

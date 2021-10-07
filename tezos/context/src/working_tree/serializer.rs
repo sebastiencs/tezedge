@@ -493,10 +493,15 @@ pub fn serialize_object(
             let parent_hash_id = commit.parent_commit_hash.map(|h| h.as_u32()).unwrap_or(0);
             serialize_hash_id(parent_hash_id, output)?;
 
-            let root_hash_id = commit.root_hash.as_u32();
+            let root_hash_id = commit.root_hash_ref.hash_id().as_u32();
             serialize_hash_id(root_hash_id, output)?;
 
-            let root_hash_offset: u64 = commit.root_hash_offset;
+            let root_hash_offset: u64 = commit.root_hash_ref.offset();
+
+            // TODO: Use smaller offsets, add a header here
+            // let (relative_offset, offset_length) = get_relative_offset(offset, root_hash_offset);
+            // serialize_offset(output, relative_offset, offset_length);
+
             output.write_all(&root_hash_offset.to_ne_bytes())?;
 
             output.write_all(&commit.time.to_ne_bytes())?;
@@ -1232,8 +1237,9 @@ pub fn deserialize_object(
 
             Ok(Object::Commit(Box::new(Commit {
                 parent_commit_hash,
-                root_hash: root_hash.ok_or(MissingRootHash)?,
-                root_hash_offset,
+                root_hash_ref: ObjectReference::new(Some(root_hash.ok_or(MissingRootHash)?), root_hash_offset),
+                // root_hash: root_hash.ok_or(MissingRootHash)?,
+                // root_hash_offset,
                 time,
                 author: String::from_utf8(author)?,
                 message: String::from_utf8(message)?,
@@ -1826,8 +1832,9 @@ mod tests {
 
         let commit = Commit {
             parent_commit_hash: HashId::new(9876),
-            root_hash: HashId::new(12345).unwrap(),
-            root_hash_offset: 0,
+            root_hash_ref: ObjectReference::new(HashId::new(12345), 0),
+            // root_hash: HashId::new(12345).unwrap(),
+            // root_hash_offset: 0,
             time: 12345,
             author: "123".to_string(),
             message: "abc".to_string(),
