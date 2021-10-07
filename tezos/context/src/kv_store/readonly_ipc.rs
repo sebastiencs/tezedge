@@ -16,6 +16,7 @@ use crate::persistent::{DBError, File, FileType, Flushable, Persistable};
 use crate::working_tree::shape::{DirectoryShapeId, ShapeStrings};
 use crate::working_tree::storage::{DirEntryId, Storage};
 use crate::working_tree::string_interner::{StringId, StringInterner};
+use crate::working_tree::ObjectReference;
 use crate::ContextValue;
 use crate::{
     ffi::TezedgeIndexError, gc::NotGarbageCollected, persistent::KeyValueStoreBackend, ObjectHash,
@@ -62,7 +63,7 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
         }
     }
 
-    fn put_context_hash(&mut self, _hash_id: HashId, _offset: u64) -> Result<(), DBError> {
+    fn put_context_hash(&mut self, _object_ref: ObjectReference) -> Result<(), DBError> {
         // This context is readonly
         Ok(())
     }
@@ -70,7 +71,7 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
     fn get_context_hash(
         &self,
         context_hash: &ContextHash,
-    ) -> Result<Option<(HashId, u64)>, DBError> {
+    ) -> Result<Option<ObjectReference>, DBError> {
         self.client
             .get_context_hash_id(context_hash)
             .map_err(|reason| DBError::IpcAccessError { reason })
@@ -153,9 +154,13 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
         unimplemented!()
     }
 
-    fn get_value_from_offset(&self, buffer: &mut Vec<u8>, offset: u64) -> Result<(), DBError> {
+    fn get_value_from_offset(
+        &self,
+        buffer: &mut Vec<u8>,
+        object_ref: ObjectReference,
+    ) -> Result<(), DBError> {
         self.client
-            .get_value_from_offset(buffer, offset)
+            .get_value_from_offset(buffer, object_ref)
             .map_err(|reason| DBError::IpcAccessError { reason })
 
         // let data_file = File::new(base_path, FileType::Data);
@@ -193,7 +198,7 @@ enum ContextRequest {
     GetContextHashId(ContextHash),
     GetHash(HashId),
     GetValue(HashId),
-    GetValueFromOffset(u64),
+    GetValueFromOffset(ObjectReference),
     GetShape(DirectoryShapeId),
     ContainsObject(HashId),
     ShutdownCall, // TODO: is this required?
@@ -203,7 +208,7 @@ enum ContextRequest {
 #[derive(Serialize, Deserialize, Debug, IntoStaticStr)]
 enum ContextResponse {
     GetContextHashResponse(Result<Option<ObjectHash>, String>),
-    GetContextHashIdResponse(Result<Option<(HashId, u64)>, String>),
+    GetContextHashIdResponse(Result<Option<ObjectReference>, String>),
     GetValueResponse(Result<Option<ContextValue>, String>),
     GetValueFromOffsetResponse(Result<ContextValue, String>),
     GetShapeResponse(Result<Vec<String>, String>),
@@ -341,7 +346,6 @@ impl IpcContextClient {
 
     /// Get object by hash id
     pub fn get_value(&self, hash_id: HashId) -> Result<Option<Cow<[u8]>>, ContextServiceError> {
-
         eprintln!("IpcContextClient::get_value called !");
 
         let mut io = self.io.borrow_mut();
@@ -384,7 +388,7 @@ impl IpcContextClient {
     pub fn get_context_hash_id(
         &self,
         context_hash: &ContextHash,
-    ) -> Result<Option<(HashId, u64)>, ContextServiceError> {
+    ) -> Result<Option<ObjectReference>, ContextServiceError> {
         let mut io = self.io.borrow_mut();
         io.tx
             .send(&ContextRequest::GetContextHashId(context_hash.clone()))?;
@@ -406,10 +410,11 @@ impl IpcContextClient {
     pub fn get_value_from_offset(
         &self,
         buffer: &mut Vec<u8>,
-        offset: u64,
+        object_ref: ObjectReference,
     ) -> Result<(), ContextServiceError> {
         let mut io = self.io.borrow_mut();
-        io.tx.send(&ContextRequest::GetValueFromOffset(offset))?;
+        io.tx
+            .send(&ContextRequest::GetValueFromOffset(object_ref))?;
 
         // this might take a while, so we will use unusually long timeout
         match io

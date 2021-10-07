@@ -74,11 +74,13 @@ use crate::{ContextKey, ContextValue};
 use super::{
     serializer::{deserialize_object, serialize_object, DeserializationError, SerializationError},
     storage::{BlobId, DirEntryId, DirectoryId, Storage, StorageError},
+    ObjectReference,
 };
 
 pub struct PostCommitData {
-    pub commit_hash_id: HashId,
-    pub commit_offset: u64,
+    pub commit_ref: ObjectReference,
+    // pub commit_hash_id: HashId,
+    // pub commit_offset: u64,
     pub batch: Vec<(HashId, Arc<[u8]>)>,
     pub reused: Vec<HashId>,
     pub serialize_stats: Box<SerializeStats>,
@@ -741,7 +743,7 @@ impl WorkingTree {
         time: u64,
         author: String,
         message: String,
-        parent_commit_hash: Option<HashId>,
+        parent_commit_ref: &Option<ObjectReference>,
         store: &mut ContextKeyValueStore,
         commit_to_storage: bool,
     ) -> Result<PostCommitData, MerkleError> {
@@ -749,7 +751,8 @@ impl WorkingTree {
         let root = self.get_root_directory();
 
         let new_commit = Commit {
-            parent_commit_hash,
+            parent_commit_hash: parent_commit_ref.map(|r| r.hash_id()), // TODO: Clean this
+            // parent_commit_hash,
             root_hash,
             root_hash_offset: 0,
             time,
@@ -780,8 +783,9 @@ impl WorkingTree {
         // println!("RESULT OUTPUT LENGTH = {:?}", data.serialized.len());
 
         Ok(PostCommitData {
-            commit_hash_id: commit_hash,
-            commit_offset,
+            commit_ref: ObjectReference::new(Some(commit_hash), commit_offset),
+            // commit_hash_id: commit_hash,
+            // commit_offset,
             batch: data.batch,
             reused: data.referenced_older_objects,
             serialize_stats: data.stats,
@@ -970,7 +974,9 @@ impl WorkingTree {
                 let object = match root {
                     Some(root) => Object::Directory(root),
                     None => {
-                        self.fetch_object_from_repo(commit.root_hash_offset, data.repository)?
+                        let object_ref =
+                            ObjectReference::new(Some(commit.root_hash), commit.root_hash_offset);
+                        self.fetch_object_from_repo(object_ref, data.repository)?
                     }
                 };
                 let root_hash_offset =
@@ -1030,7 +1036,9 @@ impl WorkingTree {
                 let object = match root {
                     Some(root) => Object::Directory(root),
                     None => {
-                        self.fetch_object_from_repo(commit.root_hash_offset, data.repository)?
+                        let object_ref =
+                            ObjectReference::new(Some(commit.root_hash), commit.root_hash_offset);
+                        self.fetch_object_from_repo(object_ref, data.repository)?
                     }
                 };
                 self.serialize_objects_recursively(&object, commit.root_hash, None, data, storage)?;
@@ -1098,15 +1106,16 @@ impl WorkingTree {
     /// Fetches object of this `hash_id` from the repository.
     fn fetch_object_from_repo(
         &self,
-        offset: u64,
+        object_ref: ObjectReference,
+        // offset: u64,
         //        hash_id: HashId,
         store: &ContextKeyValueStore,
     ) -> Result<Object, MerkleError> {
         let mut storage = self.index.storage.borrow_mut();
 
-        store.get_value_from_offset(&mut storage.data, offset)?;
+        store.get_value_from_offset(&mut storage.data, object_ref)?;
 
-        deserialize_object(offset, &mut storage, store).map_err(Into::into)
+        deserialize_object(object_ref.offset(), &mut storage, store).map_err(Into::into)
 
         // match store.get_value_from_offset(&mut storage.data, hash_id)? {
         //     None => Err(MerkleError::ObjectNotFound { hash_id }),

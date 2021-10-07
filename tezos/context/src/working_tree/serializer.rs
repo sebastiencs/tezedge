@@ -20,7 +20,7 @@ use crate::{
     working_tree::{
         shape::ShapeStrings,
         storage::{DirectoryId, Inode, PointerToInode},
-        Commit, DirEntryKind,
+        Commit, DirEntryKind, ObjectReference,
     },
     ContextKeyValueStore,
 };
@@ -1313,8 +1313,9 @@ fn deserialize_inode_pointers(
 
         let mut output = Vec::with_capacity(1000);
 
+        let object_ref = ObjectReference::new(None, offset);
         repository
-            .get_value_from_offset(&mut output, offset)
+            .get_value_from_offset(&mut output, object_ref)
             .unwrap();
         let inode_id = deserialize_inode(&output, offset, storage, repository).unwrap();
 

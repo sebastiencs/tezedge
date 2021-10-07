@@ -397,6 +397,7 @@ mod tests {
 
     use crate::kv_store::persistent::Persistent;
     use crate::persistent::KeyValueStoreBackend;
+    use crate::working_tree::ObjectReference;
     use crate::{
         kv_store::in_memory::InMemory,
         working_tree::{
@@ -739,7 +740,9 @@ mod tests {
                 repo.append_serialized_data(&output);
 
                 data.clear();
-                repo.get_value_from_offset(&mut data, offset).unwrap();
+
+                let object_ref = ObjectReference::new(None, offset);
+                repo.get_value_from_offset(&mut data, object_ref).unwrap();
                 // let data = repo.get_value(computed_hash_id).unwrap().unwrap();
 
                 storage.data = data.to_vec(); // TODO: Do not do this

@@ -22,6 +22,7 @@ use crate::{
         shape::{DirectoryShapeId, DirectoryShapes, ShapeStrings},
         storage::{DirEntryId, Storage},
         string_interner::{StringId, StringInterner},
+        ObjectReference,
     },
     Map, ObjectHash,
 };
@@ -45,7 +46,7 @@ pub struct Persistent {
     string_interner: StringInterner,
 
     // hashes: Hashes,
-    pub context_hashes: Map<u64, (HashId, u64)>,
+    pub context_hashes: Map<u64, ObjectReference>,
     context_hashes_cycles: VecDeque<Vec<u64>>,
     // data: Vec<u8>,
 }
@@ -226,8 +227,8 @@ impl KeyValueStoreBackend for Persistent {
         Ok(self.hashes.contains(hash_id))
     }
 
-    fn put_context_hash(&mut self, hash_id: HashId, offset: u64) -> Result<(), DBError> {
-        let commit_hash = self.get_hash(hash_id).unwrap().unwrap();
+    fn put_context_hash(&mut self, object_ref: ObjectReference) -> Result<(), DBError> {
+        let commit_hash = self.get_hash(object_ref.hash_id()).unwrap().unwrap();
         // let commit_hash = self
         //     .hashes
         //     .get_hash(commit_hash_id)?
@@ -239,10 +240,14 @@ impl KeyValueStoreBackend for Persistent {
         hasher.write(&commit_hash[..]);
         let hashed = hasher.finish();
 
-        let output = serialize_context_hash(hash_id, offset, commit_hash.as_ref());
+        let output = serialize_context_hash(
+            object_ref.hash_id(),
+            object_ref.offset(),
+            commit_hash.as_ref(),
+        );
         self.commit_index_file.append(&output);
 
-        self.context_hashes.insert(hashed, (hash_id, offset));
+        self.context_hashes.insert(hashed, object_ref);
         if let Some(back) = self.context_hashes_cycles.back_mut() {
             back.push(hashed);
         };
@@ -253,7 +258,7 @@ impl KeyValueStoreBackend for Persistent {
     fn get_context_hash(
         &self,
         context_hash: &ContextHash,
-    ) -> Result<Option<(HashId, u64)>, DBError> {
+    ) -> Result<Option<ObjectReference>, DBError> {
         let mut hasher = DefaultHasher::new();
         hasher.write(context_hash.as_ref());
         let hashed = hasher.finish();
@@ -342,16 +347,22 @@ impl KeyValueStoreBackend for Persistent {
         Ok(())
     }
 
-    fn get_value_from_offset(&self, buffer: &mut Vec<u8>, offset: u64) -> Result<(), DBError> {
-        get_value_from_offset(&self.data_file, buffer, offset)
+    fn get_value_from_offset(
+        &self,
+        buffer: &mut Vec<u8>,
+        object_ref: ObjectReference,
+    ) -> Result<(), DBError> {
+        get_value_from_offset(&self.data_file, buffer, object_ref)
     }
 }
 
 pub(super) fn get_value_from_offset(
     data_file: &File,
     buffer: &mut Vec<u8>,
-    offset: u64,
+    object_ref: ObjectReference,
 ) -> Result<(), DBError> {
+    let offset = object_ref.offset();
+
     let mut header: [u8; 5] = Default::default();
     data_file.read_exact_at(&mut header[..1], FileOffset(offset));
 

@@ -21,6 +21,7 @@ use crate::{
         shape::{DirectoryShapeError, DirectoryShapeId, ShapeStrings},
         storage::{DirEntryId, Storage},
         string_interner::{StringId, StringInterner},
+        ObjectReference,
     },
     ObjectHash,
 };
@@ -48,7 +49,7 @@ pub trait KeyValueStoreBackend {
     ///
     /// # Arguments
     /// * `hash_id` - HashId to mark
-    fn put_context_hash(&mut self, hash_id: HashId, offset: u64) -> Result<(), DBError>;
+    fn put_context_hash(&mut self, object_ref: ObjectReference) -> Result<(), DBError>;
     /// Get the HashId corresponding to the ContextHash
     ///
     /// # Arguments
@@ -56,7 +57,7 @@ pub trait KeyValueStoreBackend {
     fn get_context_hash(
         &self,
         context_hash: &ContextHash,
-    ) -> Result<Option<(HashId, u64)>, DBError>;
+    ) -> Result<Option<ObjectReference>, DBError>;
     /// Read hash associated with given HashId, if exists.
     ///
     /// # Arguments
@@ -99,7 +100,11 @@ pub trait KeyValueStoreBackend {
     fn get_current_offset(&self) -> Result<Option<u64>, DBError>;
     fn append_serialized_data(&mut self, data: &[u8]) -> Result<(), DBError>;
     fn synchronize_full(&mut self) -> Result<(), DBError>;
-    fn get_value_from_offset(&self, buffer: &mut Vec<u8>, offset: u64) -> Result<(), DBError>;
+    fn get_value_from_offset(
+        &self,
+        buffer: &mut Vec<u8>,
+        object_ref: ObjectReference,
+    ) -> Result<(), DBError>;
 }
 
 /// Possible errors for schema

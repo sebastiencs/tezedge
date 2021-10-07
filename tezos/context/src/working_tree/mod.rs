@@ -12,6 +12,8 @@
 
 use std::{borrow::Cow, cell::Cell};
 
+use serde::{Deserialize, Serialize};
+
 use crate::hash::{hash_object, HashingError, ObjectHash};
 use crate::{kv_store::HashId, ContextKeyValueStore};
 
@@ -64,6 +66,7 @@ assert_eq_size!([u8; 20], DirEntry);
 #[derive(Debug, Hash, Clone, Eq, PartialEq)]
 pub struct Commit {
     pub(crate) parent_commit_hash: Option<HashId>,
+    // TODO: pub(crate) root_hash_ref: ObjectReference,
     pub(crate) root_hash: HashId,
     pub(crate) root_hash_offset: u64,
     pub(crate) time: u64,
@@ -77,6 +80,38 @@ pub enum Object {
     Directory(DirectoryId),
     Blob(BlobId),
     Commit(Box<Commit>),
+}
+
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+pub struct ObjectReference {
+    hash_id: Option<HashId>,
+    offset: Option<u64>,
+}
+
+impl From<HashId> for ObjectReference {
+    fn from(hash_id: HashId) -> Self {
+        Self {
+            hash_id: Some(hash_id),
+            offset: None,
+        }
+    }
+}
+
+impl ObjectReference {
+    pub fn new(hash_id: Option<HashId>, offset: u64) -> Self {
+        Self {
+            hash_id,
+            offset: Some(offset),
+        }
+    }
+
+    pub fn offset(&self) -> u64 {
+        self.offset.unwrap()
+    }
+
+    pub fn hash_id(&self) -> HashId {
+        self.hash_id.unwrap()
+    }
 }
 
 impl DirEntry {
@@ -97,7 +132,7 @@ impl DirEntry {
     ///
     /// Returns `None` if the `HashId` doesn't exist.
     /// Use `Self::object_hash_id` to compute the hash.
-    pub fn hash_id(&self) -> Option<HashId> {
+    fn hash_id(&self) -> Option<HashId> {
         let id = self.inner.get().object_hash_id();
         HashId::new(id)
     }
@@ -113,12 +148,16 @@ impl DirEntry {
         self
     }
 
-    pub fn get_offset(&self) -> u64 {
+    fn get_offset(&self) -> u64 {
         let inner = self.inner.get();
 
         // assert!(self.is_commited());
 
         inner.file_offset()
+    }
+
+    pub fn get_reference(&self) -> ObjectReference {
+        ObjectReference::new(self.hash_id(), self.get_offset())
     }
 
     /// Returns the object of this `DirEntry`.
@@ -141,7 +180,7 @@ impl DirEntry {
         }
     }
 
-    /// Returns the `ObjectHash` of this dir_entry, computing it necessary.
+    /// Returns the `ObjectHash` of this dir_entry, computing it if necessary.
     ///
     /// If this dir_entry is an inlined blob, this will return an error.
     pub fn object_hash<'a>(
