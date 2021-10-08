@@ -112,7 +112,7 @@ pub struct DirEntryHeader {
 assert_eq_size!(DirEntryHeader, u8);
 
 #[derive(BitfieldSpecifier)]
-#[bits = 5]
+#[bits = 2]
 #[derive(Clone, Debug, Eq, PartialEq, Copy)]
 pub enum ObjectLength {
     OneByte,
@@ -136,6 +136,8 @@ pub enum ObjectTag {
 pub struct ObjectHeader {
     tag: ObjectTag,
     length: ObjectLength,
+    #[skip]
+    _unused: B3,
 }
 
 impl ObjectHeader {
@@ -153,6 +155,19 @@ enum OffsetLength {
     RelativeFourBytes,
     RelativeEightBytes,
 }
+
+#[bitfield(bits = 8)]
+struct CommitHeader {
+    parent_offset_length: OffsetLength,
+    root_offset_length: OffsetLength,
+    author_length: ObjectLength,
+    is_parent_exist: bool,
+    #[skip]
+    _unused: B1,
+}
+
+// Must fit in 1 byte
+assert_eq_size!(CommitHeader, u8);
 
 fn get_relative_offset(current_offset: u64, target_offset: u64) -> (u64, OffsetLength) {
     assert!(current_offset >= target_offset);
@@ -485,29 +500,57 @@ pub fn serialize_object(
             // Replaced by ObjectHeader
             output.write_all(&[0, 0])?;
 
-            // output.write_all(&[ID_COMMIT])?;
+            let author_length = match commit.author.len() {
+                length if length <= 0xFF => ObjectLength::OneByte,
+                length if length <= 0xFFFF => ObjectLength::TwoBytes,
+                _ => ObjectLength::FourBytes,
+            };
 
-            // // Replaced by the length
-            // output.write_all(&[0, 0, 0, 0])?;
+            let (root_relative_offset, root_offset_length) =
+                get_relative_offset(offset, commit.root_ref.offset());
 
-            let parent_hash_id = commit.parent_commit_ref.map(|h| h.hash_id().as_u32()).unwrap_or(0);
-            serialize_hash_id(parent_hash_id, output)?;
+            let (is_parent_exist, (parent_relative_offset, parent_offset_length)) =
+                match commit.parent_commit_ref {
+                    Some(parent) => (true, get_relative_offset(offset, parent.offset())),
+                    None => (false, (0, OffsetLength::RelativeOneByte)),
+                };
 
-            let root_hash_id = commit.root_hash_ref.hash_id().as_u32();
+            let header: [u8; 1] = CommitHeader::new()
+                .with_is_parent_exist(is_parent_exist)
+                .with_parent_offset_length(parent_offset_length)
+                .with_root_offset_length(root_offset_length)
+                .with_author_length(author_length)
+                .into_bytes();
+
+            output.write_all(&header)?;
+
+            if let Some(parent) = commit.parent_commit_ref {
+                serialize_hash_id(parent.hash_id().as_u32(), output)?;
+                serialize_offset(output, parent_relative_offset, parent_offset_length);
+            };
+
+            let root_hash_id = commit.root_ref.hash_id().as_u32();
             serialize_hash_id(root_hash_id, output)?;
 
-            let root_hash_offset: u64 = commit.root_hash_ref.offset();
-
-            // TODO: Use smaller offsets, add a header here
-            // let (relative_offset, offset_length) = get_relative_offset(offset, root_hash_offset);
-            // serialize_offset(output, relative_offset, offset_length);
-
-            output.write_all(&root_hash_offset.to_ne_bytes())?;
+            serialize_offset(output, root_relative_offset, root_offset_length);
 
             output.write_all(&commit.time.to_ne_bytes())?;
 
-            let author_length: u32 = commit.author.len().try_into()?;
-            output.write_all(&author_length.to_ne_bytes())?;
+            match author_length {
+                ObjectLength::OneByte => {
+                    let author_length: u8 = commit.author.len() as u8;
+                    output.write_all(&author_length.to_le_bytes())?;
+                }
+                ObjectLength::TwoBytes => {
+                    let author_length: u16 = commit.author.len() as u16;
+                    output.write_all(&author_length.to_le_bytes())?;
+                }
+                ObjectLength::FourBytes => {
+                    let author_length: u32 = commit.author.len() as u32;
+                    output.write_all(&author_length.to_le_bytes())?;
+                }
+            }
+
             output.write_all(commit.author.as_bytes())?;
 
             // The message length is inferred.
@@ -515,9 +558,6 @@ pub fn serialize_object(
             output.write_all(commit.message.as_bytes())?;
 
             write_object_header(output, start, ObjectTag::Commit);
-
-            // let length = output.len() as u32 - start as u32;
-            // output[start as usize + 1..start as usize + 5].copy_from_slice(&length.to_ne_bytes());
 
             batch.push((object_hash_id, Arc::from(&output[start..])));
         }
@@ -1182,8 +1222,6 @@ pub fn deserialize_object(
     let header = data.get(0).copied().ok_or(UnexpectedEOF)?;
     let header: ObjectHeader = ObjectHeader::from_bytes([header]);
 
-    // println!("DESERIALIZE_OBJECT HEADER={:?}", header);
-
     let (header_nbytes, _) = read_object_length(data, &header);
 
     let mut pos = header_nbytes;
@@ -1204,45 +1242,81 @@ pub fn deserialize_object(
             Ok(Object::Blob(blob_id))
         }
         ObjectTag::Commit => {
-            let bytes = data.get(pos..).ok_or(UnexpectedEOF)?;
-            let (parent_commit_hash, nbytes) = deserialize_hash_id(bytes)?;
+            let header = data.get(pos).ok_or(UnexpectedEOF)?;
+            let header = CommitHeader::from_bytes([*header; 1]);
 
-            pos += nbytes;
+            pos += 1;
+
+            let parent_commit_ref = if header.is_parent_exist() {
+                let bytes = data.get(pos..).ok_or(UnexpectedEOF)?;
+                let (parent_commit_hash, nbytes) = deserialize_hash_id(bytes)?;
+
+                pos += nbytes;
+
+                let bytes = data.get(pos..).ok_or(UnexpectedEOF)?;
+                let (parent_relative_offset, nbytes) =
+                    deserialize_offset_length(bytes, header.parent_offset_length(), object_offset);
+
+                pos += nbytes;
+
+                Some(ObjectReference::new(
+                    parent_commit_hash,
+                    parent_relative_offset,
+                ))
+            } else {
+                None
+            };
 
             let bytes = data.get(pos..).ok_or(UnexpectedEOF)?;
             let (root_hash, nbytes) = deserialize_hash_id(bytes)?;
 
             pos += nbytes;
 
-            let root_hash_offset = data.get(pos..pos + 8).ok_or(UnexpectedEOF)?;
-            let root_hash_offset = u64::from_ne_bytes(root_hash_offset.try_into()?);
+            let bytes = data.get(pos..).ok_or(UnexpectedEOF)?;
+            let (root_relative_offset, nbytes) =
+                deserialize_offset_length(bytes, header.root_offset_length(), object_offset);
 
-            pos += 8;
+            let root_ref = ObjectReference::new(
+                Some(root_hash.ok_or(MissingRootHash)?),
+                root_relative_offset,
+            );
+
+            pos += nbytes;
 
             let time = data.get(pos..pos + 8).ok_or(UnexpectedEOF)?;
             let time = u64::from_ne_bytes(time.try_into()?);
 
-            let author_length = data.get(pos + 8..pos + 12).ok_or(UnexpectedEOF)?;
-            let author_length = u32::from_ne_bytes(author_length.try_into()?) as usize;
+            pos += 8;
 
-            let author = data
-                .get(pos + 12..pos + 12 + author_length)
-                .ok_or(UnexpectedEOF)?;
+            let author_length: usize = match header.author_length() {
+                ObjectLength::OneByte => {
+                    let author_length: u8 = *data.get(pos).ok_or(UnexpectedEOF)?;
+                    pos += 1;
+                    author_length as usize
+                }
+                ObjectLength::TwoBytes => {
+                    let author_length = data.get(pos..pos + 2).ok_or(UnexpectedEOF)?;
+                    pos += 2;
+                    u16::from_le_bytes(author_length.try_into()?) as usize
+                }
+                ObjectLength::FourBytes => {
+                    let author_length = data.get(pos..pos + 4).ok_or(UnexpectedEOF)?;
+                    pos += 4;
+                    u32::from_le_bytes(author_length.try_into()?) as usize
+                }
+            };
+
+            let author = data.get(pos..pos + author_length).ok_or(UnexpectedEOF)?;
             let author = author.to_vec();
 
-            pos = pos + 12 + author_length;
+            pos = pos + author_length;
 
             let message = data.get(pos..).ok_or(UnexpectedEOF)?;
             let message = message.to_vec();
 
             Ok(Object::Commit(Box::new(Commit {
-                parent_commit_ref: parent_commit_hash.map(|h| ObjectReference::new(Some(h), 0)), // TODO: offset
-                root_hash_ref: ObjectReference::new(
-                    Some(root_hash.ok_or(MissingRootHash)?),
-                    root_hash_offset,
-                ),
-                // root_hash: root_hash.ok_or(MissingRootHash)?,
-                // root_hash_offset,
+                parent_commit_ref,
+                root_ref,
                 time,
                 author: String::from_utf8(author)?,
                 message: String::from_utf8(message)?,
@@ -1831,19 +1905,24 @@ mod tests {
 
         // Test Object::Commit
 
-        let mut data = Vec::with_capacity(1024);
+        // let mut data = Vec::with_capacity(1024);
+        // data.extend_from_slice(&[1,2,3,4,5]);
+
+        repo.append_serialized_data(&data).unwrap();
+        let offset = repo.get_current_offset().unwrap().unwrap();
+        data.clear();
 
         let commit = Commit {
-            parent_commit_ref: Some(ObjectReference::new(HashId::new(9876), 0)),
-            root_hash_ref: ObjectReference::new(HashId::new(12345), 0),
-            // root_hash: HashId::new(12345).unwrap(),
-            // root_hash_offset: 0,
-            time: 12345,
+            parent_commit_ref: Some(ObjectReference::new(HashId::new(9876), 1)),
+            root_ref: ObjectReference::new(HashId::new(12345), 2),
+            time: 123456,
             author: "123".to_string(),
             message: "abc".to_string(),
         };
 
-        serialize_object(
+        // let offset = data.len();
+
+        let offset = serialize_object(
             &Object::Commit(Box::new(commit.clone())),
             fake_hash_id,
             &mut data,
@@ -1852,11 +1931,11 @@ mod tests {
             &mut batch,
             &mut older_objects,
             &mut repo,
-            0,
+            offset as u64,
         )
         .unwrap();
 
-        let offset = data.len();
+        // let offset = data.len();
 
         storage.data = data.clone(); // TODO: Do not do this
         let object = deserialize_object(offset as u64, &mut storage, &repo).unwrap();
