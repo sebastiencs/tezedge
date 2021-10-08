@@ -280,7 +280,7 @@ fn serialize_shaped_directory(
     output.write_all(&[0, 0])?;
 
     let shape_id = shape_id.as_u32();
-    output.write_all(&shape_id.to_ne_bytes())?;
+    output.write_all(&shape_id.to_le_bytes())?;
 
     // Make sure that SHAPED_DIRECTORY_NBYTES_TO_HASHES is correct.
     debug_assert_eq!(output[start + 2..].len(), SHAPED_DIRECTORY_NBYTES_TO_HASHES);
@@ -315,7 +315,7 @@ fn serialize_shaped_directory(
             let _nbytes = serialize_hash_id(hash_id, output)?;
 
             serialize_offset(output, relative_offset, offset_length);
-            // output.write_all(&dir_entry_offset.to_ne_bytes())?;
+            // output.write_all(&dir_entry_offset.to_le_bytes())?;
         }
     }
 
@@ -452,7 +452,7 @@ fn serialize_directory(
                 output.write_all(&byte[..])?;
 
                 let key_length: u16 = len.try_into()?;
-                output.write_all(&key_length.to_ne_bytes())?;
+                output.write_all(&key_length.to_le_bytes())?;
                 output.write_all(key.as_bytes())?;
                 keys_length += 2 + key.len();
             }
@@ -476,7 +476,7 @@ fn serialize_directory(
     write_object_header(output, start, ObjectTag::Directory);
 
     // let length = output.len() as u32 - start as u32;
-    // output[start as usize + 1..start as usize + 5].copy_from_slice(&length.to_ne_bytes());
+    // output[start as usize + 1..start as usize + 5].copy_from_slice(&length.to_le_bytes());
 
     stats.add_directory(
         hash_ids_length,
@@ -542,7 +542,7 @@ pub fn serialize_object(
 
             // let length: u32 = blob.len() as u32;
             // let length = length + 5;
-            // output.write_all(&length.to_ne_bytes())?;
+            // output.write_all(&length.to_le_bytes())?;
 
             output.write_all(blob.as_ref())?;
 
@@ -590,7 +590,7 @@ pub fn serialize_object(
 
             serialize_offset(output, root_relative_offset, root_offset_length);
 
-            output.write_all(&commit.time.to_ne_bytes())?;
+            output.write_all(&commit.time.to_le_bytes())?;
 
             match author_length {
                 ObjectLength::OneByte => {
@@ -674,7 +674,7 @@ impl PointersHeader {
     }
 
     fn to_bytes(&self) -> [u8; 4] {
-        self.bitfield.to_ne_bytes()
+        self.bitfield.to_le_bytes()
     }
 
     /// Iterates on all the bit sets in the bitfield.
@@ -689,7 +689,7 @@ impl PointersHeader {
 
     fn from_bytes(bytes: [u8; 4]) -> Self {
         Self {
-            bitfield: u32::from_ne_bytes(bytes),
+            bitfield: u32::from_le_bytes(bytes),
         }
     }
 
@@ -799,7 +799,7 @@ impl PointersOffsetsHeader {
 
     fn from_bytes(bytes: [u8; 8]) -> Self {
         Self {
-            bitfield: u64::from_ne_bytes(bytes),
+            bitfield: u64::from_le_bytes(bytes),
         }
     }
 }
@@ -872,8 +872,8 @@ fn serialize_inode(
             // // Replaced by the length
             // output.write_all(&[0, 0, 0, 0])?;
 
-            output.write_all(&depth.to_ne_bytes())?;
-            output.write_all(&nchildren.to_ne_bytes())?;
+            output.write_all(&depth.to_le_bytes())?;
+            output.write_all(&nchildren.to_le_bytes())?;
 
             let bitfield = PointersHeader::from(pointers);
             output.write_all(&bitfield.to_bytes())?;
@@ -908,13 +908,13 @@ fn serialize_inode(
                 serialize_offset(output, relative_offset, offset_length);
 
                 // let offset = pointer.offset();
-                // output.write_all(&offset.to_ne_bytes())?;
+                // output.write_all(&offset.to_le_bytes())?;
             }
 
             write_object_header(output, start, ObjectTag::InodePointers);
 
             // let length = output.len() as u32 - start as u32;
-            // output[start as usize + 1..start as usize + 5].copy_from_slice(&length.to_ne_bytes());
+            // output[start as usize + 1..start as usize + 5].copy_from_slice(&length.to_le_bytes());
 
             batch.push((hash_id, Arc::from(&output[start..])));
 
@@ -1080,7 +1080,7 @@ fn deserialize_shaped_directory(
     let data_length = data.len();
 
     let shape_id = data.get(pos..pos + 4).ok_or(UnexpectedEOF)?;
-    let shape_id = u32::from_ne_bytes(shape_id.try_into()?);
+    let shape_id = u32::from_le_bytes(shape_id.try_into()?);
     let shape_id = DirectoryShapeId::from(shape_id);
 
     let directory_shape = match repository.get_shape(shape_id).map_err(Box::new)? {
@@ -1134,7 +1134,7 @@ fn deserialize_shaped_directory(
                 // println!("DESERIALIZING OFFSET offset={:?} nbytes={:?} length={:?} object={:?}", offset, nbytes, offset_length, object_offset);
 
                 // let offset = data.get(pos..pos + 8).ok_or(UnexpectedEOF)?;
-                // let offset = u64::from_ne_bytes(offset.try_into()?);
+                // let offset = u64::from_le_bytes(offset.try_into()?);
 
                 pos += nbytes;
 
@@ -1186,7 +1186,7 @@ fn deserialize_directory(
                 _ => {
                     // The key length is in 2 bytes, followed by the key itself
                     let key_length = data.get(pos..pos + 2).ok_or(UnexpectedEOF)?;
-                    let key_length = u16::from_ne_bytes(key_length.try_into()?);
+                    let key_length = u16::from_le_bytes(key_length.try_into()?);
                     let key_length = key_length as usize;
 
                     let key_bytes = data
@@ -1226,7 +1226,7 @@ fn deserialize_directory(
                 pos += nbytes;
 
                 // let offset = data.get(pos..pos + 8).ok_or(UnexpectedEOF)?;
-                // let offset = u64::from_ne_bytes(offset.try_into()?);
+                // let offset = u64::from_le_bytes(offset.try_into()?);
 
                 // pos += 8;
 
@@ -1344,7 +1344,7 @@ pub fn deserialize_object(
             pos += nbytes;
 
             let time = data.get(pos..pos + 8).ok_or(UnexpectedEOF)?;
-            let time = u64::from_ne_bytes(time.try_into()?);
+            let time = u64::from_le_bytes(time.try_into()?);
 
             pos += 8;
 
@@ -1403,10 +1403,10 @@ fn deserialize_inode_pointers(
     let mut pos = 0;
 
     let depth = data.get(pos..pos + 4).ok_or(UnexpectedEOF)?;
-    let depth = u32::from_ne_bytes(depth.try_into()?);
+    let depth = u32::from_le_bytes(depth.try_into()?);
 
     let nchildren = data.get(pos + 4..pos + 8).ok_or(UnexpectedEOF)?;
-    let nchildren = u32::from_ne_bytes(nchildren.try_into()?);
+    let nchildren = u32::from_le_bytes(nchildren.try_into()?);
 
     pos += 8;
 
@@ -1448,7 +1448,7 @@ fn deserialize_inode_pointers(
         pos += nbytes;
 
         // let offset = data.get(pos..pos + 8).ok_or(UnexpectedEOF)?;
-        // let offset = u64::from_ne_bytes(offset.try_into()?);
+        // let offset = u64::from_le_bytes(offset.try_into()?);
 
         // pos += 8;
 
@@ -1652,7 +1652,7 @@ impl<'a> Iterator for HashIdIterator<'a> {
                         //     len if len > 0 => len,
                         //     _ => {
                         //         let key_length = self.data.get(pos..pos + 2)?;
-                        //         let key_length = u16::from_ne_bytes(key_length.try_into().ok()?);
+                        //         let key_length = u16::from_le_bytes(key_length.try_into().ok()?);
                         //         2 + key_length as usize
                         //     }
                         // };
@@ -1678,7 +1678,7 @@ impl<'a> Iterator for HashIdIterator<'a> {
                     self.pos += 8;
 
                     // let offset = self.data.get(pos..pos + 8).ok()?;
-                    // let offset = u64::from_ne_bytes(offset.try_into()?);
+                    // let offset = u64::from_le_bytes(offset.try_into()?);
 
                     return hash_id;
                 }
@@ -1707,7 +1707,7 @@ impl<'a> Iterator for HashIdIterator<'a> {
             //             len if len > 0 => len,
             //             _ => {
             //                 let key_length = self.data.get(pos..pos + 2)?;
-            //                 let key_length = u16::from_ne_bytes(key_length.try_into().ok()?);
+            //                 let key_length = u16::from_le_bytes(key_length.try_into().ok()?);
             //                 2 + key_length as usize
             //             }
             //         };
@@ -1731,7 +1731,7 @@ impl<'a> Iterator for HashIdIterator<'a> {
             //     self.pos += 8;
 
             //     // let offset = self.data.get(pos..pos + 8).ok()?;
-            //     // let offset = u64::from_ne_bytes(offset.try_into()?);
+            //     // let offset = u64::from_le_bytes(offset.try_into()?);
 
             //     return hash_id;
             // }
