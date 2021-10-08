@@ -1266,24 +1266,35 @@ pub fn read_object_length(data: &[u8], header: &ObjectHeader) -> (usize, usize) 
     }
 }
 
+pub fn deserialize_object(
+    object_offset: AbsoluteOffset,
+    storage: &mut Storage,
+    repository: &ContextKeyValueStore,
+) -> Result<Object, DeserializationError> {
+    let data = std::mem::take(&mut storage.data);
+
+    let result = deserialize_object_impl(&data, object_offset, storage, repository);
+    storage.data = data;
+
+    result
+}
+
 /// Extract values from `data` to store them in `storage`.
 /// Return an `Object`, which can be ids (refering to data inside `storage`) or a `Commit`
-pub fn deserialize_object(
-    // data: &[u8],
+pub fn deserialize_object_impl(
+    data: &[u8],
     object_offset: AbsoluteOffset,
     storage: &mut Storage,
     repository: &ContextKeyValueStore,
 ) -> Result<Object, DeserializationError> {
     use DeserializationError::*;
 
-    let data = std::mem::take(&mut storage.data);
-    let data = &data;
-
     let header = data.get(0).copied().ok_or(UnexpectedEOF)?;
     let header: ObjectHeader = ObjectHeader::from_bytes([header]);
 
-    let (header_nbytes, _) = read_object_length(data, &header);
+    let (header_nbytes, object_length) = read_object_length(data, &header);
 
+    let data = &data[..object_length];
     let mut pos = header_nbytes;
 
     match header.tag_or_err().map_err(|_| UnknownID)? {
@@ -1454,13 +1465,18 @@ fn deserialize_inode_pointers(
 
         // TODO: Use offset
 
+        // TODO: Move this outside the loop
         let mut output = Vec::with_capacity(1000);
 
         let object_ref = ObjectReference::new(None, absolute_offset);
-        repository
-            .get_value_from_offset(&mut output, object_ref)
+        let data = repository
+            .get_object_bytes(object_ref, &mut output)
             .unwrap();
-        let inode_id = deserialize_inode(&output, absolute_offset, storage, repository).unwrap();
+
+        // repository
+        //     .get_value_from_offset(&mut output, object_ref)
+        //     .unwrap();
+        let inode_id = deserialize_inode(data, absolute_offset, storage, repository).unwrap();
 
         // .map_err(|_| InodeNotFoundInRepository)
         // .and_then(|data| {

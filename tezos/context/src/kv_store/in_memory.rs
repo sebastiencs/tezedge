@@ -28,7 +28,7 @@ use crate::{
         shape::{DirectoryShapeId, DirectoryShapes, ShapeStrings},
         storage::{DirEntryId, Storage},
         string_interner::{StringId, StringInterner},
-        ObjectReference,
+        Object, ObjectReference,
     },
     Map,
 };
@@ -210,9 +210,9 @@ impl KeyValueStoreBackend for InMemory {
         Ok(self.get_hash(hash_id)?.map(Cow::Borrowed))
     }
 
-    fn get_value(&self, hash_id: HashId) -> Result<Option<Cow<[u8]>>, DBError> {
-        Ok(self.get_value(hash_id)?.map(Cow::Borrowed))
-    }
+    // fn get_value(&self, hash_id: HashId) -> Result<Option<Cow<[u8]>>, DBError> {
+    //     Ok(self.get_value(hash_id)?.map(Cow::Borrowed))
+    // }
 
     fn get_vacant_object_hash(&mut self) -> Result<VacantObjectHash, DBError> {
         self.get_vacant_entry_hash()
@@ -266,12 +266,21 @@ impl KeyValueStoreBackend for InMemory {
     fn synchronize_full(&mut self) -> Result<(), DBError> {
         unimplemented!()
     }
-    fn get_value_from_offset(
+
+    fn get_object(
         &self,
-        buffer: &mut Vec<u8>,
         object_ref: ObjectReference,
-    ) -> Result<(), DBError> {
-        unimplemented!()
+        storage: &mut Storage,
+    ) -> Result<Object, DBError> {
+        todo!()
+    }
+
+    fn get_object_bytes<'a>(
+        &self,
+        object_ref: ObjectReference,
+        buffer: &'a mut Vec<u8>,
+    ) -> Result<&'a [u8], DBError> {
+        todo!()
     }
 }
 

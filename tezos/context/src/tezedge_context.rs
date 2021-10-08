@@ -76,14 +76,14 @@ impl TezedgeIndex {
         }
     }
 
-    /// Fetches object from the repository associated to this `hash_id`.
-    ///
-    /// This returns the raw owned value (`Vec<u8>`).
-    /// `Self::fetch_object` should be used to avoid allocating a `Vec<u8>`.
-    pub fn fetch_object_bytes(&self, hash_id: HashId) -> Result<Option<Vec<u8>>, DBError> {
-        let repo = self.repository.read()?;
-        Ok(repo.get_value(hash_id)?.map(|v| v.to_vec()))
-    }
+    // /// Fetches object from the repository associated to this `hash_id`.
+    // ///
+    // /// This returns the raw owned value (`Vec<u8>`).
+    // /// `Self::fetch_object` should be used to avoid allocating a `Vec<u8>`.
+    // pub fn fetch_object_bytes(&self, hash_id: HashId) -> Result<Option<Vec<u8>>, DBError> {
+    //     let repo = self.repository.read()?;
+    //     Ok(repo.get_value(hash_id)?.map(|v| v.to_vec()))
+    // }
 
     /// Fetches object from the repository and deserialize it into `Self::storage`.
     ///
@@ -97,13 +97,15 @@ impl TezedgeIndex {
     ) -> Result<Option<Object>, DBError> {
         let repo = self.repository.read()?;
 
-        repo.get_value_from_offset(&mut storage.data, object_ref)?;
+        repo.get_object(object_ref, storage).map(Some)
 
-        Ok(Some(deserialize_object(
-            object_ref.offset(), // &storage.data,
-            storage,
-            &*repo,
-        )?))
+        // repo.get_value_from_offset(&mut storage.data, object_ref)?;
+
+        // Ok(Some(deserialize_object(
+        //     object_ref.offset(), // &storage.data,
+        //     storage,
+        //     &*repo,
+        // )?))
 
         // match repo.get_value_from_offset(&mut storage.data, offset)? {
         //     None => Ok(None),
@@ -939,7 +941,12 @@ impl ShellContextApi for TezedgeContext {
             None => return Ok(None),
         };
 
-        repository.get_value_from_offset(&mut buffer, object_ref)?;
+        repository
+            .get_object_bytes(object_ref, &mut buffer)
+            .map(|bytes| Some(bytes.to_vec()))
+            .map_err(Into::into)
+
+        // repository.get_value_from_offset(&mut buffer, object_ref)?;
 
         // match self.parent_commit_hash_offset {
         //     Some(offset) => repository.get_value_from_offset(&mut buffer, offset)?,
@@ -951,7 +958,7 @@ impl ShellContextApi for TezedgeContext {
         //     None => return Ok(None),
         // };
 
-        Ok(Some(buffer))
+        // Ok(Some(buffer))
     }
 
     fn get_memory_usage(&self) -> Result<ContextMemoryUsage, ContextError> {

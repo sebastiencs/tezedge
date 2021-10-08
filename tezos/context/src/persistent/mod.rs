@@ -21,7 +21,7 @@ use crate::{
         shape::{DirectoryShapeError, DirectoryShapeId, ShapeStrings},
         storage::{DirEntryId, Storage},
         string_interner::{StringId, StringInterner},
-        ObjectReference,
+        Object, ObjectReference,
     },
     ObjectHash,
 };
@@ -63,11 +63,6 @@ pub trait KeyValueStoreBackend {
     /// # Arguments
     /// * `hash_id` - HashId of the ObjectHash
     fn get_hash(&self, hash_id: HashId) -> Result<Option<Cow<ObjectHash>>, DBError>;
-    /// Read value associated with given HashId, if exists.
-    ///
-    /// # Arguments
-    /// * `hash_id` - HashId of the value
-    fn get_value(&self, hash_id: HashId) -> Result<Option<Cow<[u8]>>, DBError>;
     /// Find an object to insert a new ObjectHash
     /// Return the object
     fn get_vacant_object_hash(&mut self) -> Result<VacantObjectHash, DBError>;
@@ -100,11 +95,18 @@ pub trait KeyValueStoreBackend {
     fn get_current_offset(&self) -> Result<Option<AbsoluteOffset>, DBError>;
     fn append_serialized_data(&mut self, data: &[u8]) -> Result<(), DBError>;
     fn synchronize_full(&mut self) -> Result<(), DBError>;
-    fn get_value_from_offset(
+
+    fn get_object(
         &self,
-        buffer: &mut Vec<u8>,
         object_ref: ObjectReference,
-    ) -> Result<(), DBError>;
+        storage: &mut Storage,
+    ) -> Result<Object, DBError>;
+
+    fn get_object_bytes<'a>(
+        &self,
+        object_ref: ObjectReference,
+        buffer: &'a mut Vec<u8>,
+    ) -> Result<&'a [u8], DBError>;
 }
 
 /// Possible errors for schema

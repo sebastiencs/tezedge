@@ -1118,20 +1118,13 @@ impl WorkingTree {
         object_ref: ObjectReference,
         // offset: u64,
         //        hash_id: HashId,
-        store: &ContextKeyValueStore,
+        repository: &ContextKeyValueStore,
     ) -> Result<Object, MerkleError> {
         let mut storage = self.index.storage.borrow_mut();
 
-        store.get_value_from_offset(&mut storage.data, object_ref)?;
-
-        deserialize_object(object_ref.offset(), &mut storage, store).map_err(Into::into)
-
-        // match store.get_value_from_offset(&mut storage.data, hash_id)? {
-        //     None => Err(MerkleError::ObjectNotFound { hash_id }),
-        //     Some(object_bytes) => {
-        //         deserialize_object(&mut storage, store).map_err(Into::into)
-        //     }
-        // }
+        repository
+            .get_object(object_ref, &mut storage)
+            .map_err(Into::into)
     }
 
     /// Extracts the directory of this object.

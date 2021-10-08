@@ -721,7 +721,6 @@ mod tests {
             // The following block makes sure that a serialized & deserialized inode
             // produce the same hash
             {
-                let mut data = Vec::with_capacity(1000);
                 output.clear();
 
                 let offset = repo.get_current_offset().unwrap().unwrap();
@@ -742,14 +741,8 @@ mod tests {
                 repo.write_batch(batch).unwrap();
                 repo.append_serialized_data(&output);
 
-                data.clear();
-
                 let object_ref = ObjectReference::new(None, offset);
-                repo.get_value_from_offset(&mut data, object_ref).unwrap();
-                // let data = repo.get_value(computed_hash_id).unwrap().unwrap();
-
-                storage.data = data.to_vec(); // TODO: Do not do this
-                let object = deserialize_object(offset, &mut storage, &repo).unwrap();
+                let object = repo.get_object(object_ref, &mut storage).unwrap();
 
                 match object {
                     Object::Directory(new_dir) => {

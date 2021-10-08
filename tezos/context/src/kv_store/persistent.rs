@@ -1,6 +1,6 @@
 use std::{
     borrow::Cow,
-    cell::Cell,
+    cell::{Cell, RefCell},
     collections::{hash_map::DefaultHasher, VecDeque},
     convert::{TryFrom, TryInto},
     hash::Hasher,
@@ -18,11 +18,13 @@ use crate::{
         KeyValueStoreBackend, Persistable,
     },
     working_tree::{
-        serializer::{read_object_length, AbsoluteOffset, ObjectHeader, ObjectLength},
+        serializer::{
+            deserialize_object, read_object_length, AbsoluteOffset, ObjectHeader, ObjectLength,
+        },
         shape::{DirectoryShapeId, DirectoryShapes, ShapeStrings},
         storage::{DirEntryId, Storage},
         string_interner::{StringId, StringInterner},
-        ObjectReference,
+        Object, ObjectReference,
     },
     Map, ObjectHash,
 };
@@ -48,7 +50,6 @@ pub struct Persistent {
     // hashes: Hashes,
     pub context_hashes: Map<u64, ObjectReference>,
     context_hashes_cycles: VecDeque<Vec<u64>>,
-    // data: Vec<u8>,
 }
 
 impl GarbageCollector for Persistent {
@@ -204,6 +205,40 @@ impl Persistent {
         let vacant = self.get_vacant_object_hash().unwrap();
         vacant.write_with(|entry| *entry = entry_hash)
     }
+
+    fn get_object_bytes<'a>(
+        &self,
+        object_ref: ObjectReference,
+        buffer: &'a mut Vec<u8>,
+    ) -> Result<&'a [u8], DBError> {
+        let offset = object_ref.offset();
+
+        if buffer.len() < 5 {
+            buffer.resize(5, 0);
+        }
+
+        // Read one byte to get the `ObjectHeader`
+        self.data_file.read_exact_at(&mut buffer[..1], offset);
+        let object_header: ObjectHeader = ObjectHeader::from_bytes([buffer[0]]);
+
+        let header = match object_header.get_length() {
+            ObjectLength::OneByte => &mut buffer[..2],
+            ObjectLength::TwoBytes => &mut buffer[..3],
+            ObjectLength::FourBytes => &mut buffer[..5],
+        };
+
+        // Read (1 + (1, 2 or 4)) bytes to get the object length.
+        self.data_file.read_exact_at(header, offset);
+        let (_, length) = read_object_length(header, &object_header);
+
+        if length > buffer.len() {
+            buffer.resize(length, 0);
+        }
+
+        self.data_file.read_exact_at(&mut buffer[..length], offset);
+
+        Ok(&buffer[..length])
+    }
 }
 
 fn serialize_context_hash(hash_id: HashId, offset: AbsoluteOffset, hash: &[u8]) -> Vec<u8> {
@@ -271,9 +306,9 @@ impl KeyValueStoreBackend for Persistent {
         self.hashes.get_hash(hash_id)
     }
 
-    fn get_value(&self, hash_id: HashId) -> Result<Option<Cow<[u8]>>, DBError> {
-        todo!()
-    }
+    // fn get_value(&self, hash_id: HashId) -> Result<Option<Cow<[u8]>>, DBError> {
+    //     todo!()
+    // }
 
     fn get_vacant_object_hash(&mut self) -> Result<VacantObjectHash, DBError> {
         self.hashes.get_vacant_object_hash()
@@ -348,47 +383,21 @@ impl KeyValueStoreBackend for Persistent {
         Ok(())
     }
 
-    fn get_value_from_offset(
+    fn get_object(
         &self,
-        buffer: &mut Vec<u8>,
         object_ref: ObjectReference,
-    ) -> Result<(), DBError> {
-        get_value_from_offset(&self.data_file, buffer, object_ref)
+        storage: &mut Storage,
+    ) -> Result<Object, DBError> {
+        self.get_object_bytes(object_ref, &mut storage.data)?;
+        deserialize_object(object_ref.offset(), storage, self).map_err(Into::into)
     }
-}
 
-pub(super) fn get_value_from_offset(
-    data_file: &File,
-    buffer: &mut Vec<u8>,
-    object_ref: ObjectReference,
-) -> Result<(), DBError> {
-    let offset = object_ref.offset();
-
-    let mut header: [u8; 5] = Default::default();
-    data_file.read_exact_at(&mut header[..1], offset);
-
-    let object_header: ObjectHeader = ObjectHeader::from_bytes([header[0]]);
-
-    let header = match object_header.get_length() {
-        ObjectLength::OneByte => &mut header[..2],
-        ObjectLength::TwoBytes => &mut header[..3],
-        ObjectLength::FourBytes => &mut header[..5],
-    };
-
-    data_file.read_exact_at(header, offset);
-    let (_, length) = read_object_length(header, &object_header);
-
-    // println!("LENGTH={:?}", length);
-
-    // let length = u32::from_ne_bytes(header[1..].try_into().unwrap());
-    // let total_length = length as usize;
-    //let total_length = 5 + length as usize;
-
-    buffer.resize(length, 0);
-    // self.data.clear();
-    // self.data.reserve(total_length);
-
-    data_file.read_exact_at(buffer, offset);
-
-    Ok(())
+    fn get_object_bytes<'a>(
+        &self,
+        object_ref: ObjectReference,
+        buffer: &'a mut Vec<u8>,
+    ) -> Result<&'a [u8], DBError> {
+        self.get_object_bytes(object_ref, buffer)
+            .map_err(Into::into)
+    }
 }

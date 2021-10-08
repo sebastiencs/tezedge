@@ -523,6 +523,7 @@ pub struct Storage {
     /// of an Inode, any children of that root are not visible to the working tree.
     inodes: Vec<Inode>,
 
+    /// Objects bytes are read from disk into this vector
     pub data: Vec<u8>,
 }
 
