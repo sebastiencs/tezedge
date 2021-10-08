@@ -1905,9 +1905,6 @@ mod tests {
 
         // Test Object::Commit
 
-        // let mut data = Vec::with_capacity(1024);
-        // data.extend_from_slice(&[1,2,3,4,5]);
-
         repo.append_serialized_data(&data).unwrap();
         let offset = repo.get_current_offset().unwrap().unwrap();
         data.clear();
@@ -1919,8 +1916,6 @@ mod tests {
             author: "123".to_string(),
             message: "abc".to_string(),
         };
-
-        // let offset = data.len();
 
         let offset = serialize_object(
             &Object::Commit(Box::new(commit.clone())),
@@ -1935,7 +1930,40 @@ mod tests {
         )
         .unwrap();
 
-        // let offset = data.len();
+        storage.data = data.clone(); // TODO: Do not do this
+        let object = deserialize_object(offset as u64, &mut storage, &repo).unwrap();
+        if let Object::Commit(object) = object {
+            assert_eq!(*object, commit);
+        } else {
+            panic!();
+        }
+
+        // Test Object::Commit with no parent
+
+        repo.append_serialized_data(&data).unwrap();
+        let offset = repo.get_current_offset().unwrap().unwrap();
+        data.clear();
+
+        let commit = Commit {
+            parent_commit_ref: None,
+            root_ref: ObjectReference::new(HashId::new(12), 3),
+            time: 1234567,
+            author: "123456".repeat(100),
+            message: "abcd".repeat(100),
+        };
+
+        let offset = serialize_object(
+            &Object::Commit(Box::new(commit.clone())),
+            fake_hash_id,
+            &mut data,
+            &storage,
+            &mut stats,
+            &mut batch,
+            &mut older_objects,
+            &mut repo,
+            offset as u64,
+        )
+        .unwrap();
 
         storage.data = data.clone(); // TODO: Do not do this
         let object = deserialize_object(offset as u64, &mut storage, &repo).unwrap();
