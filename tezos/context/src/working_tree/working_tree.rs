@@ -72,7 +72,10 @@ use crate::{persistent, ContextKeyValueStore};
 use crate::{ContextKey, ContextValue};
 
 use super::{
-    serializer::{deserialize_object, serialize_object, DeserializationError, SerializationError},
+    serializer::{
+        deserialize_object, serialize_object, AbsoluteOffset, DeserializationError,
+        SerializationError,
+    },
     storage::{BlobId, DirEntryId, DirectoryId, Storage, StorageError},
     ObjectReference,
 };
@@ -282,9 +285,8 @@ pub enum MerkleError {
     ValueIsNotABlob { key: String },
     #[error("Found wrong structure. Was looking for {sought}, but found {found}")]
     FoundUnexpectedStructure { sought: String, found: String },
-    #[error("Object not found! HashId={hash_id:?}")]
-    ObjectNotFound { hash_id: HashId },
-
+    #[error("Object not found! reference={object_ref:?}")]
+    ObjectNotFound { object_ref: ObjectReference },
     /// Wrong user input errors
     #[error("No value under key {key:?}.")]
     ValueNotFound { key: String },
@@ -384,11 +386,11 @@ struct SerializingData<'a> {
     repository: &'a mut ContextKeyValueStore,
     serialized: Vec<u8>,
     stats: Box<SerializeStats>,
-    offset: u64,
+    offset: AbsoluteOffset,
 }
 
 impl<'a> SerializingData<'a> {
-    fn new(repository: &'a mut ContextKeyValueStore, offset: u64) -> Self {
+    fn new(repository: &'a mut ContextKeyValueStore, offset: AbsoluteOffset) -> Self {
         Self {
             batch: Vec::with_capacity(2048),
             referenced_older_objects: Vec::with_capacity(2048),
@@ -404,7 +406,7 @@ impl<'a> SerializingData<'a> {
         object_hash_id: HashId,
         object: &Object,
         storage: &Storage,
-    ) -> Result<u64, MerkleError> {
+    ) -> Result<AbsoluteOffset, MerkleError> {
         serialize_object(
             object,
             object_hash_id,
@@ -548,7 +550,9 @@ impl WorkingTree {
 
         match repo.get_hash(hash_id)? {
             Some(hash) => Ok(hash.into_owned()),
-            None => Err(MerkleError::ObjectNotFound { hash_id }),
+            None => Err(MerkleError::ObjectNotFound {
+                object_ref: ObjectReference::new(Some(hash_id), 0.into()),
+            }),
         }
     }
 
@@ -752,7 +756,7 @@ impl WorkingTree {
 
         let new_commit = Commit {
             parent_commit_ref: parent_commit_ref.clone(), // TODO: Clean this
-            root_ref: ObjectReference::new(Some(root_hash), 0), // offset is modified later
+            root_ref: ObjectReference::new(Some(root_hash), 0.into()), // offset is modified later
             // parent_commit_hash,
             // root_hash,
             // root_hash_offset: 0,
@@ -764,9 +768,9 @@ impl WorkingTree {
         let commit_hash = hash_commit(&new_commit, store)?;
 
         // TODO: Don't unwrap_or(0)
-        let offset = store.get_current_offset()?.unwrap_or(0);
+        let offset = store.get_current_offset()?.unwrap_or(0.into());
 
-        let mut commit_offset = 0;
+        let mut commit_offset: AbsoluteOffset = 0.into();
 
         // produce objects to be persisted to storage
         let mut data = SerializingData::new(store, offset);
@@ -933,7 +937,7 @@ impl WorkingTree {
         root: Option<DirectoryId>,
         data: &mut SerializingData,
         storage: &Storage,
-    ) -> Result<u64, MerkleError> {
+    ) -> Result<AbsoluteOffset, MerkleError> {
         match &mut object {
             Object::Directory(dir_id) => {
                 storage.dir_iterate_unsorted(*dir_id, |&(_, dir_entry_id)| {

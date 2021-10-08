@@ -435,7 +435,7 @@ mod tests {
 
         let dummy_commit = Commit {
             parent_commit_ref: None,
-            root_ref: ObjectReference::new(Some(hash_id), 0),
+            root_ref: ObjectReference::new(Some(hash_id), 0.into()),
             // root_hash: hash_id,
             // root_hash_offset: 0,
             time: 0,
@@ -736,7 +736,7 @@ mod tests {
                     &mut older_objects,
                     &mut repo,
                     // 0,
-                    offset as u64,
+                    offset,
                 )
                 .unwrap();
                 repo.write_batch(batch).unwrap();

@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use crate::hash::{hash_object, HashingError, ObjectHash};
 use crate::{kv_store::HashId, ContextKeyValueStore};
 
+use self::serializer::AbsoluteOffset;
 use self::{
     storage::{BlobId, DirectoryId, Storage},
     working_tree::MerkleError,
@@ -73,7 +74,7 @@ pub struct Commit {
 }
 
 impl Commit {
-    pub fn set_root_hash_offset(&mut self, offset: u64) {
+    pub fn set_root_hash_offset(&mut self, offset: AbsoluteOffset) {
         self.root_ref.offset.replace(offset);
     }
 }
@@ -89,7 +90,7 @@ pub enum Object {
 #[derive(Debug, Copy, Clone, Serialize, Deserialize, Hash, PartialEq, Eq)]
 pub struct ObjectReference {
     hash_id: Option<HashId>,
-    offset: Option<u64>,
+    offset: Option<AbsoluteOffset>,
 }
 
 impl From<HashId> for ObjectReference {
@@ -102,14 +103,14 @@ impl From<HashId> for ObjectReference {
 }
 
 impl ObjectReference {
-    pub fn new(hash_id: Option<HashId>, offset: u64) -> Self {
+    pub fn new(hash_id: Option<HashId>, offset: AbsoluteOffset) -> Self {
         Self {
             hash_id,
             offset: Some(offset),
         }
     }
 
-    pub fn offset(&self) -> u64 {
+    pub fn offset(&self) -> AbsoluteOffset {
         self.offset.unwrap()
     }
 
@@ -141,23 +142,23 @@ impl DirEntry {
         HashId::new(id)
     }
 
-    pub fn set_offset(&self, offset: u64) {
-        let inner = self.inner.get().with_file_offset(offset);
+    pub fn set_offset(&self, offset: AbsoluteOffset) {
+        let inner = self.inner.get().with_file_offset(offset.as_u64());
         self.inner.set(inner);
     }
 
-    pub fn with_offset(self, offset: u64) -> Self {
-        let inner = self.inner.get().with_file_offset(offset);
+    pub fn with_offset(self, offset: AbsoluteOffset) -> Self {
+        let inner = self.inner.get().with_file_offset(offset.as_u64());
         self.inner.set(inner);
         self
     }
 
-    fn get_offset(&self) -> u64 {
+    fn get_offset(&self) -> AbsoluteOffset {
         let inner = self.inner.get();
 
         // assert!(self.is_commited());
 
-        inner.file_offset()
+        inner.file_offset().into()
     }
 
     pub fn get_reference(&self) -> ObjectReference {

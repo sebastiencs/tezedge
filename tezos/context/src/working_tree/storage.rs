@@ -23,6 +23,7 @@ use crate::hash::index as index_of_key;
 use crate::kv_store::{index_map::IndexMap, HashId};
 
 use super::{
+    serializer::AbsoluteOffset,
     string_interner::{StringId, StringInterner},
     working_tree::MerkleError,
     DirEntry,
@@ -398,14 +399,18 @@ impl PointerToInode {
         }
     }
 
-    pub fn new_commited(hash_id: Option<HashId>, inode_id: InodeId, offset: u64) -> Self {
+    pub fn new_commited(
+        hash_id: Option<HashId>,
+        inode_id: InodeId,
+        offset: AbsoluteOffset,
+    ) -> Self {
         Self {
             inner: Cell::new(
                 PointerToInodeInner::new()
                     .with_hash_id(hash_id.map(|h| h.as_u32()).unwrap_or(0))
                     .with_is_commited(true)
                     .with_inode_id(inode_id.0)
-                    .with_offset(offset), //.with_offset(0),
+                    .with_offset(offset.as_u64()), //.with_offset(0),
             ),
         }
     }
@@ -439,16 +444,16 @@ impl PointerToInode {
         self.inner.set(inner);
     }
 
-    pub fn set_offset(&self, offset: u64) {
+    pub fn set_offset(&self, offset: AbsoluteOffset) {
         let mut inner = self.inner.get();
-        inner.set_offset(offset);
+        inner.set_offset(offset.as_u64());
 
         self.inner.set(inner);
     }
 
-    pub fn offset(&self) -> u64 {
+    pub fn offset(&self) -> AbsoluteOffset {
         let inner = self.inner.get();
-        inner.offset()
+        inner.offset().into()
     }
 
     pub fn is_commited(&self) -> bool {

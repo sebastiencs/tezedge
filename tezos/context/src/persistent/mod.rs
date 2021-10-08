@@ -17,7 +17,7 @@ use tezos_timing::RepositoryMemoryUsage;
 use crate::{
     kv_store::{readonly_ipc::ContextServiceError, HashId, HashIdError, VacantObjectHash},
     working_tree::{
-        serializer::DeserializationError,
+        serializer::{AbsoluteOffset, DeserializationError},
         shape::{DirectoryShapeError, DirectoryShapeId, ShapeStrings},
         storage::{DirEntryId, Storage},
         string_interner::{StringId, StringInterner},
@@ -97,7 +97,7 @@ pub trait KeyValueStoreBackend {
     /// Update `string_interner` to be in sync with the repository `StringInterner`.
     fn synchronize_strings_into(&self, string_interner: &mut StringInterner);
 
-    fn get_current_offset(&self) -> Result<Option<u64>, DBError>;
+    fn get_current_offset(&self) -> Result<Option<AbsoluteOffset>, DBError>;
     fn append_serialized_data(&mut self, data: &[u8]) -> Result<(), DBError>;
     fn synchronize_full(&mut self) -> Result<(), DBError>;
     fn get_value_from_offset(
@@ -266,8 +266,8 @@ impl File {
         }
     }
 
-    pub fn offset(&self) -> u64 {
-        self.offset
+    pub fn offset(&self) -> AbsoluteOffset {
+        self.offset.into()
     }
 
     pub fn sync(&mut self) {
@@ -285,18 +285,18 @@ impl File {
         FileOffset(offset)
     }
 
-    pub fn read_at(&self, buffer: &mut Vec<u8>, offset: FileOffset) {
+    pub fn read_at(&self, buffer: &mut Vec<u8>, offset: AbsoluteOffset) {
         use std::os::unix::prelude::FileExt;
 
-        self.file.read_at(buffer, offset.0).unwrap();
+        self.file.read_at(buffer, offset.as_u64()).unwrap();
     }
 
-    pub fn read_exact_at(&self, buffer: &mut [u8], offset: FileOffset) {
+    pub fn read_exact_at(&self, buffer: &mut [u8], offset: AbsoluteOffset) {
         use std::os::unix::prelude::FileExt;
 
         // println!("{:?} READING {:?} AT OFFSET {:?} FILE_OFFSET={:?}", self.file_type, buffer.len(), offset, self.offset());
 
-        self.file.read_exact_at(buffer, offset.0).unwrap();
+        self.file.read_exact_at(buffer, offset.as_u64()).unwrap();
 
         // println!("{:?} READING {:?} AT OFFSET {:?} FILE_OFFSET={:?} ID={:?}", self.file_type, buffer.len(), offset, self.offset(), buffer.get(0));
     }

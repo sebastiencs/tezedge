@@ -24,6 +24,7 @@ use crate::{
     hash::ObjectHash,
     persistent::{DBError, Flushable, KeyValueStoreBackend, Persistable},
     working_tree::{
+        serializer::AbsoluteOffset,
         shape::{DirectoryShapeId, DirectoryShapes, ShapeStrings},
         storage::{DirEntryId, Storage},
         string_interner::{StringId, StringInterner},
@@ -255,7 +256,7 @@ impl KeyValueStoreBackend for InMemory {
         self.string_interner.get(string_id)
     }
 
-    fn get_current_offset(&self) -> Result<Option<u64>, DBError> {
+    fn get_current_offset(&self) -> Result<Option<AbsoluteOffset>, DBError> {
         unimplemented!()
     }
 

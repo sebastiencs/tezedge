@@ -13,6 +13,7 @@ use tezos_timing::RepositoryMemoryUsage;
 use thiserror::Error;
 
 use crate::persistent::{DBError, File, FileType, Flushable, Persistable};
+use crate::working_tree::serializer::AbsoluteOffset;
 use crate::working_tree::shape::{DirectoryShapeId, ShapeStrings};
 use crate::working_tree::storage::{DirEntryId, Storage};
 use crate::working_tree::string_interner::{StringId, StringInterner};
@@ -142,7 +143,7 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
         // Readonly protocol runner doesn't update strings.
     }
 
-    fn get_current_offset(&self) -> Result<Option<u64>, DBError> {
+    fn get_current_offset(&self) -> Result<Option<AbsoluteOffset>, DBError> {
         Ok(None)
     }
 

@@ -18,7 +18,7 @@ use crate::{
         KeyValueStoreBackend, Persistable,
     },
     working_tree::{
-        serializer::{read_object_length, ObjectHeader, ObjectLength},
+        serializer::{read_object_length, AbsoluteOffset, ObjectHeader, ObjectLength},
         shape::{DirectoryShapeId, DirectoryShapes, ShapeStrings},
         storage::{DirEntryId, Storage},
         string_interner::{StringId, StringInterner},
@@ -111,7 +111,7 @@ impl Hashes {
             let mut hash: ObjectHash = Default::default();
 
             self.hashes_file
-                .read_exact_at(&mut hash, FileOffset(offset as u64));
+                .read_exact_at(&mut hash, (offset as u64).into());
 
             Ok(Some(Cow::Owned(hash)))
         } else {
@@ -206,9 +206,10 @@ impl Persistent {
     }
 }
 
-fn serialize_context_hash(hash_id: HashId, offset: u64, hash: &[u8]) -> Vec<u8> {
+fn serialize_context_hash(hash_id: HashId, offset: AbsoluteOffset, hash: &[u8]) -> Vec<u8> {
     let mut output = Vec::<u8>::with_capacity(100);
 
+    let offset: u64 = offset.as_u64();
     let hash_id: u32 = hash_id.as_u32();
 
     output.write_all(&hash_id.to_ne_bytes()).unwrap();
@@ -313,7 +314,7 @@ impl KeyValueStoreBackend for Persistent {
         string_interner.extend_from(&self.string_interner);
     }
 
-    fn get_current_offset(&self) -> Result<Option<u64>, DBError> {
+    fn get_current_offset(&self) -> Result<Option<AbsoluteOffset>, DBError> {
         Ok(Some(self.data_file.offset()))
     }
 
@@ -364,7 +365,7 @@ pub(super) fn get_value_from_offset(
     let offset = object_ref.offset();
 
     let mut header: [u8; 5] = Default::default();
-    data_file.read_exact_at(&mut header[..1], FileOffset(offset));
+    data_file.read_exact_at(&mut header[..1], offset);
 
     let object_header: ObjectHeader = ObjectHeader::from_bytes([header[0]]);
 
@@ -374,7 +375,7 @@ pub(super) fn get_value_from_offset(
         ObjectLength::FourBytes => &mut header[..5],
     };
 
-    data_file.read_exact_at(header, FileOffset(offset));
+    data_file.read_exact_at(header, offset);
     let (_, length) = read_object_length(header, &object_header);
 
     // println!("LENGTH={:?}", length);
@@ -387,7 +388,7 @@ pub(super) fn get_value_from_offset(
     // self.data.clear();
     // self.data.reserve(total_length);
 
-    data_file.read_exact_at(buffer, FileOffset(offset));
+    data_file.read_exact_at(buffer, offset);
 
     Ok(())
 }
