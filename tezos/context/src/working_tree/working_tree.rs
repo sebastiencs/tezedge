@@ -751,7 +751,7 @@ impl WorkingTree {
         let root = self.get_root_directory();
 
         let new_commit = Commit {
-            parent_commit_hash: parent_commit_ref.map(|r| r.hash_id()), // TODO: Clean this
+            parent_commit_ref: parent_commit_ref.clone(), // TODO: Clean this
             root_hash_ref: ObjectReference::new(Some(root_hash), 0),    // offset is modified later
             // parent_commit_hash,
             // root_hash,

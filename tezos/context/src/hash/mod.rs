@@ -348,9 +348,11 @@ pub(crate) fn hash_commit(
         .ok_or(HashingError::ValueExpected("root_hash"))?;
     hasher.update(root_hash.as_ref());
 
-    if let Some(parent) = commit.parent_commit_hash {
+    if let Some(parent) = commit.parent_commit_ref {
+        let parent_hash_id = parent.hash_id();
+
         let parent_commit_hash = store
-            .get_hash(parent)?
+            .get_hash(parent_hash_id)?
             .ok_or(HashingError::ValueExpected("parent_commit_hash"))?;
         hasher.update(&(1_u64).to_be_bytes()); // # of parents; we support only 1
         hasher.update(&(parent_commit_hash.len() as u64).to_be_bytes());
@@ -432,7 +434,7 @@ mod tests {
         );
 
         let dummy_commit = Commit {
-            parent_commit_hash: None,
+            parent_commit_ref: None,
             root_hash_ref: ObjectReference::new(Some(hash_id), 0),
             // root_hash: hash_id,
             // root_hash_offset: 0,

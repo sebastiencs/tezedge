@@ -490,7 +490,7 @@ pub fn serialize_object(
             // // Replaced by the length
             // output.write_all(&[0, 0, 0, 0])?;
 
-            let parent_hash_id = commit.parent_commit_hash.map(|h| h.as_u32()).unwrap_or(0);
+            let parent_hash_id = commit.parent_commit_ref.map(|h| h.hash_id().as_u32()).unwrap_or(0);
             serialize_hash_id(parent_hash_id, output)?;
 
             let root_hash_id = commit.root_hash_ref.hash_id().as_u32();
@@ -1236,7 +1236,7 @@ pub fn deserialize_object(
             let message = message.to_vec();
 
             Ok(Object::Commit(Box::new(Commit {
-                parent_commit_hash,
+                parent_commit_ref: parent_commit_hash.map(|h| ObjectReference::new(Some(h), 0)), // TODO: offset
                 root_hash_ref: ObjectReference::new(
                     Some(root_hash.ok_or(MissingRootHash)?),
                     root_hash_offset,
@@ -1834,7 +1834,7 @@ mod tests {
         let mut data = Vec::with_capacity(1024);
 
         let commit = Commit {
-            parent_commit_hash: HashId::new(9876),
+            parent_commit_ref: Some(ObjectReference::new(HashId::new(9876), 0)),
             root_hash_ref: ObjectReference::new(HashId::new(12345), 0),
             // root_hash: HashId::new(12345).unwrap(),
             // root_hash_offset: 0,
