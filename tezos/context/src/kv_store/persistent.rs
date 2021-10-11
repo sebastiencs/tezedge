@@ -205,40 +205,6 @@ impl Persistent {
         let vacant = self.get_vacant_object_hash().unwrap();
         vacant.write_with(|entry| *entry = entry_hash)
     }
-
-    fn get_object_bytes<'a>(
-        &self,
-        object_ref: ObjectReference,
-        buffer: &'a mut Vec<u8>,
-    ) -> Result<&'a [u8], DBError> {
-        let offset = object_ref.offset();
-
-        if buffer.len() < 5 {
-            buffer.resize(5, 0);
-        }
-
-        // Read one byte to get the `ObjectHeader`
-        self.data_file.read_exact_at(&mut buffer[..1], offset);
-        let object_header: ObjectHeader = ObjectHeader::from_bytes([buffer[0]]);
-
-        let header = match object_header.get_length() {
-            ObjectLength::OneByte => &mut buffer[..2],
-            ObjectLength::TwoBytes => &mut buffer[..3],
-            ObjectLength::FourBytes => &mut buffer[..5],
-        };
-
-        // Read (1 + (1, 2 or 4)) bytes to get the object length.
-        self.data_file.read_exact_at(header, offset);
-        let (_, length) = read_object_length(header, &object_header);
-
-        if length > buffer.len() {
-            buffer.resize(length, 0);
-        }
-
-        self.data_file.read_exact_at(&mut buffer[..length], offset);
-
-        Ok(&buffer[..length])
-    }
 }
 
 fn serialize_context_hash(hash_id: HashId, offset: AbsoluteOffset, hash: &[u8]) -> Vec<u8> {
@@ -397,7 +363,8 @@ impl KeyValueStoreBackend for Persistent {
         object_ref: ObjectReference,
         buffer: &'a mut Vec<u8>,
     ) -> Result<&'a [u8], DBError> {
-        self.get_object_bytes(object_ref, buffer)
+        self.data_file
+            .get_object_bytes(object_ref, buffer)
             .map_err(Into::into)
     }
 }

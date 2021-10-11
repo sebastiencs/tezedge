@@ -5,6 +5,7 @@
 //! It is used by read-only protocol runners to be able to access the in-memory context
 //! owned by the writable protocol runner.
 
+use std::convert::TryInto;
 use std::{borrow::Cow, path::Path, sync::Arc};
 
 use crypto::hash::ContextHash;
@@ -12,8 +13,10 @@ use slog::{error, info};
 use tezos_timing::RepositoryMemoryUsage;
 use thiserror::Error;
 
-use crate::persistent::{DBError, File, FileType, Flushable, Persistable};
-use crate::working_tree::serializer::AbsoluteOffset;
+use crate::persistent::{
+    get_persistent_base_path, DBError, File, FileType, Flushable, Persistable,
+};
+use crate::working_tree::serializer::{deserialize_object, AbsoluteOffset};
 use crate::working_tree::shape::{DirectoryShapeId, ShapeStrings};
 use crate::working_tree::storage::{DirEntryId, Storage};
 use crate::working_tree::string_interner::{StringId, StringInterner};
@@ -82,6 +85,19 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
         if let Some(hash_id) = hash_id.get_readonly_id()? {
             Ok(self.hashes.get_hash(hash_id)?.map(Cow::Borrowed))
         } else {
+            // let hash_id_index: usize = hash_id.try_into().unwrap();
+
+            // let offset = hash_id_index * std::mem::size_of::<ObjectHash>();
+
+            // let mut hash: ObjectHash = Default::default();
+
+            // let base_path = get_persistent_base_path();
+            // let hashes_file = File::new(&base_path, FileType::Hashes);
+
+            // hashes_file.read_exact_at(&mut hash, (offset as u64).into());
+
+            // Ok(Some(Cow::Owned(hash)))
+
             self.client
                 .get_hash(hash_id)
                 .map_err(|reason| DBError::IpcAccessError { reason })
@@ -173,7 +189,8 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
         object_ref: ObjectReference,
         storage: &mut Storage,
     ) -> Result<Object, DBError> {
-        todo!()
+        self.get_object_bytes(object_ref, &mut storage.data)?;
+        deserialize_object(object_ref.offset(), storage, self).map_err(Into::into)
     }
 
     fn get_object_bytes<'a>(
@@ -181,7 +198,24 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
         object_ref: ObjectReference,
         buffer: &'a mut Vec<u8>,
     ) -> Result<&'a [u8], DBError> {
-        todo!()
+        if let Some(hash_id) = object_ref
+            .hash_id_opt()
+            .map(|h| h.get_readonly_id())
+            .transpose()?
+            .flatten()
+        {
+            let bytes = self.hashes.get_value(hash_id)?.unwrap();
+            buffer.clear();
+            buffer.extend_from_slice(bytes);
+            return Ok(&buffer[..]);
+        };
+
+        let base_path = get_persistent_base_path();
+        let data_file = File::new(&base_path, FileType::Data);
+
+        data_file
+            .get_object_bytes(object_ref, buffer)
+            .map_err(Into::into)
     }
 }
 

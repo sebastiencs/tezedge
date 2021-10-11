@@ -17,7 +17,9 @@ use tezos_timing::RepositoryMemoryUsage;
 use crate::{
     kv_store::{readonly_ipc::ContextServiceError, HashId, HashIdError, VacantObjectHash},
     working_tree::{
-        serializer::{AbsoluteOffset, DeserializationError},
+        serializer::{
+            read_object_length, AbsoluteOffset, DeserializationError, ObjectHeader, ObjectLength,
+        },
         shape::{DirectoryShapeError, DirectoryShapeId, ShapeStrings},
         storage::{DirEntryId, Storage},
         string_interner::{StringId, StringInterner},
@@ -301,6 +303,40 @@ impl File {
         self.file.read_exact_at(buffer, offset.as_u64()).unwrap();
 
         // println!("{:?} READING {:?} AT OFFSET {:?} FILE_OFFSET={:?} ID={:?}", self.file_type, buffer.len(), offset, self.offset(), buffer.get(0));
+    }
+
+    pub fn get_object_bytes<'a>(
+        &self,
+        object_ref: ObjectReference,
+        buffer: &'a mut Vec<u8>,
+    ) -> Result<&'a [u8], DBError> {
+        let offset = object_ref.offset();
+
+        if buffer.len() < 5 {
+            buffer.resize(5, 0);
+        }
+
+        // Read one byte to get the `ObjectHeader`
+        self.read_exact_at(&mut buffer[..1], offset);
+        let object_header: ObjectHeader = ObjectHeader::from_bytes([buffer[0]]);
+
+        let header = match object_header.get_length() {
+            ObjectLength::OneByte => &mut buffer[..2],
+            ObjectLength::TwoBytes => &mut buffer[..3],
+            ObjectLength::FourBytes => &mut buffer[..5],
+        };
+
+        // Read (1 + (1, 2 or 4)) bytes to get the object length.
+        self.read_exact_at(header, offset);
+        let (_, length) = read_object_length(header, &object_header);
+
+        if length > buffer.len() {
+            buffer.resize(length, 0);
+        }
+
+        self.read_exact_at(&mut buffer[..length], offset);
+
+        Ok(&buffer[..length])
     }
 }
 

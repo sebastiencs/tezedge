@@ -117,6 +117,10 @@ impl ObjectReference {
     pub fn hash_id(&self) -> HashId {
         self.hash_id.unwrap()
     }
+
+    pub fn hash_id_opt(&self) -> Option<HashId> {
+        self.hash_id
+    }
 }
 
 impl DirEntry {
