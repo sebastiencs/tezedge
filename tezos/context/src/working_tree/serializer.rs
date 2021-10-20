@@ -1295,11 +1295,15 @@ pub fn deserialize_object(
             deserialize_shaped_directory(bytes, object_offset, storage, repository)
                 .map(Object::Directory)
         }
-        ObjectTag::Blob => {
-            storage
-                .add_blob_by_ref(bytes)
-                .map(Object::Blob)
-                .map_err(Into::into)
+        ObjectTag::Blob => storage
+            .add_blob_by_ref(bytes)
+            .map(Object::Blob)
+            .map_err(Into::into),
+        ObjectTag::InodePointers => {
+            let inode = deserialize_inode_pointers(bytes, object_offset, storage, repository)?;
+            let inode_id = storage.add_inode(inode)?;
+
+            Ok(Object::Directory(inode_id.into()))
         }
         ObjectTag::Commit => {
             let header = bytes.get(pos).ok_or(UnexpectedEOF)?;
@@ -1382,12 +1386,6 @@ pub fn deserialize_object(
                 message: String::from_utf8(message)?,
             })))
         }
-        ObjectTag::InodePointers => {
-            let inode = deserialize_inode_pointers(bytes, object_offset, storage, repository)?;
-            let inode_id = storage.add_inode(inode)?;
-
-            Ok(Object::Directory(inode_id.into()))
-        } // _ => Err(UnknownID),
     }
 }
 
