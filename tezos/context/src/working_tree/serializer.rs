@@ -1266,67 +1266,56 @@ pub fn read_object_length(data: &[u8], header: &ObjectHeader) -> (usize, usize) 
     }
 }
 
-pub fn deserialize_object(
-    object_offset: AbsoluteOffset,
-    storage: &mut Storage,
-    repository: &ContextKeyValueStore,
-) -> Result<Object, DeserializationError> {
-    let data = std::mem::take(&mut storage.data);
-
-    let result = deserialize_object_impl(&data, object_offset, storage, repository);
-    storage.data = data;
-
-    result
-}
-
 /// Extract values from `data` to store them in `storage`.
 /// Return an `Object`, which can be ids (refering to data inside `storage`) or a `Commit`
-pub fn deserialize_object_impl(
-    data: &[u8],
+pub fn deserialize_object(
+    bytes: &[u8],
     object_offset: AbsoluteOffset,
     storage: &mut Storage,
     repository: &ContextKeyValueStore,
 ) -> Result<Object, DeserializationError> {
     use DeserializationError::*;
 
-    let header = data.get(0).copied().ok_or(UnexpectedEOF)?;
+    let header = bytes.get(0).copied().ok_or(UnexpectedEOF)?;
     let header: ObjectHeader = ObjectHeader::from_bytes([header]);
 
-    let (header_nbytes, object_length) = read_object_length(data, &header);
+    let (header_nbytes, object_length) = read_object_length(bytes, &header);
 
-    let data = &data[..object_length];
-    let mut pos = header_nbytes;
+    let bytes = bytes
+        .get(header_nbytes..object_length)
+        .ok_or(UnexpectedEOF)?;
+
+    let mut pos = 0;
 
     match header.tag_or_err().map_err(|_| UnknownID)? {
         ObjectTag::Directory => {
-            let dir_id = deserialize_directory(&data[pos..], object_offset, storage)?;
-            Ok(Object::Directory(dir_id))
+            deserialize_directory(bytes, object_offset, storage).map(Object::Directory)
         }
         ObjectTag::ShapedDirectory => {
-            let dir_id =
-                deserialize_shaped_directory(&data[pos..], object_offset, storage, repository)?;
-            Ok(Object::Directory(dir_id))
+            deserialize_shaped_directory(bytes, object_offset, storage, repository)
+                .map(Object::Directory)
         }
         ObjectTag::Blob => {
-            let blob = data.get(pos..).ok_or(UnexpectedEOF)?;
-            let blob_id = storage.add_blob_by_ref(blob)?;
-            Ok(Object::Blob(blob_id))
+            storage
+                .add_blob_by_ref(bytes)
+                .map(Object::Blob)
+                .map_err(Into::into)
         }
         ObjectTag::Commit => {
-            let header = data.get(pos).ok_or(UnexpectedEOF)?;
+            let header = bytes.get(pos).ok_or(UnexpectedEOF)?;
             let header = CommitHeader::from_bytes([*header; 1]);
 
             pos += 1;
 
             let parent_commit_ref = if header.is_parent_exist() {
-                let bytes = data.get(pos..).ok_or(UnexpectedEOF)?;
-                let (parent_commit_hash, nbytes) = deserialize_hash_id(bytes)?;
+                let data = bytes.get(pos..).ok_or(UnexpectedEOF)?;
+                let (parent_commit_hash, nbytes) = deserialize_hash_id(data)?;
 
                 pos += nbytes;
 
-                let bytes = data.get(pos..).ok_or(UnexpectedEOF)?;
+                let data = bytes.get(pos..).ok_or(UnexpectedEOF)?;
                 let (parent_absolute_offset, nbytes) =
-                    deserialize_offset(bytes, header.parent_offset_length(), object_offset);
+                    deserialize_offset(data, header.parent_offset_length(), object_offset);
 
                 pos += nbytes;
 
@@ -1338,14 +1327,14 @@ pub fn deserialize_object_impl(
                 None
             };
 
-            let bytes = data.get(pos..).ok_or(UnexpectedEOF)?;
-            let (root_hash, nbytes) = deserialize_hash_id(bytes)?;
+            let data = bytes.get(pos..).ok_or(UnexpectedEOF)?;
+            let (root_hash, nbytes) = deserialize_hash_id(data)?;
 
             pos += nbytes;
 
-            let bytes = data.get(pos..).ok_or(UnexpectedEOF)?;
+            let data = bytes.get(pos..).ok_or(UnexpectedEOF)?;
             let (root_absolute_offset, nbytes) =
-                deserialize_offset(bytes, header.root_offset_length(), object_offset);
+                deserialize_offset(data, header.root_offset_length(), object_offset);
 
             let root_ref = ObjectReference::new(
                 Some(root_hash.ok_or(MissingRootHash)?),
@@ -1354,35 +1343,35 @@ pub fn deserialize_object_impl(
 
             pos += nbytes;
 
-            let time = data.get(pos..pos + 8).ok_or(UnexpectedEOF)?;
+            let time = bytes.get(pos..pos + 8).ok_or(UnexpectedEOF)?;
             let time = u64::from_le_bytes(time.try_into()?);
 
             pos += 8;
 
             let author_length: usize = match header.author_length() {
                 ObjectLength::OneByte => {
-                    let author_length: u8 = *data.get(pos).ok_or(UnexpectedEOF)?;
+                    let author_length: u8 = *bytes.get(pos).ok_or(UnexpectedEOF)?;
                     pos += 1;
                     author_length as usize
                 }
                 ObjectLength::TwoBytes => {
-                    let author_length = data.get(pos..pos + 2).ok_or(UnexpectedEOF)?;
+                    let author_length = bytes.get(pos..pos + 2).ok_or(UnexpectedEOF)?;
                     pos += 2;
                     u16::from_le_bytes(author_length.try_into()?) as usize
                 }
                 ObjectLength::FourBytes => {
-                    let author_length = data.get(pos..pos + 4).ok_or(UnexpectedEOF)?;
+                    let author_length = bytes.get(pos..pos + 4).ok_or(UnexpectedEOF)?;
                     pos += 4;
                     u32::from_le_bytes(author_length.try_into()?) as usize
                 }
             };
 
-            let author = data.get(pos..pos + author_length).ok_or(UnexpectedEOF)?;
+            let author = bytes.get(pos..pos + author_length).ok_or(UnexpectedEOF)?;
             let author = author.to_vec();
 
             pos = pos + author_length;
 
-            let message = data.get(pos..).ok_or(UnexpectedEOF)?;
+            let message = bytes.get(pos..).ok_or(UnexpectedEOF)?;
             let message = message.to_vec();
 
             Ok(Object::Commit(Box::new(Commit {
@@ -1394,8 +1383,7 @@ pub fn deserialize_object_impl(
             })))
         }
         ObjectTag::InodePointers => {
-            let inode =
-                deserialize_inode_pointers(&data[pos..], object_offset, storage, repository)?;
+            let inode = deserialize_inode_pointers(bytes, object_offset, storage, repository)?;
             let inode_id = storage.add_inode(inode)?;
 
             Ok(Object::Directory(inode_id.into()))
@@ -1805,11 +1793,11 @@ mod tests {
             )
             .unwrap();
 
-        let mut data = Vec::with_capacity(1024);
+        let mut bytes = Vec::with_capacity(1024);
         let offset = serialize_object(
             &Object::Directory(dir_id),
             fake_hash_id,
-            &mut data,
+            &mut bytes,
             &storage,
             &mut stats,
             &mut batch,
@@ -1819,8 +1807,7 @@ mod tests {
         )
         .unwrap();
 
-        storage.data = data.clone(); // TODO: Do not do this
-        let object = deserialize_object(offset, &mut storage, &repo).unwrap();
+        let object = deserialize_object(&bytes, offset, &mut storage, &repo).unwrap();
 
         if let Object::Directory(object) = object {
             assert_eq!(
@@ -1859,11 +1846,11 @@ mod tests {
             )
             .unwrap();
 
-        let mut data = Vec::with_capacity(1024);
+        let mut bytes = Vec::with_capacity(1024);
         serialize_object(
             &Object::Directory(dir_id),
             fake_hash_id,
-            &mut data,
+            &mut bytes,
             &storage,
             &mut stats,
             &mut batch,
@@ -1873,10 +1860,8 @@ mod tests {
         )
         .unwrap();
 
-        let offset = data.len();
-
-        storage.data = data.clone(); // TODO: Do not do this
-        let object = deserialize_object(0.into(), &mut storage, &repo).unwrap();
+        let offset = bytes.len();
+        let object = deserialize_object(&bytes, 0.into(), &mut storage, &repo).unwrap();
 
         if let Object::Directory(object) = object {
             assert_eq!(
@@ -1917,11 +1902,11 @@ mod tests {
 
         println!("LAAAAA={:?}", storage.get_owned_dir(dir_id).unwrap(),);
 
-        let mut data = Vec::with_capacity(1024);
+        let mut bytes = Vec::with_capacity(1024);
         let offset = serialize_object(
             &Object::Directory(dir_id),
             fake_hash_id,
-            &mut data,
+            &mut bytes,
             &storage,
             &mut stats,
             &mut batch,
@@ -1933,8 +1918,7 @@ mod tests {
 
         println!("OFFSET={:?}", offset);
 
-        storage.data = data.clone(); // TODO: Do not do this
-        let object = deserialize_object(offset, &mut storage, &repo).unwrap();
+        let object = deserialize_object(&bytes, offset, &mut storage, &repo).unwrap();
 
         if let Object::Directory(object) = object {
             println!("RESULT={:?}", storage.get_owned_dir(object).unwrap());
@@ -1955,11 +1939,11 @@ mod tests {
         // Not inlined value
         let blob_id = storage.add_blob_by_ref(&[1, 2, 3, 4, 5, 6, 7, 8]).unwrap();
 
-        let mut data = Vec::with_capacity(1024);
+        let mut bytes = Vec::with_capacity(1024);
         let offset = serialize_object(
             &Object::Blob(blob_id),
             fake_hash_id,
-            &mut data,
+            &mut bytes,
             &storage,
             &mut stats,
             &mut batch,
@@ -1971,8 +1955,7 @@ mod tests {
 
         // let offset = data.len();
 
-        storage.data = data.clone(); // TODO: Do not do this
-        let object = deserialize_object(offset, &mut storage, &repo).unwrap();
+        let object = deserialize_object(&bytes, offset, &mut storage, &repo).unwrap();
         if let Object::Blob(object) = object {
             let blob = storage.get_blob(object).unwrap();
             assert_eq!(blob.as_ref(), &[1, 2, 3, 4, 5, 6, 7, 8]);
@@ -1984,9 +1967,9 @@ mod tests {
 
         // Test Object::Commit
 
-        repo.append_serialized_data(&data).unwrap();
+        repo.append_serialized_data(&bytes).unwrap();
         let offset = repo.get_current_offset().unwrap().unwrap();
-        data.clear();
+        bytes.clear();
 
         let commit = Commit {
             parent_commit_ref: Some(ObjectReference::new(HashId::new(9876), 1.into())),
@@ -1999,7 +1982,7 @@ mod tests {
         let offset = serialize_object(
             &Object::Commit(Box::new(commit.clone())),
             fake_hash_id,
-            &mut data,
+            &mut bytes,
             &storage,
             &mut stats,
             &mut batch,
@@ -2009,8 +1992,7 @@ mod tests {
         )
         .unwrap();
 
-        storage.data = data.clone(); // TODO: Do not do this
-        let object = deserialize_object(offset, &mut storage, &repo).unwrap();
+        let object = deserialize_object(&bytes, offset, &mut storage, &repo).unwrap();
         if let Object::Commit(object) = object {
             assert_eq!(*object, commit);
         } else {
@@ -2019,9 +2001,9 @@ mod tests {
 
         // Test Object::Commit with no parent
 
-        repo.append_serialized_data(&data).unwrap();
+        repo.append_serialized_data(&bytes).unwrap();
         let offset = repo.get_current_offset().unwrap().unwrap();
-        data.clear();
+        bytes.clear();
 
         let commit = Commit {
             parent_commit_ref: None,
@@ -2034,7 +2016,7 @@ mod tests {
         let offset = serialize_object(
             &Object::Commit(Box::new(commit.clone())),
             fake_hash_id,
-            &mut data,
+            &mut bytes,
             &storage,
             &mut stats,
             &mut batch,
@@ -2044,8 +2026,7 @@ mod tests {
         )
         .unwrap();
 
-        storage.data = data.clone(); // TODO: Do not do this
-        let object = deserialize_object(offset, &mut storage, &repo).unwrap();
+        let object = deserialize_object(&bytes, offset, &mut storage, &repo).unwrap();
         if let Object::Commit(object) = object {
             assert_eq!(*object, commit);
         } else {
@@ -2062,10 +2043,10 @@ mod tests {
 
         // data.extend_from_slice(&[1,2,3,4,5]);
 
-        repo.append_serialized_data(&data).unwrap();
+        repo.append_serialized_data(&bytes).unwrap();
         let offset = repo.get_current_offset().unwrap().unwrap();
 
-        data.clear();
+        bytes.clear();
 
         let mut offsets = Vec::with_capacity(32);
 
@@ -2081,10 +2062,10 @@ mod tests {
 
             let hash_id = HashId::new((index + 1) as u32).unwrap();
 
-            let off = data.len();
+            let off = bytes.len();
             let offset = serialize_inode(
                 inode_value_id,
-                &mut data,
+                &mut bytes,
                 hash_id,
                 &storage,
                 &mut stats,
@@ -2103,7 +2084,7 @@ mod tests {
             println!(
                 "OFFSET={:?} DATA_LEN={:?} OFF={:?}",
                 offset,
-                data.len(),
+                bytes.len(),
                 off
             );
 
@@ -2133,7 +2114,7 @@ mod tests {
         batch.clear();
         let offset = serialize_inode(
             inode_id,
-            &mut data,
+            &mut bytes,
             hash_id,
             &storage,
             &mut stats,
@@ -2147,8 +2128,8 @@ mod tests {
 
         // let offset = data.len();
 
-        println!("DATA LENGTH={:?}", data.len());
-        repo.append_serialized_data(&data).unwrap();
+        println!("DATA LENGTH={:?}", bytes.len());
+        repo.append_serialized_data(&bytes).unwrap();
 
         println!("ID={:?}", batch.last().unwrap().1[0]);
         let new_inode_id =
@@ -2227,7 +2208,7 @@ mod tests {
         batch.clear();
         let offset = serialize_inode(
             inode_id,
-            &mut data,
+            &mut bytes,
             hash_id,
             &storage,
             &mut stats,
@@ -2239,7 +2220,7 @@ mod tests {
         .unwrap();
 
         // let offset = data.len();
-        repo.append_serialized_data(&data).unwrap();
+        repo.append_serialized_data(&bytes).unwrap();
 
         assert_eq!(batch.len(), 1);
 
@@ -2284,12 +2265,12 @@ mod tests {
             )
             .unwrap();
 
-        let mut data = Vec::with_capacity(1024);
+        let mut bytes = Vec::with_capacity(1024);
 
         let offset = serialize_object(
             &Object::Directory(dir_id),
             fake_hash_id,
-            &mut data,
+            &mut bytes,
             &storage,
             &mut stats,
             &mut batch,
@@ -2299,8 +2280,7 @@ mod tests {
         )
         .unwrap();
 
-        storage.data = data.clone(); // TODO: Do not do this
-        let object = deserialize_object(offset, &mut storage, &repo).unwrap();
+        let object = deserialize_object(&bytes, offset, &mut storage, &repo).unwrap();
 
         if let Object::Directory(object) = object {
             assert_eq!(

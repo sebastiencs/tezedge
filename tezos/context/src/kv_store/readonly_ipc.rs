@@ -190,7 +190,16 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
         storage: &mut Storage,
     ) -> Result<Object, DBError> {
         self.get_object_bytes(object_ref, &mut storage.data)?;
-        deserialize_object(object_ref.offset(), storage, self).map_err(Into::into)
+
+        let bytes = std::mem::take(&mut storage.data);
+        let result =
+            deserialize_object(&bytes, object_ref.offset(), storage, self).map_err(Into::into);
+        storage.data = bytes;
+
+        result
+
+        // self.get_object_bytes(object_ref, &mut storage.data)?;
+        // deserialize_object(object_ref.offset(), storage, self).map_err(Into::into)
     }
 
     fn get_object_bytes<'a>(
@@ -210,12 +219,18 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
             return Ok(&buffer[..]);
         };
 
-        let base_path = get_persistent_base_path();
-        let data_file = File::new(&base_path, FileType::Data);
+        todo!()
 
-        data_file
-            .get_object_bytes(object_ref, buffer)
-            .map_err(Into::into)
+        // self.client
+        //     .get_object_bytes(object_ref, buffer)
+        //     .map_err(|reason| DBError::IpcAccessError { reason })
+
+        // let base_path = get_persistent_base_path();
+        // let data_file = File::new(&base_path, FileType::Data);
+
+        // data_file
+        //     .get_object_bytes(object_ref, buffer)
+        //     .map_err(Into::into)
     }
 }
 

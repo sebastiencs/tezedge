@@ -355,7 +355,12 @@ impl KeyValueStoreBackend for Persistent {
         storage: &mut Storage,
     ) -> Result<Object, DBError> {
         self.get_object_bytes(object_ref, &mut storage.data)?;
-        deserialize_object(object_ref.offset(), storage, self).map_err(Into::into)
+
+        let bytes = std::mem::take(&mut storage.data);
+        let result = deserialize_object(&bytes, object_ref.offset(), storage, self);
+        storage.data = bytes;
+
+        result.map_err(Into::into)
     }
 
     fn get_object_bytes<'a>(
