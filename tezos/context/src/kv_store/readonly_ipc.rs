@@ -219,11 +219,9 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
             return Ok(&buffer[..]);
         };
 
-        todo!()
-
-        // self.client
-        //     .get_object_bytes(object_ref, buffer)
-        //     .map_err(|reason| DBError::IpcAccessError { reason })
+        self.client
+            .get_object_bytes(object_ref, buffer)
+            .map_err(|reason| DBError::IpcAccessError { reason })
 
         // let base_path = get_persistent_base_path();
         // let data_file = File::new(&base_path, FileType::Data);
@@ -264,6 +262,7 @@ enum ContextRequest {
     GetHash(HashId),
     // GetValue(HashId),
     GetValueFromOffset(ObjectReference),
+    GetObjectBytes(ObjectReference),
     GetShape(DirectoryShapeId),
     ContainsObject(HashId),
     ShutdownCall, // TODO: is this required?
@@ -276,6 +275,7 @@ enum ContextResponse {
     GetContextHashIdResponse(Result<Option<ObjectReference>, String>),
     // GetValueResponse(Result<Option<ContextValue>, String>),
     GetValueFromOffsetResponse(Result<ContextValue, String>),
+    GetObjectBytesResponse(Result<Vec<u8>, String>),
     GetShapeResponse(Result<Vec<String>, String>),
     ContainsObjectResponse(Result<bool, String>),
     ShutdownResult,
@@ -287,6 +287,8 @@ pub enum ContextError {
     GetValueError { reason: String },
     #[error("Context get object from offset error: {reason}")]
     GetValueFromOffsetError { reason: String },
+    #[error("Context get object bytes error: {reason}")]
+    GetObjectBytesError { reason: String },
     #[error("Context get shape error: {reason}")]
     GetShapeError { reason: String },
     #[error("Context contains object error: {reason}")]
@@ -546,6 +548,35 @@ impl IpcContextClient {
             }),
         }
     }
+
+    fn get_object_bytes<'a>(
+        &self,
+        object_ref: ObjectReference,
+        buffer: &'a mut Vec<u8>,
+    ) -> Result<&'a [u8], ContextServiceError> {
+        let mut io = self.io.borrow_mut();
+        io.tx.send(&ContextRequest::GetObjectBytes(object_ref))?;
+
+        match io
+            .rx
+            .try_receive(Some(Self::TIMEOUT), Some(IpcContextListener::IO_TIMEOUT))?
+        {
+            ContextResponse::GetObjectBytesResponse(result) => {
+                let mut result = match result {
+                    Ok(result) => result,
+                    Err(err) => {
+                        return Err(ContextError::GetObjectBytesError { reason: err }.into())
+                    }
+                };
+                buffer.clear();
+                buffer.append(&mut result);
+                Ok(buffer)
+            }
+            message => Err(ContextServiceError::UnexpectedMessage {
+                message: message.into(),
+            }),
+        }
+    }
 }
 
 impl<'a> Iterator for ContextIncoming<'a> {
@@ -749,6 +780,30 @@ impl IpcContextServer {
 
                             io.tx
                                 .send(&ContextResponse::GetValueFromOffsetResponse(Ok(buffer)))?;
+                        }
+                    }
+                },
+                ContextRequest::GetObjectBytes(object_ref) => {
+                    match crate::ffi::get_context_index()? {
+                        None => io
+                            .tx
+                            .send(&ContextResponse::GetObjectBytesResponse(Err(
+                                "Context index unavailable".to_owned(),
+                            )))?,
+                        Some(index) => {
+                            let repo = index.repository.read().unwrap();
+
+                            let mut buffer = Vec::with_capacity(1000);
+                            repo.get_object_bytes(object_ref, &mut buffer).unwrap();
+
+                            //repo.get_value_from_offset(&mut buffer, offset).unwrap();
+
+                            // let res = index
+                            //     .fetch_hash(hash_id)
+                            //     .map_err(|err| format!("Context error: {:?}", err));
+
+                            io.tx
+                                .send(&ContextResponse::GetObjectBytesResponse(Ok(buffer)))?;
                         }
                     }
                 }
