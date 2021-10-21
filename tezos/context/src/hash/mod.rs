@@ -435,7 +435,7 @@ mod tests {
 
         let dummy_commit = Commit {
             parent_commit_ref: None,
-            root_ref: ObjectReference::new(Some(hash_id), 0.into()),
+            root_ref: ObjectReference::new(Some(hash_id), Some(0.into())),
             // root_hash: hash_id,
             // root_hash_offset: 0,
             time: 0,
@@ -654,7 +654,8 @@ mod tests {
                 let hash_id =
                     repo.put_object_hash(object_hash.as_ref().as_slice().try_into().unwrap());
 
-                let dir_entry = DirEntry::new_commited(dir_entry_kind, Some(hash_id), None);
+                let dir_entry = DirEntry::new_commited(dir_entry_kind, Some(hash_id), None)
+                    .with_offset(0.into());
 
                 names.insert(binding.name.clone());
 
@@ -679,7 +680,8 @@ mod tests {
                         .dir_insert(
                             dir_id,
                             &key,
-                            DirEntry::new_commited(DirEntryKind::Blob, Some(hash_id), None),
+                            DirEntry::new_commited(DirEntryKind::Blob, Some(hash_id), None)
+                                .with_offset(0.into()),
                         )
                         .unwrap();
                     let a = dir_id;
@@ -690,7 +692,8 @@ mod tests {
                         .dir_insert(
                             dir_id,
                             &key,
-                            DirEntry::new_commited(DirEntryKind::Blob, Some(hash_id), None),
+                            DirEntry::new_commited(DirEntryKind::Blob, Some(hash_id), None)
+                                .with_offset(0.into()),
                         )
                         .unwrap();
                     let b = dir_id;

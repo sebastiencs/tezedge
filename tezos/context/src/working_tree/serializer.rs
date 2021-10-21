@@ -76,6 +76,8 @@ pub enum SerializationError {
         #[from]
         error: DBError,
     },
+    #[error("Missing Offset")]
+    MissingOffset,
 }
 
 fn get_inline_blob<'a>(storage: &'a Storage, dir_entry: &DirEntry) -> Option<Blob<'a>> {
@@ -274,6 +276,8 @@ fn serialize_shaped_directory(
     storage: &Storage,
     stats: &mut SerializeStats,
 ) -> Result<(), SerializationError> {
+    use SerializationError::*;
+
     let start = output.len();
 
     // Replaced by ObjectHeader
@@ -288,30 +292,33 @@ fn serialize_shaped_directory(
     for (_, dir_entry_id) in dir {
         let dir_entry = storage.get_dir_entry(*dir_entry_id)?;
 
-        let dir_entry_offset = dir_entry.get_offset();
-        let (relative_offset, offset_length) = get_relative_offset(offset, dir_entry_offset);
-
-        if dir_entry_offset.as_u64() != 0 {
-            // println!("OFFSET={:?}", dir_entry_offset);
-        }
-
-        let hash_id: u32 = dir_entry.hash_id().map(|h| h.as_u32()).unwrap_or(0);
         let kind = dir_entry.dir_entry_kind();
 
         let blob_inline = get_inline_blob(storage, &dir_entry);
         let blob_inline_length = blob_inline.as_ref().map(|b| b.len()).unwrap_or(0);
 
-        let byte: [u8; 1] = DirEntryShapeHeader::new()
-            .with_kind(kind)
-            .with_offset_length(offset_length)
-            // .with_key_inline_length(0)
-            .with_blob_inline_length(blob_inline_length as u8)
-            .into_bytes();
-        output.write_all(&byte[..])?;
-
         if let Some(blob_inline) = blob_inline {
+            let byte: [u8; 1] = DirEntryShapeHeader::new()
+                .with_kind(kind)
+                .with_offset_length(OffsetLength::RelativeOneByte) // Ignored on deserialization
+                .with_blob_inline_length(blob_inline_length as u8)
+                .into_bytes();
+
+            output.write_all(&byte[..])?;
             output.write_all(&blob_inline)?;
         } else {
+            let dir_entry_offset = dir_entry.get_offset().ok_or(MissingOffset)?;
+            let (relative_offset, offset_length) = get_relative_offset(offset, dir_entry_offset);
+
+            let byte: [u8; 1] = DirEntryShapeHeader::new()
+                .with_kind(kind)
+                .with_offset_length(offset_length)
+                .with_blob_inline_length(blob_inline_length as u8)
+                .into_bytes();
+
+            output.write_all(&byte[..])?;
+
+            let hash_id: u32 = dir_entry.hash_id().map(|h| h.as_u32()).unwrap_or(0);
             let _nbytes = serialize_hash_id(hash_id, output)?;
 
             serialize_offset(output, relative_offset, offset_length);
@@ -400,6 +407,8 @@ fn serialize_directory(
     repository: &mut ContextKeyValueStore,
     stats: &mut SerializeStats,
 ) -> Result<(), SerializationError> {
+    use SerializationError::*;
+
     let mut keys_length: usize = 0;
     let mut hash_ids_length: usize = 0;
     let mut highest_hash_id: u32 = 0;
@@ -426,8 +435,16 @@ fn serialize_directory(
         let blob_inline = get_inline_blob(storage, &dir_entry);
         let blob_inline_length = blob_inline.as_ref().map(|b| b.len()).unwrap_or(0);
 
-        let dir_entry_offset = dir_entry.get_offset();
-        let (relative_offset, offset_length) = get_relative_offset(offset, dir_entry_offset);
+        // let dir_entry_offset = dir_entry.get_offset().ok_or(MissingOffset)?;
+        // let (relative_offset, offset_length) = get_relative_offset(offset, dir_entry_offset);
+
+        let (relative_offset, offset_length) = match dir_entry
+            .get_offset()
+            .map(|dir_entry_offset| get_relative_offset(offset, dir_entry_offset))
+        {
+            Some((relative_offset, offset_length)) => (Some(relative_offset), Some(offset_length)),
+            None => (None, None),
+        };
 
         match key.len() {
             len if len != 0 && len < 4 => {
@@ -435,7 +452,7 @@ fn serialize_directory(
                     .with_kind(kind)
                     .with_key_inline_length(len as u8)
                     .with_blob_inline_length(blob_inline_length as u8)
-                    .with_offset_length(offset_length)
+                    .with_offset_length(offset_length.unwrap_or(OffsetLength::RelativeOneByte))
                     .into_bytes();
 
                 output.write_all(&byte[..])?;
@@ -447,7 +464,7 @@ fn serialize_directory(
                     .with_kind(kind)
                     .with_key_inline_length(0)
                     .with_blob_inline_length(blob_inline_length as u8)
-                    .with_offset_length(offset_length)
+                    .with_offset_length(offset_length.unwrap_or(OffsetLength::RelativeOneByte))
                     .into_bytes();
                 output.write_all(&byte[..])?;
 
@@ -465,6 +482,9 @@ fn serialize_directory(
             output.write_all(&blob_inline)?;
         } else {
             let nbytes = serialize_hash_id(hash_id, output)?;
+
+            let relative_offset = relative_offset.ok_or(MissingOffset)?;
+            let offset_length = offset_length.ok_or(MissingOffset)?;
 
             serialize_offset(output, relative_offset, offset_length);
 
@@ -489,6 +509,18 @@ fn serialize_directory(
     Ok(())
 }
 
+pub type SerializeObjectSignature = fn(
+    &Object,
+    HashId,
+    &mut Vec<u8>,
+    &Storage,
+    &mut SerializeStats,
+    &mut Vec<(HashId, Arc<[u8]>)>,
+    &mut Vec<HashId>,
+    &mut ContextKeyValueStore,
+    AbsoluteOffset,
+) -> Result<Option<AbsoluteOffset>, SerializationError>;
+
 pub fn serialize_object(
     object: &Object,
     object_hash_id: HashId,
@@ -499,7 +531,7 @@ pub fn serialize_object(
     referenced_older_objects: &mut Vec<HashId>,
     repository: &mut ContextKeyValueStore,
     offset: AbsoluteOffset,
-) -> Result<AbsoluteOffset, SerializationError> {
+) -> Result<Option<AbsoluteOffset>, SerializationError> {
     let start = output.len();
 
     let mut offset: AbsoluteOffset = offset.add(start as u64);
@@ -621,7 +653,7 @@ pub fn serialize_object(
 
     stats.total_bytes += output.len();
 
-    Ok(offset)
+    Ok(Some(offset))
 }
 
 fn serialize_hash_id(hash_id: u32, output: &mut Vec<u8>) -> Result<usize, SerializationError> {
@@ -1325,7 +1357,7 @@ pub fn deserialize_object(
 
                 Some(ObjectReference::new(
                     parent_commit_hash,
-                    parent_absolute_offset,
+                    Some(parent_absolute_offset),
                 ))
             } else {
                 None
@@ -1342,7 +1374,7 @@ pub fn deserialize_object(
 
             let root_ref = ObjectReference::new(
                 Some(root_hash.ok_or(MissingRootHash)?),
-                root_absolute_offset,
+                Some(root_absolute_offset),
             );
 
             pos += nbytes;
@@ -1454,7 +1486,7 @@ fn deserialize_inode_pointers(
         // TODO: Move this outside the loop
         let mut output = Vec::with_capacity(1000);
 
-        let object_ref = ObjectReference::new(None, absolute_offset);
+        let object_ref = ObjectReference::new(None, Some(absolute_offset));
         let data = repository
             .get_object_bytes(object_ref, &mut output)
             .unwrap();
@@ -1766,6 +1798,9 @@ mod tests {
         let mut older_objects = Vec::new();
         let fake_hash_id = HashId::try_from(1).unwrap();
 
+        repo.append_serialized_data(&[0, 0, 0, 0, 0, 0]).unwrap();
+        let offset = repo.get_current_offset().unwrap().unwrap();
+
         // Test Object::Directory
 
         let dir_id = DirectoryId::empty();
@@ -1773,21 +1808,24 @@ mod tests {
             .dir_insert(
                 dir_id,
                 "a",
-                DirEntry::new_commited(DirEntryKind::Blob, HashId::new(1), None),
+                DirEntry::new_commited(DirEntryKind::Blob, HashId::new(1), None)
+                    .with_offset(0.into()),
             )
             .unwrap();
         let dir_id = storage
             .dir_insert(
                 dir_id,
                 "bab",
-                DirEntry::new_commited(DirEntryKind::Blob, HashId::new(2), None),
+                DirEntry::new_commited(DirEntryKind::Blob, HashId::new(2), None)
+                    .with_offset(0.into()),
             )
             .unwrap();
         let dir_id = storage
             .dir_insert(
                 dir_id,
                 "0aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                DirEntry::new_commited(DirEntryKind::Blob, HashId::new(3), None),
+                DirEntry::new_commited(DirEntryKind::Blob, HashId::new(3), None)
+                    .with_offset(0.into()),
             )
             .unwrap();
 
@@ -1801,11 +1839,11 @@ mod tests {
             &mut batch,
             &mut older_objects,
             &mut repo,
-            0.into(),
+            offset,
         )
         .unwrap();
 
-        let object = deserialize_object(&bytes, offset, &mut storage, &repo).unwrap();
+        let object = deserialize_object(&bytes, offset.unwrap(), &mut storage, &repo).unwrap();
 
         if let Object::Directory(object) = object {
             assert_eq!(
@@ -1826,26 +1864,33 @@ mod tests {
             .dir_insert(
                 dir_id,
                 "a",
-                DirEntry::new_commited(DirEntryKind::Blob, HashId::new(1), None),
+                DirEntry::new_commited(DirEntryKind::Blob, HashId::new(1), None)
+                    .with_offset(1.into()),
             )
             .unwrap();
         let dir_id = storage
             .dir_insert(
                 dir_id,
                 "bab",
-                DirEntry::new_commited(DirEntryKind::Blob, HashId::new(2), None),
+                DirEntry::new_commited(DirEntryKind::Blob, HashId::new(2), None)
+                    .with_offset(2.into()),
             )
             .unwrap();
         let dir_id = storage
             .dir_insert(
                 dir_id,
                 "0aa",
-                DirEntry::new_commited(DirEntryKind::Blob, HashId::new(3), None),
+                DirEntry::new_commited(DirEntryKind::Blob, HashId::new(3), None)
+                    .with_offset(3.into()),
             )
             .unwrap();
 
+        repo.append_serialized_data(&bytes).unwrap();
+        let offset = repo.get_current_offset().unwrap().unwrap();
+        bytes.clear();
+
         let mut bytes = Vec::with_capacity(1024);
-        serialize_object(
+        let offset = serialize_object(
             &Object::Directory(dir_id),
             fake_hash_id,
             &mut bytes,
@@ -1854,12 +1899,12 @@ mod tests {
             &mut batch,
             &mut older_objects,
             &mut repo,
-            0.into(),
+            offset,
         )
         .unwrap();
 
-        let offset = bytes.len();
-        let object = deserialize_object(&bytes, 0.into(), &mut storage, &repo).unwrap();
+        // let offset = bytes.len();
+        let object = deserialize_object(&bytes, offset.unwrap(), &mut storage, &repo).unwrap();
 
         if let Object::Directory(object) = object {
             assert_eq!(
@@ -1898,7 +1943,11 @@ mod tests {
             )
             .unwrap();
 
-        println!("LAAAAA={:?}", storage.get_owned_dir(dir_id).unwrap(),);
+        // println!("LAAAAA={:?}", storage.get_owned_dir(dir_id).unwrap(),);
+
+        repo.append_serialized_data(&bytes).unwrap();
+        let offset = repo.get_current_offset().unwrap().unwrap();
+        bytes.clear();
 
         let mut bytes = Vec::with_capacity(1024);
         let offset = serialize_object(
@@ -1910,13 +1959,13 @@ mod tests {
             &mut batch,
             &mut older_objects,
             &mut repo,
-            (offset as u64).into(),
+            offset,
         )
         .unwrap();
 
         println!("OFFSET={:?}", offset);
 
-        let object = deserialize_object(&bytes, offset, &mut storage, &repo).unwrap();
+        let object = deserialize_object(&bytes, offset.unwrap(), &mut storage, &repo).unwrap();
 
         if let Object::Directory(object) = object {
             println!("RESULT={:?}", storage.get_owned_dir(object).unwrap());
@@ -1953,7 +2002,7 @@ mod tests {
 
         // let offset = data.len();
 
-        let object = deserialize_object(&bytes, offset, &mut storage, &repo).unwrap();
+        let object = deserialize_object(&bytes, offset.unwrap(), &mut storage, &repo).unwrap();
         if let Object::Blob(object) = object {
             let blob = storage.get_blob(object).unwrap();
             assert_eq!(blob.as_ref(), &[1, 2, 3, 4, 5, 6, 7, 8]);
@@ -1970,8 +2019,8 @@ mod tests {
         bytes.clear();
 
         let commit = Commit {
-            parent_commit_ref: Some(ObjectReference::new(HashId::new(9876), 1.into())),
-            root_ref: ObjectReference::new(HashId::new(12345), 2.into()),
+            parent_commit_ref: Some(ObjectReference::new(HashId::new(9876), Some(1.into()))),
+            root_ref: ObjectReference::new(HashId::new(12345), Some(2.into())),
             time: 123456,
             author: "123".to_string(),
             message: "abc".to_string(),
@@ -1990,7 +2039,7 @@ mod tests {
         )
         .unwrap();
 
-        let object = deserialize_object(&bytes, offset, &mut storage, &repo).unwrap();
+        let object = deserialize_object(&bytes, offset.unwrap(), &mut storage, &repo).unwrap();
         if let Object::Commit(object) = object {
             assert_eq!(*object, commit);
         } else {
@@ -2005,7 +2054,7 @@ mod tests {
 
         let commit = Commit {
             parent_commit_ref: None,
-            root_ref: ObjectReference::new(HashId::new(12), 3.into()),
+            root_ref: ObjectReference::new(HashId::new(12), Some(3.into())),
             time: 1234567,
             author: "123456".repeat(100),
             message: "abcd".repeat(100),
@@ -2024,7 +2073,7 @@ mod tests {
         )
         .unwrap();
 
-        let object = deserialize_object(&bytes, offset, &mut storage, &repo).unwrap();
+        let object = deserialize_object(&bytes, offset.unwrap(), &mut storage, &repo).unwrap();
         if let Object::Commit(object) = object {
             assert_eq!(*object, commit);
         } else {
@@ -2259,7 +2308,8 @@ mod tests {
             .dir_insert(
                 dir_id,
                 "a",
-                DirEntry::new_commited(DirEntryKind::Blob, blob_hash_id, None),
+                DirEntry::new_commited(DirEntryKind::Blob, blob_hash_id, None)
+                    .with_offset(0.into()),
             )
             .unwrap();
 
@@ -2278,7 +2328,7 @@ mod tests {
         )
         .unwrap();
 
-        let object = deserialize_object(&bytes, offset, &mut storage, &repo).unwrap();
+        let object = deserialize_object(&bytes, offset.unwrap(), &mut storage, &repo).unwrap();
 
         if let Object::Directory(object) = object {
             assert_eq!(

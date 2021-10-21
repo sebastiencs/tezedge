@@ -74,7 +74,7 @@ use crate::{ContextKey, ContextValue};
 use super::{
     serializer::{
         deserialize_object, serialize_object, AbsoluteOffset, DeserializationError,
-        SerializationError,
+        SerializationError, SerializeObjectSignature,
     },
     storage::{BlobId, DirEntryId, DirectoryId, Storage, StorageError},
     ObjectReference,
@@ -387,10 +387,15 @@ struct SerializingData<'a> {
     serialized: Vec<u8>,
     stats: Box<SerializeStats>,
     offset: AbsoluteOffset,
+    serialize_function: SerializeObjectSignature,
 }
 
 impl<'a> SerializingData<'a> {
-    fn new(repository: &'a mut ContextKeyValueStore, offset: AbsoluteOffset) -> Self {
+    fn new(
+        repository: &'a mut ContextKeyValueStore,
+        offset: AbsoluteOffset,
+        serialize_function: SerializeObjectSignature,
+    ) -> Self {
         Self {
             batch: Vec::with_capacity(2048),
             referenced_older_objects: Vec::with_capacity(2048),
@@ -398,6 +403,7 @@ impl<'a> SerializingData<'a> {
             serialized: Vec::with_capacity(2048),
             stats: Default::default(),
             offset,
+            serialize_function,
         }
     }
 
@@ -406,8 +412,8 @@ impl<'a> SerializingData<'a> {
         object_hash_id: HashId,
         object: &Object,
         storage: &Storage,
-    ) -> Result<AbsoluteOffset, MerkleError> {
-        serialize_object(
+    ) -> Result<Option<AbsoluteOffset>, MerkleError> {
+        (self.serialize_function)(
             object,
             object_hash_id,
             &mut self.serialized,
@@ -551,7 +557,7 @@ impl WorkingTree {
         match repo.get_hash(hash_id)? {
             Some(hash) => Ok(hash.into_owned()),
             None => Err(MerkleError::ObjectNotFound {
-                object_ref: ObjectReference::new(Some(hash_id), 0.into()),
+                object_ref: ObjectReference::new(Some(hash_id), None),
             }),
         }
     }
@@ -749,17 +755,14 @@ impl WorkingTree {
         message: String,
         parent_commit_ref: &Option<ObjectReference>,
         store: &mut ContextKeyValueStore,
-        commit_to_storage: bool,
+        serialize_function: Option<SerializeObjectSignature>,
     ) -> Result<PostCommitData, MerkleError> {
-        let root_hash = self.get_root_directory_hash(store)?;
+        let root_hash_id = self.get_root_directory_hash(store)?;
         let root = self.get_root_directory();
 
         let new_commit = Commit {
-            parent_commit_ref: parent_commit_ref.clone(), // TODO: Clean this
-            root_ref: ObjectReference::new(Some(root_hash), 0.into()), // offset is modified later
-            // parent_commit_hash,
-            // root_hash,
-            // root_hash_offset: 0,
+            parent_commit_ref: parent_commit_ref.clone(),
+            root_ref: ObjectReference::new(Some(root_hash_id), None), // offset is modified later
             time,
             author,
             message,
@@ -770,32 +773,35 @@ impl WorkingTree {
         // TODO: Don't unwrap_or(0)
         let offset = store.get_current_offset()?.unwrap_or(0.into());
 
-        let mut commit_offset: AbsoluteOffset = 0.into();
+        if let Some(serialize_function) = serialize_function {
+            // produce objects to be persisted to storage
+            let mut data = SerializingData::new(store, offset, serialize_function);
 
-        // produce objects to be persisted to storage
-        let mut data = SerializingData::new(store, offset);
-        if commit_to_storage {
             let storage = self.index.storage.borrow();
-            commit_offset = self.write_objects_recursively(
+            let commit_offset = self.write_objects_recursively(
                 object,
                 commit_hash,
                 Some(root),
                 &mut data,
                 &storage,
             )?;
+
+            Ok(PostCommitData {
+                commit_ref: ObjectReference::new(Some(commit_hash), commit_offset),
+                batch: data.batch,
+                reused: data.referenced_older_objects,
+                serialize_stats: data.stats,
+                output: data.serialized,
+            })
+        } else {
+            Ok(PostCommitData {
+                commit_ref: ObjectReference::new(Some(commit_hash), None),
+                batch: Default::default(),
+                reused: Default::default(),
+                serialize_stats: Default::default(),
+                output: Default::default(),
+            })
         }
-
-        // println!("RESULT OUTPUT LENGTH = {:?}", data.serialized.len());
-
-        Ok(PostCommitData {
-            commit_ref: ObjectReference::new(Some(commit_hash), commit_offset),
-            // commit_hash_id: commit_hash,
-            // commit_offset,
-            batch: data.batch,
-            reused: data.referenced_older_objects,
-            serialize_stats: data.stats,
-            output: data.serialized,
-        })
     }
 
     /// Returns a new version of the WorkingTree with the tree replaced
@@ -933,17 +939,18 @@ impl WorkingTree {
     fn write_objects_recursively(
         &self,
         mut object: Object,
-        object_hash: HashId,
+        object_hash_id: HashId,
         root: Option<DirectoryId>,
         data: &mut SerializingData,
         storage: &Storage,
-    ) -> Result<AbsoluteOffset, MerkleError> {
+    ) -> Result<Option<AbsoluteOffset>, MerkleError> {
         match &mut object {
+            Object::Blob(_blob_id) => {}
             Object::Directory(dir_id) => {
                 storage.dir_iterate_unsorted(*dir_id, |&(_, dir_entry_id)| {
                     let dir_entry = storage.get_dir_entry(dir_entry_id)?;
 
-                    let object_hash = match dir_entry.object_hash_id(data.repository, storage)? {
+                    let object_hash_id = match dir_entry.object_hash_id(data.repository, storage)? {
                         Some(hash_id) => hash_id,
                         None => return Ok(()), // Object is an inlined blob, we don't serialize them.
                     };
@@ -962,32 +969,37 @@ impl WorkingTree {
                         None => return Ok(()),
                         Some(object) => self.write_objects_recursively(
                             object,
-                            object_hash,
+                            object_hash_id,
                             None,
                             data,
                             storage,
                         )?,
                     };
 
-                    dir_entry.set_offset(offset);
+                    if let Some(offset) = offset {
+                        dir_entry.set_offset(offset);
+                    };
 
                     Ok(())
                 })?;
             }
-            Object::Blob(blob_id) => {}
             Object::Commit(commit) => {
                 let object = match root {
                     Some(root) => Object::Directory(root),
                     None => self.fetch_object_from_repo(commit.root_ref, data.repository)?,
                 };
-                let root_hash_offset = self.write_objects_recursively(
+                let root_offset = self.write_objects_recursively(
                     object,
                     commit.root_ref.hash_id(),
                     None,
                     data,
                     storage,
                 )?;
-                commit.set_root_hash_offset(root_hash_offset);
+
+                if let Some(root_offset) = root_offset {
+                    commit.set_root_offset(root_offset);
+                };
+
                 // commit.root_hash_offset = root_hash_offset;
 
                 // TODO: returns the root hash offset here
@@ -995,7 +1007,7 @@ impl WorkingTree {
         }
 
         // Add object to batch
-        data.add_serialized_object(object_hash, &object, storage)
+        data.add_serialized_object(object_hash_id, &object, storage)
     }
 
     /// Serializes working tree and builds vector of objects to be persisted to DB, recursively.

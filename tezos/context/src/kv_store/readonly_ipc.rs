@@ -9,16 +9,15 @@ use std::{borrow::Cow, path::Path, sync::Arc};
 
 use crypto::hash::ContextHash;
 use slog::{error, info};
-use tezos_timing::RepositoryMemoryUsage;
+use tezos_timing::{RepositoryMemoryUsage, SerializeStats};
 use thiserror::Error;
 
-use crate::persistent::{
-    DBError, Flushable, Persistable,
-};
+use crate::persistent::{DBError, Flushable, Persistable};
 use crate::working_tree::serializer::{deserialize_object, AbsoluteOffset};
 use crate::working_tree::shape::{DirectoryShapeId, ShapeStrings};
 use crate::working_tree::storage::{DirEntryId, Storage};
 use crate::working_tree::string_interner::{StringId, StringInterner};
+use crate::working_tree::working_tree::WorkingTree;
 use crate::working_tree::{Object, ObjectReference};
 use crate::{
     ffi::TezedgeIndexError, gc::NotGarbageCollected, persistent::KeyValueStoreBackend, ObjectHash,
@@ -194,6 +193,18 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
         self.client
             .get_object_bytes(object_ref, buffer)
             .map_err(|reason| DBError::IpcAccessError { reason })
+    }
+
+    fn commit(
+        &mut self,
+        working_tree: &WorkingTree,
+        parent_commit_ref: &Option<ObjectReference>,
+        author: String,
+        message: String,
+        date: u64,
+    ) -> Result<(ContextHash, Box<SerializeStats>), DBError> {
+        // ADD clear_objects
+        todo!()
     }
 }
 

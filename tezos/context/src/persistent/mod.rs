@@ -3,6 +3,7 @@
 
 use std::{
     borrow::Cow,
+    convert::TryFrom,
     fs::OpenOptions,
     io::{self, Write},
     path::{Path, PathBuf},
@@ -12,7 +13,7 @@ use std::{
 use crypto::hash::ContextHash;
 use thiserror::Error;
 
-use tezos_timing::RepositoryMemoryUsage;
+use tezos_timing::{RepositoryMemoryUsage, SerializeStats};
 
 use crate::{
     kv_store::{readonly_ipc::ContextServiceError, HashId, HashIdError, VacantObjectHash},
@@ -23,9 +24,10 @@ use crate::{
         shape::{DirectoryShapeError, DirectoryShapeId, ShapeStrings},
         storage::{DirEntryId, Storage},
         string_interner::{StringId, StringInterner},
+        working_tree::{MerkleError, WorkingTree},
         Object, ObjectReference,
     },
-    ObjectHash,
+    ContextError, ContextKeyValueStore, ObjectHash,
 };
 
 pub trait Flushable {
@@ -109,6 +111,15 @@ pub trait KeyValueStoreBackend {
         object_ref: ObjectReference,
         buffer: &'a mut Vec<u8>,
     ) -> Result<&'a [u8], DBError>;
+
+    fn commit(
+        &mut self,
+        working_tree: &WorkingTree,
+        parent_commit_ref: &Option<ObjectReference>,
+        author: String,
+        message: String,
+        date: u64,
+    ) -> Result<(ContextHash, Box<SerializeStats>), DBError>;
 }
 
 /// Possible errors for schema
@@ -149,6 +160,11 @@ pub enum DBError {
         #[from]
         error: DirectoryShapeError,
     },
+    #[error("Context error: {error:?}")]
+    ContextError {
+        #[from]
+        error: Box<ContextError>,
+    },
 }
 
 impl From<HashIdError> for DBError {
@@ -163,6 +179,23 @@ impl<T> From<PoisonError<T>> for DBError {
             reason: format!("{}", pe),
         }
     }
+}
+
+pub(crate) fn get_commit_hash(
+    commit_ref: ObjectReference,
+    repo: &ContextKeyValueStore,
+) -> Result<ContextHash, ContextError> {
+    let commit_hash = match repo.get_hash(commit_ref.hash_id())? {
+        Some(hash) => hash,
+        None => {
+            return Err(MerkleError::ObjectNotFound {
+                object_ref: commit_ref,
+            }
+            .into())
+        }
+    };
+    let commit_hash = ContextHash::try_from(&commit_hash[..])?;
+    Ok(commit_hash)
 }
 
 #[derive(Debug)]

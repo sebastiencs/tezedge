@@ -9,21 +9,23 @@ use std::{
 };
 
 use crypto::hash::ContextHash;
-use tezos_timing::RepositoryMemoryUsage;
+use tezos_timing::{RepositoryMemoryUsage, SerializeStats};
 
 use crate::{
     gc::{worker::PRESERVE_CYCLE_COUNT, GarbageCollectionError, GarbageCollector},
     persistent::{
-        get_persistent_base_path, DBError, File, FileOffset, FileType, Flushable,
+        get_commit_hash, get_persistent_base_path, DBError, File, FileOffset, FileType, Flushable,
         KeyValueStoreBackend, Persistable,
     },
     working_tree::{
         serializer::{
-            deserialize_object, read_object_length, AbsoluteOffset, ObjectHeader, ObjectLength,
+            deserialize_object, read_object_length, serialize_object, AbsoluteOffset, ObjectHeader,
+            ObjectLength,
         },
         shape::{DirectoryShapeId, DirectoryShapes, ShapeStrings},
         storage::{DirEntryId, Storage},
         string_interner::{StringId, StringInterner},
+        working_tree::{MerkleError, PostCommitData, WorkingTree},
         Object, ObjectReference,
     },
     Map, ObjectHash,
@@ -356,9 +358,9 @@ impl KeyValueStoreBackend for Persistent {
     ) -> Result<Object, DBError> {
         self.get_object_bytes(object_ref, &mut storage.data)?;
 
-        let bytes = std::mem::take(&mut storage.data);
-        let result = deserialize_object(&bytes, object_ref.offset(), storage, self);
-        storage.data = bytes;
+        let object_bytes = std::mem::take(&mut storage.data);
+        let result = deserialize_object(&object_bytes, object_ref.offset(), storage, self);
+        storage.data = object_bytes;
 
         result.map_err(Into::into)
     }
@@ -371,5 +373,37 @@ impl KeyValueStoreBackend for Persistent {
         self.data_file
             .get_object_bytes(object_ref, buffer)
             .map_err(Into::into)
+    }
+
+    fn commit(
+        &mut self,
+        working_tree: &WorkingTree,
+        parent_commit_ref: &Option<ObjectReference>,
+        author: String,
+        message: String,
+        date: u64,
+    ) -> Result<(ContextHash, Box<SerializeStats>), DBError> {
+        let PostCommitData {
+            commit_ref,
+            batch: _,
+            reused: _,
+            serialize_stats,
+            output,
+        } = working_tree
+            .prepare_commit(
+                date,
+                author,
+                message,
+                parent_commit_ref,
+                self,
+                Some(serialize_object),
+            )
+            .unwrap();
+
+        self.append_serialized_data(&output)?;
+        self.put_context_hash(commit_ref)?;
+
+        let commit_hash = get_commit_hash(commit_ref, self).map_err(Box::new)?;
+        Ok((commit_hash, serialize_stats))
     }
 }

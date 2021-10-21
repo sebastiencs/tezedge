@@ -18,7 +18,7 @@ use tezos_timing::{BlockMemoryUsage, ContextMemoryUsage};
 use crate::{
     hash::ObjectHash,
     kv_store::HashId,
-    persistent::DBError,
+    persistent::{get_commit_hash, DBError},
     timings::send_statistics,
     working_tree::{
         serializer::deserialize_object,
@@ -869,36 +869,39 @@ impl ShellContextApi for TezedgeContext {
         let date: u64 = date.try_into()?;
         let mut repository = self.index.repository.write()?;
 
-        let PostCommitData {
-            commit_ref,
-            // commit_hash_id,
-            // commit_offset,
-            batch,
-            reused,
-            serialize_stats,
-            output,
-        } = self.tree.prepare_commit(
-            date,
-            author,
-            message,
-            &self.parent_commit_ref,
-            &mut *repository,
-            true,
-        )?;
+        let (commit_hash, serialize_stats) =
+            repository.commit(&self.tree, &self.parent_commit_ref, author, message, date)?;
 
-        // println!("POST COMMIT HASH_ID={:?} OFFSET={:?} DATA_LENGTH={:?}", commit_hash_id, commit_offset, output.len());
+        // let PostCommitData {
+        //     commit_ref,
+        //     // commit_hash_id,
+        //     // commit_offset,
+        //     batch,
+        //     reused,
+        //     serialize_stats,
+        //     output,
+        // } = self.tree.prepare_commit(
+        //     date,
+        //     author,
+        //     message,
+        //     &self.parent_commit_ref,
+        //     &mut *repository,
+        //     true,
+        // )?;
 
-        repository.append_serialized_data(&output)?;
+        // // println!("POST COMMIT HASH_ID={:?} OFFSET={:?} DATA_LENGTH={:?}", commit_hash_id, commit_offset, output.len());
 
-        // let commit_ref = ObjectReference::new(Some(commit_hash_id), commit_offset);
+        // repository.append_serialized_data(&output)?;
 
-        // FIXME: only write objects if there are any, empty commits should not produce anything
-        repository.write_batch(batch)?;
-        repository.put_context_hash(commit_ref)?;
-        repository.block_applied(reused)?;
+        // // let commit_ref = ObjectReference::new(Some(commit_hash_id), commit_offset);
 
-        let commit_hash = self.get_commit_hash(commit_ref, &*repository)?;
-        repository.clear_objects()?;
+        // // FIXME: only write objects if there are any, empty commits should not produce anything
+        // repository.write_batch(batch)?;
+        // repository.put_context_hash(commit_ref)?;
+        // repository.block_applied(reused)?;
+
+        // let commit_hash = self.get_commit_hash(commit_ref, &*repository)?;
+        // repository.clear_objects()?;
 
         std::mem::drop(repository);
         send_statistics(BlockMemoryUsage {
@@ -924,10 +927,10 @@ impl ShellContextApi for TezedgeContext {
             message,
             &self.parent_commit_ref,
             &mut *repository,
-            false,
+            None,
         )?;
 
-        let commit_hash = self.get_commit_hash(commit_ref, &*repository)?;
+        let commit_hash = get_commit_hash(commit_ref, &*repository)?;
         repository.clear_objects()?;
         Ok(commit_hash)
     }
@@ -1035,25 +1038,6 @@ impl TezedgeContext {
             index: self.index.clone(),
             ..*self
         }
-    }
-
-    fn get_commit_hash(
-        &self,
-        commit_ref: ObjectReference,
-        //commit_hash_id: HashId,
-        repo: &ContextKeyValueStore,
-    ) -> Result<ContextHash, ContextError> {
-        let commit_hash = match repo.get_hash(commit_ref.hash_id())? {
-            Some(hash) => hash,
-            None => {
-                return Err(MerkleError::ObjectNotFound {
-                    object_ref: commit_ref,
-                }
-                .into())
-            }
-        };
-        let commit_hash = ContextHash::try_from(&commit_hash[..])?;
-        Ok(commit_hash)
     }
 }
 

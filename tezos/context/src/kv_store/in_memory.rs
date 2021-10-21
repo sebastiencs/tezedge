@@ -14,7 +14,7 @@ use std::{
 
 use crossbeam_channel::Sender;
 use crypto::hash::ContextHash;
-use tezos_timing::RepositoryMemoryUsage;
+use tezos_timing::{RepositoryMemoryUsage, SerializeStats};
 
 use crate::{
     gc::{
@@ -28,6 +28,7 @@ use crate::{
         shape::{DirectoryShapeId, DirectoryShapes, ShapeStrings},
         storage::{DirEntryId, Storage},
         string_interner::{StringId, StringInterner},
+        working_tree::WorkingTree,
         Object, ObjectReference,
     },
     Map,
@@ -280,6 +281,17 @@ impl KeyValueStoreBackend for InMemory {
         object_ref: ObjectReference,
         buffer: &'a mut Vec<u8>,
     ) -> Result<&'a [u8], DBError> {
+        todo!()
+    }
+
+    fn commit(
+        &mut self,
+        working_tree: &WorkingTree,
+        parent_commit_ref: &Option<ObjectReference>,
+        author: String,
+        message: String,
+        date: u64,
+    ) -> Result<(ContextHash, Box<SerializeStats>), DBError> {
         todo!()
     }
 }

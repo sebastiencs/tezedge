@@ -49,7 +49,8 @@ pub struct DirEntryInner {
     object_hash_id: B32,
     object_available: bool,
     object_id: B61,
-    file_offset: B64,
+    file_offset_available: bool,
+    file_offset: B63,
 }
 
 /// Wrapper over the children objects of a directory, containing
@@ -74,7 +75,7 @@ pub struct Commit {
 }
 
 impl Commit {
-    pub fn set_root_hash_offset(&mut self, offset: AbsoluteOffset) {
+    pub fn set_root_offset(&mut self, offset: AbsoluteOffset) {
         self.root_ref.offset.replace(offset);
     }
 }
@@ -103,11 +104,8 @@ impl From<HashId> for ObjectReference {
 }
 
 impl ObjectReference {
-    pub fn new(hash_id: Option<HashId>, offset: AbsoluteOffset) -> Self {
-        Self {
-            hash_id,
-            offset: Some(offset),
-        }
+    pub fn new(hash_id: Option<HashId>, offset: Option<AbsoluteOffset>) -> Self {
+        Self { hash_id, offset }
     }
 
     pub fn offset(&self) -> AbsoluteOffset {
@@ -147,22 +145,34 @@ impl DirEntry {
     }
 
     pub fn set_offset(&self, offset: AbsoluteOffset) {
-        let inner = self.inner.get().with_file_offset(offset.as_u64());
+        let inner = self
+            .inner
+            .get()
+            .with_file_offset(offset.as_u64())
+            .with_file_offset_available(true);
         self.inner.set(inner);
     }
 
     pub fn with_offset(self, offset: AbsoluteOffset) -> Self {
-        let inner = self.inner.get().with_file_offset(offset.as_u64());
+        let inner = self
+            .inner
+            .get()
+            .with_file_offset(offset.as_u64())
+            .with_file_offset_available(true);
         self.inner.set(inner);
         self
     }
 
-    fn get_offset(&self) -> AbsoluteOffset {
+    fn get_offset(&self) -> Option<AbsoluteOffset> {
         let inner = self.inner.get();
 
         // assert!(self.is_commited());
 
-        inner.file_offset().into()
+        if inner.file_offset_available() {
+            Some(inner.file_offset().into())
+        } else {
+            None
+        }
     }
 
     pub fn get_reference(&self) -> ObjectReference {
