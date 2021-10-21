@@ -23,8 +23,8 @@ use crate::{
     },
     hash::ObjectHash,
     persistent::{DBError, Flushable, KeyValueStoreBackend, Persistable},
+    serialize::persistent::AbsoluteOffset,
     working_tree::{
-        serializer::AbsoluteOffset,
         shape::{DirectoryShapeId, DirectoryShapes, ShapeStrings},
         storage::{DirEntryId, Storage},
         string_interner::{StringId, StringInterner},
@@ -258,7 +258,7 @@ impl KeyValueStoreBackend for InMemory {
     }
 
     fn get_current_offset(&self) -> Result<Option<AbsoluteOffset>, DBError> {
-        unimplemented!()
+        Ok(None)
     }
 
     fn append_serialized_data(&mut self, data: &[u8]) -> Result<(), DBError> {
@@ -273,7 +273,13 @@ impl KeyValueStoreBackend for InMemory {
         object_ref: ObjectReference,
         storage: &mut Storage,
     ) -> Result<Object, DBError> {
-        todo!()
+        self.get_object_bytes(object_ref, &mut storage.data)?;
+
+        let object_bytes = std::mem::take(&mut storage.data);
+        let result = crate::serialize::in_memory::deserialize_object(&object_bytes, storage, self);
+        storage.data = object_bytes;
+
+        result.map_err(Into::into)
     }
 
     fn get_object_bytes<'a>(
@@ -281,7 +287,12 @@ impl KeyValueStoreBackend for InMemory {
         object_ref: ObjectReference,
         buffer: &'a mut Vec<u8>,
     ) -> Result<&'a [u8], DBError> {
-        todo!()
+        let slice = self.get_value(object_ref.hash_id())?.unwrap_or(&[]);
+
+        buffer.clear();
+        buffer.extend_from_slice(slice);
+
+        Ok(buffer)
     }
 
     fn commit(

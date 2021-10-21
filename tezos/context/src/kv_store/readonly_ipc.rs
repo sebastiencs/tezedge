@@ -13,7 +13,7 @@ use tezos_timing::{RepositoryMemoryUsage, SerializeStats};
 use thiserror::Error;
 
 use crate::persistent::{DBError, Flushable, Persistable};
-use crate::working_tree::serializer::{deserialize_object, AbsoluteOffset};
+use crate::serialize::persistent::{deserialize_object, AbsoluteOffset};
 use crate::working_tree::shape::{DirectoryShapeId, ShapeStrings};
 use crate::working_tree::storage::{DirEntryId, Storage};
 use crate::working_tree::string_interner::{StringId, StringInterner};

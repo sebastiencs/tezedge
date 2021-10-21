@@ -58,7 +58,14 @@ use thiserror::Error;
 use crypto::hash::FromBytesError;
 use tezos_timing::SerializeStats;
 
-use crate::{gc::GarbageCollectionError, tezedge_context::TezedgeIndex};
+use crate::{
+    gc::GarbageCollectionError,
+    serialize::{
+        persistent::{AbsoluteOffset, SerializeObjectSignature},
+        DeserializationError, SerializationError,
+    },
+    tezedge_context::TezedgeIndex,
+};
 use crate::{hash::ObjectHash, ContextKeyOwned};
 use crate::{
     hash::{hash_blob, hash_inlined_blob},
@@ -72,10 +79,10 @@ use crate::{persistent, ContextKeyValueStore};
 use crate::{ContextKey, ContextValue};
 
 use super::{
-    serializer::{
-        deserialize_object, serialize_object, AbsoluteOffset, DeserializationError,
-        SerializationError, SerializeObjectSignature,
-    },
+    // serializer::{
+    //     deserialize_object, serialize_object, AbsoluteOffset, DeserializationError,
+    //     SerializationError, SerializeObjectSignature,
+    // },
     storage::{BlobId, DirEntryId, DirectoryId, Storage, StorageError},
     ObjectReference,
 };

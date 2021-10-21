@@ -17,16 +17,18 @@ use crate::{
         get_commit_hash, get_persistent_base_path, DBError, File, FileOffset, FileType, Flushable,
         KeyValueStoreBackend, Persistable,
     },
+    serialize::persistent::AbsoluteOffset,
     working_tree::{
-        serializer::{
-            deserialize_object, read_object_length, serialize_object, AbsoluteOffset, ObjectHeader,
-            ObjectLength,
-        },
+        // serializer::{
+        //     deserialize_object, read_object_length, serialize_object, AbsoluteOffset, ObjectHeader,
+        //     ObjectLength,
+        // },
         shape::{DirectoryShapeId, DirectoryShapes, ShapeStrings},
         storage::{DirEntryId, Storage},
         string_interner::{StringId, StringInterner},
         working_tree::{MerkleError, PostCommitData, WorkingTree},
-        Object, ObjectReference,
+        Object,
+        ObjectReference,
     },
     Map, ObjectHash,
 };
@@ -359,7 +361,12 @@ impl KeyValueStoreBackend for Persistent {
         self.get_object_bytes(object_ref, &mut storage.data)?;
 
         let object_bytes = std::mem::take(&mut storage.data);
-        let result = deserialize_object(&object_bytes, object_ref.offset(), storage, self);
+        let result = crate::serialize::persistent::deserialize_object(
+            &object_bytes,
+            object_ref.offset(),
+            storage,
+            self,
+        );
         storage.data = object_bytes;
 
         result.map_err(Into::into)
@@ -396,7 +403,7 @@ impl KeyValueStoreBackend for Persistent {
                 message,
                 parent_commit_ref,
                 self,
-                Some(serialize_object),
+                Some(crate::serialize::persistent::serialize_object),
             )
             .unwrap();
 

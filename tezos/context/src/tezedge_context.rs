@@ -21,7 +21,6 @@ use crate::{
     persistent::{get_commit_hash, DBError},
     timings::send_statistics,
     working_tree::{
-        serializer::deserialize_object,
         storage::{BlobId, DirEntryId, DirectoryId, Storage},
         working_tree::{MerkleError, PostCommitData},
         Commit, Object, ObjectReference,

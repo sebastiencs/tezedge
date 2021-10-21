@@ -399,13 +399,12 @@ mod tests {
 
     use crate::kv_store::persistent::Persistent;
     use crate::persistent::KeyValueStoreBackend;
+    use crate::serialize::persistent::serialize_object;
     use crate::working_tree::ObjectReference;
-    use crate::{
-        kv_store::in_memory::InMemory,
-        working_tree::{
-            serializer::{deserialize_object, serialize_object},
-            DirEntry, DirEntryKind,
-        },
+    use crate::working_tree::{
+        // serializer::{deserialize_object, serialize_object},
+        DirEntry,
+        DirEntryKind,
     };
 
     use super::*;

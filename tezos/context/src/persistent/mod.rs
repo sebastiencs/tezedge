@@ -17,15 +17,20 @@ use tezos_timing::{RepositoryMemoryUsage, SerializeStats};
 
 use crate::{
     kv_store::{readonly_ipc::ContextServiceError, HashId, HashIdError, VacantObjectHash},
+    serialize::{
+        persistent::{read_object_length, AbsoluteOffset, ObjectHeader, ObjectLength},
+        DeserializationError,
+    },
     working_tree::{
-        serializer::{
-            read_object_length, AbsoluteOffset, DeserializationError, ObjectHeader, ObjectLength,
-        },
+        // serializer::{
+        //     read_object_length, AbsoluteOffset, DeserializationError, ObjectHeader, ObjectLength,
+        // },
         shape::{DirectoryShapeError, DirectoryShapeId, ShapeStrings},
         storage::{DirEntryId, Storage},
         string_interner::{StringId, StringInterner},
         working_tree::{MerkleError, WorkingTree},
-        Object, ObjectReference,
+        Object,
+        ObjectReference,
     },
     ContextError, ContextKeyValueStore, ObjectHash,
 };

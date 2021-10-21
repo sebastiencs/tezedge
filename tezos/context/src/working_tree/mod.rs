@@ -17,13 +17,13 @@ use serde::{Deserialize, Serialize};
 use crate::hash::{hash_object, HashingError, ObjectHash};
 use crate::{kv_store::HashId, ContextKeyValueStore};
 
-use self::serializer::AbsoluteOffset;
 use self::{
     storage::{BlobId, DirectoryId, Storage},
     working_tree::MerkleError,
 };
+use super::serialize::persistent::AbsoluteOffset;
 
-pub mod serializer;
+//pub mod serializer;
 pub mod shape;
 pub mod storage;
 pub mod string_interner;
@@ -139,7 +139,7 @@ impl DirEntry {
     ///
     /// Returns `None` if the `HashId` doesn't exist.
     /// Use `Self::object_hash_id` to compute the hash.
-    fn hash_id(&self) -> Option<HashId> {
+    pub fn hash_id(&self) -> Option<HashId> {
         let id = self.inner.get().object_hash_id();
         HashId::new(id)
     }
@@ -163,7 +163,7 @@ impl DirEntry {
         self
     }
 
-    fn get_offset(&self) -> Option<AbsoluteOffset> {
+    pub fn get_offset(&self) -> Option<AbsoluteOffset> {
         let inner = self.inner.get();
 
         // assert!(self.is_commited());

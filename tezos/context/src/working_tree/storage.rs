@@ -19,11 +19,10 @@ use static_assertions::assert_eq_size;
 use tezos_timing::StorageMemoryUsage;
 use thiserror::Error;
 
-use crate::hash::index as index_of_key;
 use crate::kv_store::{index_map::IndexMap, HashId};
+use crate::{hash::index as index_of_key, serialize::persistent::AbsoluteOffset};
 
 use super::{
-    serializer::AbsoluteOffset,
     string_interner::{StringId, StringInterner},
     working_tree::MerkleError,
     DirEntry,
@@ -402,7 +401,7 @@ impl PointerToInode {
     pub fn new_commited(
         hash_id: Option<HashId>,
         inode_id: InodeId,
-        offset: AbsoluteOffset,
+        offset: Option<AbsoluteOffset>,
     ) -> Self {
         Self {
             inner: Cell::new(
@@ -410,7 +409,7 @@ impl PointerToInode {
                     .with_hash_id(hash_id.map(|h| h.as_u32()).unwrap_or(0))
                     .with_is_commited(true)
                     .with_inode_id(inode_id.0)
-                    .with_offset(offset.as_u64()), //.with_offset(0),
+                    .with_offset(offset.map(|o| o.as_u64()).unwrap_or(0)), //.with_offset(0),
             ),
         }
     }
@@ -781,7 +780,7 @@ impl Storage {
         result
     }
 
-    pub(super) fn add_inode(&mut self, inode: Inode) -> Result<InodeId, StorageError> {
+    pub fn add_inode(&mut self, inode: Inode) -> Result<InodeId, StorageError> {
         let current = self.inodes.len();
         self.inodes.push(inode);
 
