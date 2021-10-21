@@ -225,10 +225,6 @@ fn serialize_context_hash(hash_id: HashId, offset: AbsoluteOffset, hash: &[u8]) 
 }
 
 impl KeyValueStoreBackend for Persistent {
-    fn write_batch(&mut self, batch: Vec<(HashId, Arc<[u8]>)>) -> Result<(), DBError> {
-        Ok(())
-    }
-
     fn contains(&self, hash_id: HashId) -> Result<bool, DBError> {
         Ok(self.hashes.contains(hash_id))
     }
@@ -385,7 +381,7 @@ impl KeyValueStoreBackend for Persistent {
     fn commit(
         &mut self,
         working_tree: &WorkingTree,
-        parent_commit_ref: &Option<ObjectReference>,
+        parent_commit_ref: Option<ObjectReference>,
         author: String,
         message: String,
         date: u64,

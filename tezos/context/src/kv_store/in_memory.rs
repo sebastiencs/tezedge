@@ -16,6 +16,7 @@ use crossbeam_channel::Sender;
 use crypto::hash::ContextHash;
 use tezos_timing::{RepositoryMemoryUsage, SerializeStats};
 
+use crate::persistent::get_commit_hash;
 use crate::{
     gc::{
         worker::{Command, Cycles, GCThread, GC_PENDING_HASHIDS, PRESERVE_CYCLE_COUNT},
@@ -28,7 +29,7 @@ use crate::{
         shape::{DirectoryShapeId, DirectoryShapes, ShapeStrings},
         storage::{DirEntryId, Storage},
         string_interner::{StringId, StringInterner},
-        working_tree::WorkingTree,
+        working_tree::{PostCommitData, WorkingTree},
         Object, ObjectReference,
     },
     Map,
@@ -188,10 +189,6 @@ impl Persistable for InMemory {
 }
 
 impl KeyValueStoreBackend for InMemory {
-    fn write_batch(&mut self, batch: Vec<(HashId, Arc<[u8]>)>) -> Result<(), DBError> {
-        self.write_batch(batch)
-    }
-
     fn contains(&self, hash_id: HashId) -> Result<bool, DBError> {
         self.contains(hash_id)
     }
@@ -273,13 +270,9 @@ impl KeyValueStoreBackend for InMemory {
         object_ref: ObjectReference,
         storage: &mut Storage,
     ) -> Result<Object, DBError> {
-        self.get_object_bytes(object_ref, &mut storage.data)?;
-
-        let object_bytes = std::mem::take(&mut storage.data);
-        let result = crate::serialize::in_memory::deserialize_object(&object_bytes, storage, self);
-        storage.data = object_bytes;
-
-        result.map_err(Into::into)
+        let object_bytes = self.get_value(object_ref.hash_id())?.unwrap_or(&[]);
+        crate::serialize::in_memory::deserialize_object(object_bytes, storage, self)
+            .map_err(Into::into)
     }
 
     fn get_object_bytes<'a>(
@@ -298,12 +291,34 @@ impl KeyValueStoreBackend for InMemory {
     fn commit(
         &mut self,
         working_tree: &WorkingTree,
-        parent_commit_ref: &Option<ObjectReference>,
+        parent_commit_ref: Option<ObjectReference>,
         author: String,
         message: String,
         date: u64,
     ) -> Result<(ContextHash, Box<SerializeStats>), DBError> {
-        todo!()
+        let PostCommitData {
+            commit_ref,
+            batch,
+            reused,
+            serialize_stats,
+            output: _,
+        } = working_tree
+            .prepare_commit(
+                date,
+                author,
+                message,
+                parent_commit_ref,
+                self,
+                Some(crate::serialize::in_memory::serialize_object),
+            )
+            .unwrap();
+
+        self.write_batch(batch)?;
+        self.put_context_hash(commit_ref)?;
+        self.block_applied(reused);
+
+        let commit_hash = get_commit_hash(commit_ref, self).map_err(Box::new)?;
+        Ok((commit_hash, serialize_stats))
     }
 }
 

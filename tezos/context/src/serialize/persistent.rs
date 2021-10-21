@@ -456,15 +456,15 @@ fn serialize_directory(
 }
 
 pub type SerializeObjectSignature = fn(
-    &Object,
-    HashId,
-    &mut Vec<u8>,
-    &Storage,
-    &mut SerializeStats,
-    &mut Vec<(HashId, Arc<[u8]>)>,
-    &mut Vec<HashId>,
-    &mut ContextKeyValueStore,
-    AbsoluteOffset,
+    &Object,                       // object
+    HashId,                        // object_hash_id
+    &mut Vec<u8>,                  // output
+    &Storage,                      // storage
+    &mut SerializeStats,           // statistics
+    &mut Vec<(HashId, Arc<[u8]>)>, // batch
+    &mut Vec<HashId>,              // referenced_older_objects
+    &mut ContextKeyValueStore,     // repository
+    Option<AbsoluteOffset>,        // offset
 ) -> Result<Option<AbsoluteOffset>, SerializationError>;
 
 pub fn serialize_object(
@@ -474,12 +474,13 @@ pub fn serialize_object(
     storage: &Storage,
     stats: &mut SerializeStats,
     batch: &mut Vec<(HashId, Arc<[u8]>)>,
-    referenced_older_objects: &mut Vec<HashId>,
+    _referenced_older_objects: &mut Vec<HashId>,
     repository: &mut ContextKeyValueStore,
-    offset: AbsoluteOffset,
+    offset: Option<AbsoluteOffset>,
 ) -> Result<Option<AbsoluteOffset>, SerializationError> {
     let start = output.len();
 
+    let offset = offset.unwrap();
     let mut offset: AbsoluteOffset = offset.add(start as u64);
     // let mut offset: u64 = start as u64 + offset;
     // let mut offset: AbsoluteOffset = offset.into();
@@ -496,7 +497,6 @@ pub fn serialize_object(
                     storage,
                     stats,
                     batch,
-                    referenced_older_objects,
                     repository,
                     offset,
                 )?;
@@ -789,7 +789,6 @@ fn serialize_inode(
     storage: &Storage,
     stats: &mut SerializeStats,
     batch: &mut Vec<(HashId, Arc<[u8]>)>,
-    referenced_older_objects: &mut Vec<HashId>,
     repository: &mut ContextKeyValueStore,
     off: AbsoluteOffset,
 ) -> Result<AbsoluteOffset, SerializationError> {
@@ -817,23 +816,12 @@ fn serialize_inode(
                     // We only want to serialize new inodes.
                     // We skip inodes that were previously serialized and already
                     // in the repository.
-                    // Add their hash_id to `referenced_older_objects` so the gargage
-                    // collector won't collect them.
-                    referenced_older_objects.push(hash_id);
                     continue;
                 }
 
                 let inode_id = pointer.inode_id();
                 let offset = serialize_inode(
-                    inode_id,
-                    output,
-                    hash_id,
-                    storage,
-                    stats,
-                    batch,
-                    referenced_older_objects,
-                    repository,
-                    off,
+                    inode_id, output, hash_id, storage, stats, batch, repository, off,
                 )?;
 
                 pointer.set_offset(offset);
@@ -1698,7 +1686,7 @@ mod tests {
         let fake_hash_id = HashId::try_from(1).unwrap();
 
         repo.append_serialized_data(&[0, 0, 0, 0, 0, 0]).unwrap();
-        let offset = repo.get_current_offset().unwrap().unwrap();
+        let offset = repo.get_current_offset().unwrap();
 
         // Test Object::Directory
 
@@ -1785,7 +1773,7 @@ mod tests {
             .unwrap();
 
         repo.append_serialized_data(&bytes).unwrap();
-        let offset = repo.get_current_offset().unwrap().unwrap();
+        let offset = repo.get_current_offset().unwrap();
         bytes.clear();
 
         let mut bytes = Vec::with_capacity(1024);
@@ -1845,7 +1833,7 @@ mod tests {
         // println!("LAAAAA={:?}", storage.get_owned_dir(dir_id).unwrap(),);
 
         repo.append_serialized_data(&bytes).unwrap();
-        let offset = repo.get_current_offset().unwrap().unwrap();
+        let offset = repo.get_current_offset().unwrap();
         bytes.clear();
 
         let mut bytes = Vec::with_capacity(1024);
@@ -1895,7 +1883,7 @@ mod tests {
             &mut batch,
             &mut older_objects,
             &mut repo,
-            0.into(),
+            Some(0.into()),
         )
         .unwrap();
 
@@ -1914,7 +1902,7 @@ mod tests {
         // Test Object::Commit
 
         repo.append_serialized_data(&bytes).unwrap();
-        let offset = repo.get_current_offset().unwrap().unwrap();
+        let offset = repo.get_current_offset().unwrap();
         bytes.clear();
 
         let commit = Commit {
@@ -1948,7 +1936,7 @@ mod tests {
         // Test Object::Commit with no parent
 
         repo.append_serialized_data(&bytes).unwrap();
-        let offset = repo.get_current_offset().unwrap().unwrap();
+        let offset = repo.get_current_offset().unwrap();
         bytes.clear();
 
         let commit = Commit {
@@ -1990,7 +1978,7 @@ mod tests {
         // data.extend_from_slice(&[1,2,3,4,5]);
 
         repo.append_serialized_data(&bytes).unwrap();
-        let offset = repo.get_current_offset().unwrap().unwrap();
+        let offset = repo.get_current_offset().unwrap();
 
         bytes.clear();
 
@@ -2016,23 +2004,12 @@ mod tests {
                 &storage,
                 &mut stats,
                 &mut batch,
-                &mut older_objects,
                 &mut repo,
-                offset,
+                offset.unwrap(),
             )
             .unwrap();
 
             offsets.push(offset);
-
-            repo.write_batch(vec![(hash_id, Arc::new([ID_DIRECTORY]))])
-                .unwrap();
-
-            println!(
-                "OFFSET={:?} DATA_LEN={:?} OFF={:?}",
-                offset,
-                bytes.len(),
-                off
-            );
 
             pointers[index] = Some(PointerToInode::new_commited(
                 Some(hash_id),
@@ -2065,10 +2042,9 @@ mod tests {
             &storage,
             &mut stats,
             &mut batch,
-            &mut older_objects,
             &mut repo,
             //            5,
-            offset,
+            offset.unwrap(),
         )
         .unwrap();
 
@@ -2153,15 +2129,7 @@ mod tests {
 
         batch.clear();
         let offset = serialize_inode(
-            inode_id,
-            &mut bytes,
-            hash_id,
-            &storage,
-            &mut stats,
-            &mut batch,
-            &mut older_objects,
-            &mut repo,
-            offset,
+            inode_id, &mut bytes, hash_id, &storage, &mut stats, &mut batch, &mut repo, offset,
         )
         .unwrap();
 
@@ -2223,7 +2191,7 @@ mod tests {
             &mut batch,
             &mut older_objects,
             &mut repo,
-            0.into(),
+            Some(0.into()),
         )
         .unwrap();
 

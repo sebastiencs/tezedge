@@ -393,14 +393,14 @@ struct SerializingData<'a> {
     repository: &'a mut ContextKeyValueStore,
     serialized: Vec<u8>,
     stats: Box<SerializeStats>,
-    offset: AbsoluteOffset,
+    offset: Option<AbsoluteOffset>,
     serialize_function: SerializeObjectSignature,
 }
 
 impl<'a> SerializingData<'a> {
     fn new(
         repository: &'a mut ContextKeyValueStore,
-        offset: AbsoluteOffset,
+        offset: Option<AbsoluteOffset>,
         serialize_function: SerializeObjectSignature,
     ) -> Self {
         Self {
@@ -760,7 +760,7 @@ impl WorkingTree {
         time: u64,
         author: String,
         message: String,
-        parent_commit_ref: &Option<ObjectReference>,
+        parent_commit_ref: Option<ObjectReference>,
         store: &mut ContextKeyValueStore,
         serialize_function: Option<SerializeObjectSignature>,
     ) -> Result<PostCommitData, MerkleError> {
@@ -778,10 +778,11 @@ impl WorkingTree {
         let commit_hash = hash_commit(&new_commit, store)?;
 
         // TODO: Don't unwrap_or(0)
-        let offset = store.get_current_offset()?.unwrap_or(0.into());
 
         if let Some(serialize_function) = serialize_function {
             // produce objects to be persisted to storage
+
+            let offset = store.get_current_offset()?;
             let mut data = SerializingData::new(store, offset, serialize_function);
 
             let storage = self.index.storage.borrow();
@@ -962,12 +963,8 @@ impl WorkingTree {
                         None => return Ok(()), // Object is an inlined blob, we don't serialize them.
                     };
 
-                    // if dir_entry.object_hash_id(data.store, storage)?.is_none() {
-                    //     return Ok(()); // Object is an inlined blob, we don't serialize them.
-                    // }
-
                     if dir_entry.is_commited() {
-                        data.add_older_object(dir_entry, storage)?;
+                        data.add_older_object(dir_entry, storage)?; // TODO: Don't run this line on persistent context
                         return Ok(());
                     }
                     dir_entry.set_commited(true);
@@ -1006,10 +1003,6 @@ impl WorkingTree {
                 if let Some(root_offset) = root_offset {
                     commit.set_root_offset(root_offset);
                 };
-
-                // commit.root_hash_offset = root_hash_offset;
-
-                // TODO: returns the root hash offset here
             }
         }
 

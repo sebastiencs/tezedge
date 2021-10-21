@@ -49,11 +49,6 @@ impl ReadonlyIpcBackend {
 impl NotGarbageCollected for ReadonlyIpcBackend {}
 
 impl KeyValueStoreBackend for ReadonlyIpcBackend {
-    fn write_batch(&mut self, _batch: Vec<(HashId, Arc<[u8]>)>) -> Result<(), DBError> {
-        // This context is readonly
-        Ok(())
-    }
-
     fn contains(&self, hash_id: HashId) -> Result<bool, DBError> {
         if let Some(hash_id) = hash_id.get_readonly_id()? {
             self.hashes.contains(hash_id).map_err(Into::into)
@@ -198,7 +193,7 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
     fn commit(
         &mut self,
         working_tree: &WorkingTree,
-        parent_commit_ref: &Option<ObjectReference>,
+        parent_commit_ref: Option<ObjectReference>,
         author: String,
         message: String,
         date: u64,

@@ -44,11 +44,6 @@ pub trait Persistable {
 }
 
 pub trait KeyValueStoreBackend {
-    /// Write batch into DB atomically
-    ///
-    /// # Arguments
-    /// * `batch` - WriteBatch containing all batched writes to be written to DB
-    fn write_batch(&mut self, batch: Vec<(HashId, Arc<[u8]>)>) -> Result<(), DBError>;
     /// Check if database contains given hash id
     ///
     /// # Arguments
@@ -120,7 +115,7 @@ pub trait KeyValueStoreBackend {
     fn commit(
         &mut self,
         working_tree: &WorkingTree,
-        parent_commit_ref: &Option<ObjectReference>,
+        parent_commit_ref: Option<ObjectReference>,
         author: String,
         message: String,
         date: u64,

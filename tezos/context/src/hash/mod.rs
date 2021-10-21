@@ -725,7 +725,7 @@ mod tests {
             {
                 output.clear();
 
-                let offset = repo.get_current_offset().unwrap().unwrap();
+                let offset = repo.get_current_offset().unwrap();
 
                 let offset = serialize_object(
                     &Object::Directory(dir_id),
@@ -740,7 +740,7 @@ mod tests {
                     offset,
                 )
                 .unwrap();
-                repo.write_batch(batch).unwrap();
+                //repo.write_batch(batch).unwrap();
                 repo.append_serialized_data(&output);
 
                 let object_ref = ObjectReference::new(None, offset);

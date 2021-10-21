@@ -34,8 +34,8 @@ use crate::working_tree::{
 };
 
 use super::{
-    DeserializationError, SerializationError, COMPACT_HASH_ID_BIT, FULL_23_BITS, FULL_31_BITS,
-    ID_COMMIT, ID_DIRECTORY,
+    persistent::AbsoluteOffset, DeserializationError, SerializationError, COMPACT_HASH_ID_BIT,
+    FULL_23_BITS, FULL_31_BITS, ID_COMMIT, ID_DIRECTORY,
 };
 
 // const ID_DIRECTORY: u8 = 0;
@@ -235,7 +235,8 @@ pub fn serialize_object(
     batch: &mut Vec<(HashId, Arc<[u8]>)>,
     referenced_older_objects: &mut Vec<HashId>,
     repository: &mut ContextKeyValueStore,
-) -> Result<(), SerializationError> {
+    object_offset: Option<AbsoluteOffset>,
+) -> Result<Option<AbsoluteOffset>, SerializationError> {
     output.clear();
 
     match object {
@@ -299,7 +300,7 @@ pub fn serialize_object(
 
     stats.total_bytes += output.len();
 
-    Ok(())
+    Ok(None)
 }
 
 fn serialize_hash_id(hash_id: u32, output: &mut Vec<u8>) -> Result<usize, SerializationError> {
@@ -1044,6 +1045,7 @@ mod tests {
             &mut batch,
             &mut older_objects,
             &mut repo,
+            None,
         )
         .unwrap();
 
@@ -1096,6 +1098,7 @@ mod tests {
             &mut batch,
             &mut older_objects,
             &mut repo,
+            None,
         )
         .unwrap();
 
@@ -1128,6 +1131,7 @@ mod tests {
             &mut batch,
             &mut older_objects,
             &mut repo,
+            None,
         )
         .unwrap();
         let object = deserialize_object(&data, &mut storage, &repo).unwrap();
@@ -1163,6 +1167,7 @@ mod tests {
             &mut batch,
             &mut older_objects,
             &mut repo,
+            None,
         )
         .unwrap();
         let object = deserialize_object(&data, &mut storage, &repo).unwrap();
@@ -1340,6 +1345,7 @@ mod tests {
             &mut batch,
             &mut older_objects,
             &mut repo,
+            None,
         )
         .unwrap();
 

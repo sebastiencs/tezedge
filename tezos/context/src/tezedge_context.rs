@@ -869,7 +869,7 @@ impl ShellContextApi for TezedgeContext {
         let mut repository = self.index.repository.write()?;
 
         let (commit_hash, serialize_stats) =
-            repository.commit(&self.tree, &self.parent_commit_ref, author, message, date)?;
+            repository.commit(&self.tree, self.parent_commit_ref, author, message, date)?;
 
         // let PostCommitData {
         //     commit_ref,
@@ -924,7 +924,7 @@ impl ShellContextApi for TezedgeContext {
             date,
             author,
             message,
-            &self.parent_commit_ref,
+            self.parent_commit_ref,
             &mut *repository,
             None,
         )?;
