@@ -301,7 +301,7 @@ impl KeyValueStoreBackend for InMemory {
             batch,
             reused,
             serialize_stats,
-            output: _,
+            ..
         } = working_tree
             .prepare_commit(
                 date,

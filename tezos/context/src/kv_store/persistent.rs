@@ -388,10 +388,9 @@ impl KeyValueStoreBackend for Persistent {
     ) -> Result<(ContextHash, Box<SerializeStats>), DBError> {
         let PostCommitData {
             commit_ref,
-            batch: _,
-            reused: _,
             serialize_stats,
             output,
+            ..
         } = working_tree
             .prepare_commit(
                 date,

@@ -51,7 +51,22 @@ pub enum TezosRuntimeLogLevel {
     Debug,
 }
 
-/// Holds configuration for OCaml runtime - e.g. arguments which are passed to OCaml and can be change in runtime
+// Must be in sync with ffi_config.ml
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub enum ContextKvStoreConfiguration {
+    ReadOnlyIpc,
+    InMem,
+    OnDisk,
+}
+
+// Must be in sync with ffi_config.ml
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct TezosContextTezEdgeStorageConfiguration {
+    pub backend: ContextKvStoreConfiguration,
+    pub ipc_socket_path: Option<String>,
+}
+
+// Must be in sync with ffi_config.ml
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct TezosRuntimeConfiguration {
     pub log_enabled: bool,

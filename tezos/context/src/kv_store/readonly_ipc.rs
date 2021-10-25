@@ -182,7 +182,7 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
             let bytes = self.hashes.get_value(hash_id)?.unwrap();
             buffer.clear();
             buffer.extend_from_slice(bytes);
-            return Ok(&buffer[..]);
+            return Ok(buffer);
         };
 
         self.client

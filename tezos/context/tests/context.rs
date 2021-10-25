@@ -7,17 +7,35 @@ use std::sync::Arc;
 use crypto::hash::ContextHash;
 use storage::tests_common::TmpStorage;
 use storage::{BlockHeaderWithHash, BlockStorage};
-use tezos_context::initializer::initialize_tezedge_context;
-use tezos_context::{context_key, ContextError, TezedgeContext};
+use tezos_api::ffi::TezosContextTezEdgeStorageConfiguration;
+use tezos_context::initializer::{initialize_tezedge_context, ContextKvStoreConfiguration};
+use tezos_context::{context_key, ContextError, ContextKey, TezedgeContext};
 use tezos_context::{IndexApi, ProtocolContextApi, ShellContextApi};
 use tezos_context_api::{ContextKey, TezosContextTezEdgeStorageConfiguration};
 use tezos_messages::p2p::encoding::prelude::BlockHeaderBuilder;
 
 #[test]
+pub fn test_context_set_get_commit_persistent() -> Result<(), anyhow::Error> {
+    context_set_get_commit(
+        ContextKvStoreConfiguration::OnDisk,
+        "__context:test_context_set_get_commit_persistent",
+    )
+}
+
+#[test]
 pub fn test_context_set_get_commit() -> Result<(), anyhow::Error> {
+    context_set_get_commit(
+        ContextKvStoreConfiguration::InMem,
+        "__context:test_context_set_get_commit",
+    )
+}
+
+pub fn context_set_get_commit(
+    backend: ContextKvStoreConfiguration,
+    tmp_dir: &str,
+) -> Result<(), anyhow::Error> {
     // prepare temp storage
-    let tmp_storage = TmpStorage::create_to_out_dir("__context:test_context_set_get_commit")
-        .expect("Storage error");
+    let tmp_storage = TmpStorage::create_to_out_dir(tmp_dir).expect("Storage error");
     let persistent_storage = tmp_storage.storage();
 
     // init block storage (because of commit)
@@ -27,7 +45,7 @@ pub fn test_context_set_get_commit() -> Result<(), anyhow::Error> {
 
     // context
     let mut context = initialize_tezedge_context(&TezosContextTezEdgeStorageConfiguration {
-        backend: tezos_context::initializer::ContextKvStoreConfiguration::InMem,
+        backend,
         ipc_socket_path: None,
     })
     .unwrap();
@@ -65,10 +83,27 @@ pub fn test_context_set_get_commit() -> Result<(), anyhow::Error> {
 }
 
 #[test]
+pub fn test_context_delete_and_remove_persistent() -> Result<(), anyhow::Error> {
+    context_delete_and_remove(
+        ContextKvStoreConfiguration::OnDisk,
+        "__context:test_context_delete_and_remove_persistent",
+    )
+}
+
+#[test]
 pub fn test_context_delete_and_remove() -> Result<(), anyhow::Error> {
+    context_delete_and_remove(
+        ContextKvStoreConfiguration::InMem,
+        "__context:test_context_delete_and_remove",
+    )
+}
+
+pub fn context_delete_and_remove(
+    backend: ContextKvStoreConfiguration,
+    tmp_dir: &str,
+) -> Result<(), anyhow::Error> {
     // prepare temp storage
-    let tmp_storage = TmpStorage::create_to_out_dir("__context:test_context_delete_and_remove")
-        .expect("Storage error");
+    let tmp_storage = TmpStorage::create_to_out_dir(tmp_dir).expect("Storage error");
     let persistent_storage = tmp_storage.storage();
 
     // init block with level 0 (because of commit)
@@ -78,7 +113,7 @@ pub fn test_context_delete_and_remove() -> Result<(), anyhow::Error> {
 
     // context
     let mut context = initialize_tezedge_context(&TezosContextTezEdgeStorageConfiguration {
-        backend: tezos_context::initializer::ContextKvStoreConfiguration::InMem,
+        backend,
         ipc_socket_path: None,
     })
     .unwrap();
@@ -225,7 +260,7 @@ pub fn test_context_delete_and_remove() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-fn context_copy(
+fn ctx_copy(
     context: &TezedgeContext,
     from: &ContextKey,
     to: &ContextKey,
@@ -238,10 +273,24 @@ fn context_copy(
 }
 
 #[test]
+pub fn test_context_copy_persistent() -> Result<(), anyhow::Error> {
+    context_copy(
+        ContextKvStoreConfiguration::OnDisk,
+        "__context:test_context_copy_persistent",
+    )
+}
+
+#[test]
 pub fn test_context_copy() -> Result<(), anyhow::Error> {
+    context_copy(
+        ContextKvStoreConfiguration::InMem,
+        "__context:test_context_copy",
+    )
+}
+
+fn context_copy(backend: ContextKvStoreConfiguration, tmp_dir: &str) -> Result<(), anyhow::Error> {
     // prepare temp storage
-    let tmp_storage =
-        TmpStorage::create_to_out_dir("__context:context_copy").expect("Storage error");
+    let tmp_storage = TmpStorage::create_to_out_dir(tmp_dir).expect("Storage error");
     let persistent_storage = tmp_storage.storage();
 
     // init block with level 0 (because of commit)
@@ -251,7 +300,7 @@ pub fn test_context_copy() -> Result<(), anyhow::Error> {
 
     // context
     let mut context = initialize_tezedge_context(&TezosContextTezEdgeStorageConfiguration {
-        backend: tezos_context::initializer::ContextKvStoreConfiguration::InMem,
+        backend,
         ipc_socket_path: None,
     })
     .unwrap();
@@ -329,7 +378,7 @@ pub fn test_context_copy() -> Result<(), anyhow::Error> {
     ));
 
     // 1. copy
-    let context = context_copy(
+    let context = ctx_copy(
         &context,
         &context_key!("data/rolls/owner/current"),
         &context_key!("data/rolls/owner/snapshot/01/02"),
