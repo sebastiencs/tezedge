@@ -397,9 +397,11 @@ mod tests {
     use crypto::hash::{ContextHash, HashTrait};
     use tezos_timing::SerializeStats;
 
+    use crate::kv_store::in_memory::InMemory;
     use crate::kv_store::persistent::Persistent;
     use crate::persistent::KeyValueStoreBackend;
-    use crate::serialize::persistent::serialize_object;
+    use crate::serialize::persistent::SerializeObjectSignature;
+    use crate::serialize::{in_memory, persistent};
     use crate::working_tree::ObjectReference;
     use crate::working_tree::{
         // serializer::{deserialize_object, serialize_object},
@@ -410,8 +412,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_hash_of_commit_persistent() {
+        let mut repo = Persistent::try_new().expect("failed to create persistent context");
+        hash_of_commit(&mut repo);
+    }
+
+    #[test]
     fn test_hash_of_commit() {
-        let mut repo = Persistent::try_new().expect("failed to create context");
+        let mut repo = InMemory::try_new().expect("failed to create in-memory context");
+        hash_of_commit(&mut repo);
+    }
+
+    fn hash_of_commit(repo: &mut ContextKeyValueStore) {
+        // let mut repo = Persistent::try_new().expect("failed to create context");
         // let mut repo = InMemory::try_new().expect("failed to create context");
 
         // Calculates hash of commit
@@ -425,12 +438,13 @@ mod tests {
         let expected_commit_hash =
             "e6de3fd37b1dc2b3c9d072ea67c2c5be1b55eeed9f5377b2bfc1228e6f9cb69b";
 
-        let hash_id = repo.put_object_hash(
-            hex::decode("0d78b30e959c2a079e8ccb4ca19d428c95d29b2f02a35c1c58ef9c8972bc26aa")
-                .unwrap()
-                .try_into()
-                .unwrap(),
-        );
+        let hash = hex::decode("0d78b30e959c2a079e8ccb4ca19d428c95d29b2f02a35c1c58ef9c8972bc26aa")
+            .unwrap();
+
+        let hash_id = repo
+            .get_vacant_object_hash()
+            .unwrap()
+            .write_with(|entry| entry.copy_from_slice(&hash));
 
         let dummy_commit = Commit {
             parent_commit_ref: None,
@@ -499,7 +513,7 @@ mod tests {
             hex::encode(calculated_commit_hash.as_ref())
         );
 
-        let hash_id = hash_commit(&dummy_commit, &mut repo).unwrap();
+        let hash_id = hash_commit(&dummy_commit, repo).unwrap();
 
         assert_eq!(
             calculated_commit_hash.as_ref(),
@@ -512,7 +526,18 @@ mod tests {
     }
 
     #[test]
+    fn test_hash_of_small_dir_persistent() {
+        let mut repo = Persistent::try_new().expect("failed to create persistent context");
+        hash_of_small_dir(&mut repo);
+    }
+
+    #[test]
     fn test_hash_of_small_dir() {
+        let mut repo = InMemory::try_new().expect("failed to create in-memory context");
+        hash_of_small_dir(&mut repo);
+    }
+
+    fn hash_of_small_dir(repo: &mut ContextKeyValueStore) {
         // Calculates hash of directory
         // uses BLAKE2 binary 256 length hash function
         // hash is calculated as:
@@ -520,7 +545,7 @@ mod tests {
         // where:
         // - CHILD NODE - <NODE TYPE><length of string (1 byte)><string/path bytes><length of hash (8bytes)><hash bytes>
         // - NODE TYPE - blob dir_entry(0xff00000000000000) or internal dir_entry (0x0000000000000000)
-        let mut repo = Persistent::try_new().expect("failed to create context");
+        // let mut repo = Persistent::try_new().expect("failed to create context");
         // let mut repo = InMemory::try_new().expect("failed to create context");
         let expected_dir_hash = "d49a53323107f2ae40b01eaa4e9bec4d02801daf60bab82dc2529e40d40fa917";
         let dummy_dir = DirectoryId::empty();
@@ -579,7 +604,7 @@ mod tests {
             hex::encode(calculated_dir_hash.as_ref())
         );
 
-        let hash_id = hash_directory(dummy_dir, &mut repo, &mut storage).unwrap();
+        let hash_id = hash_directory(dummy_dir, repo, &mut storage).unwrap();
 
         assert_eq!(
             calculated_dir_hash.as_ref(),
@@ -607,20 +632,38 @@ mod tests {
     }
 
     #[test]
+    fn test_dir_entry_hashes_persistent() {
+        let mut repo = Persistent::try_new().expect("failed to create persistent context");
+        test_type_hashes("nodes.json.gz", &mut repo, persistent::serialize_object);
+    }
+
+    #[test]
+    fn test_inode_hashes_persistent() {
+        let mut repo = Persistent::try_new().expect("failed to create persistent context");
+        test_type_hashes("inodes.json.gz", &mut repo, persistent::serialize_object);
+    }
+
+    #[test]
     fn test_dir_entry_hashes() {
-        test_type_hashes("nodes.json.gz");
+        let mut repo = InMemory::try_new().expect("failed to create in-memory context");
+        test_type_hashes("nodes.json.gz", &mut repo, in_memory::serialize_object);
     }
 
     #[test]
     fn test_inode_hashes() {
-        test_type_hashes("inodes.json.gz");
+        let mut repo = InMemory::try_new().expect("failed to create in-memory context");
+        test_type_hashes("inodes.json.gz", &mut repo, in_memory::serialize_object);
     }
 
-    fn test_type_hashes(json_gz_file_name: &str) {
+    fn test_type_hashes(
+        json_gz_file_name: &str,
+        repo: &mut ContextKeyValueStore,
+        serialize_fun: SerializeObjectSignature,
+    ) {
         let mut json_file = open_hashes_json_gz(json_gz_file_name);
         let mut bytes = Vec::new();
 
-        let mut repo = Persistent::try_new().expect("failed to create context");
+        // let mut repo = Persistent::try_new().expect("failed to create context");
 
         // let mut repo = InMemory::try_new().expect("failed to create context");
         let mut storage = Storage::new();
@@ -650,8 +693,9 @@ mod tests {
                 };
                 let object_hash = ContextHash::from_base58_check(&binding.hash).unwrap();
 
-                let hash_id =
-                    repo.put_object_hash(object_hash.as_ref().as_slice().try_into().unwrap());
+                let hash_id = repo.get_vacant_object_hash().unwrap().write_with(|bytes| {
+                    bytes.copy_from_slice(object_hash.as_ref().as_slice().try_into().unwrap())
+                });
 
                 let dir_entry = DirEntry::new_commited(dir_entry_kind, Some(hash_id), None)
                     .with_offset(0.into());
@@ -716,7 +760,7 @@ mod tests {
             }
 
             let expected_hash = ContextHash::from_base58_check(&test_case.hash).unwrap();
-            let computed_hash_id = hash_directory(dir_id, &mut repo, &mut storage).unwrap();
+            let computed_hash_id = hash_directory(dir_id, repo, &mut storage).unwrap();
             let computed_hash = repo.get_hash(computed_hash_id).unwrap().unwrap();
             let computed_hash = ContextHash::try_from_bytes(computed_hash.as_ref()).unwrap();
 
@@ -727,7 +771,7 @@ mod tests {
 
                 let offset = repo.get_current_offset().unwrap();
 
-                let offset = serialize_object(
+                let offset = serialize_fun(
                     &Object::Directory(dir_id),
                     computed_hash_id,
                     &mut output,
@@ -735,15 +779,14 @@ mod tests {
                     &mut stats,
                     &mut batch,
                     &mut older_objects,
-                    &mut repo,
+                    repo,
                     // 0,
                     offset,
                 )
                 .unwrap();
-                //repo.write_batch(batch).unwrap();
-                repo.append_serialized_data(&output);
+                repo.synchronize_data(batch, &output).unwrap();
 
-                let object_ref = ObjectReference::new(None, offset);
+                let object_ref = ObjectReference::new(Some(computed_hash_id), offset);
                 let object = repo.get_object(object_ref, &mut storage).unwrap();
 
                 match object {
@@ -757,7 +800,7 @@ mod tests {
                         // println!("DIR RES={:#?}", storage.get_owned_dir(new_dir));
 
                         let new_computed_hash_id =
-                            hash_directory(new_dir, &mut repo, &mut storage).unwrap();
+                            hash_directory(new_dir, repo, &mut storage).unwrap();
                         let new_computed_hash =
                             repo.get_hash(new_computed_hash_id).unwrap().unwrap();
                         let new_computed_hash =

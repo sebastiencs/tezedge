@@ -120,6 +120,13 @@ pub trait KeyValueStoreBackend {
         message: String,
         date: u64,
     ) -> Result<(ContextHash, Box<SerializeStats>), DBError>;
+
+    /// [test-only]
+    fn synchronize_data(
+        &mut self,
+        batch: Vec<(HashId, Arc<[u8]>)>,
+        output: &[u8],
+    ) -> Result<Option<AbsoluteOffset>, DBError>;
 }
 
 /// Possible errors for schema

@@ -201,6 +201,14 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
         // ADD clear_objects
         todo!()
     }
+
+    fn synchronize_data(
+        &mut self,
+        _batch: Vec<(HashId, Arc<[u8]>)>,
+        _output: &[u8],
+    ) -> Result<Option<AbsoluteOffset>, DBError> {
+        Ok(None) // no-op
+    }
 }
 
 impl Flushable for ReadonlyIpcBackend {

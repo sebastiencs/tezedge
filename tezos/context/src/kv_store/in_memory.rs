@@ -16,7 +16,6 @@ use crossbeam_channel::Sender;
 use crypto::hash::ContextHash;
 use tezos_timing::{RepositoryMemoryUsage, SerializeStats};
 
-use crate::persistent::get_commit_hash;
 use crate::{
     gc::{
         worker::{Command, Cycles, GCThread, GC_PENDING_HASHIDS, PRESERVE_CYCLE_COUNT},
@@ -34,6 +33,7 @@ use crate::{
     },
     Map,
 };
+use crate::{persistent::get_commit_hash, serialize::in_memory};
 
 use tezos_spsc::Consumer;
 
@@ -271,8 +271,7 @@ impl KeyValueStoreBackend for InMemory {
         storage: &mut Storage,
     ) -> Result<Object, DBError> {
         let object_bytes = self.get_value(object_ref.hash_id())?.unwrap_or(&[]);
-        crate::serialize::in_memory::deserialize_object(object_bytes, storage, self)
-            .map_err(Into::into)
+        in_memory::deserialize_object(object_bytes, storage, self).map_err(Into::into)
     }
 
     fn get_object_bytes<'a>(
@@ -309,7 +308,7 @@ impl KeyValueStoreBackend for InMemory {
                 message,
                 parent_commit_ref,
                 self,
-                Some(crate::serialize::in_memory::serialize_object),
+                Some(in_memory::serialize_object),
             )
             .unwrap();
 
@@ -319,6 +318,15 @@ impl KeyValueStoreBackend for InMemory {
 
         let commit_hash = get_commit_hash(commit_ref, self).map_err(Box::new)?;
         Ok((commit_hash, serialize_stats))
+    }
+
+    fn synchronize_data(
+        &mut self,
+        batch: Vec<(HashId, Arc<[u8]>)>,
+        _output: &[u8],
+    ) -> Result<Option<AbsoluteOffset>, DBError> {
+        self.write_batch(batch)?;
+        Ok(None)
     }
 }
 

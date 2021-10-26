@@ -17,7 +17,7 @@ use crate::{
         get_commit_hash, get_persistent_base_path, DBError, File, FileOffset, FileType, Flushable,
         KeyValueStoreBackend, Persistable,
     },
-    serialize::persistent::AbsoluteOffset,
+    serialize::persistent::{self, AbsoluteOffset},
     working_tree::{
         // serializer::{
         //     deserialize_object, read_object_length, serialize_object, AbsoluteOffset, ObjectHeader,
@@ -357,12 +357,8 @@ impl KeyValueStoreBackend for Persistent {
         self.get_object_bytes(object_ref, &mut storage.data)?;
 
         let object_bytes = std::mem::take(&mut storage.data);
-        let result = crate::serialize::persistent::deserialize_object(
-            &object_bytes,
-            object_ref.offset(),
-            storage,
-            self,
-        );
+        let result =
+            persistent::deserialize_object(&object_bytes, object_ref.offset(), storage, self);
         storage.data = object_bytes;
 
         result.map_err(Into::into)
@@ -398,7 +394,7 @@ impl KeyValueStoreBackend for Persistent {
                 message,
                 parent_commit_ref,
                 self,
-                Some(crate::serialize::persistent::serialize_object),
+                Some(persistent::serialize_object),
             )
             .unwrap();
 
@@ -407,5 +403,14 @@ impl KeyValueStoreBackend for Persistent {
 
         let commit_hash = get_commit_hash(commit_ref, self).map_err(Box::new)?;
         Ok((commit_hash, serialize_stats))
+    }
+
+    fn synchronize_data(
+        &mut self,
+        batch: Vec<(HashId, Arc<[u8]>)>,
+        output: &[u8],
+    ) -> Result<Option<AbsoluteOffset>, DBError> {
+        self.append_serialized_data(output)?;
+        self.get_current_offset()
     }
 }
