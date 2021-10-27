@@ -75,9 +75,9 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
     }
 
     fn get_hash(&self, object_ref: ObjectReference) -> Result<Option<Cow<ObjectHash>>, DBError> {
-        let hash_id = object_ref.hash_id();
+        let hash_id = object_ref.hash_id_opt();
 
-        if let Some(hash_id) = hash_id.get_readonly_id()? {
+        if let Some(hash_id) = hash_id.and_then(|h| h.get_readonly_id().ok()?) {
             Ok(self.hashes.get_hash(hash_id)?.map(Cow::Borrowed))
         } else {
             // let hash_id_index: usize = hash_id.try_into().unwrap();
@@ -94,7 +94,7 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
             // Ok(Some(Cow::Owned(hash)))
 
             self.client
-                .get_hash(hash_id)
+                .get_hash(object_ref)
                 .map_err(|reason| DBError::IpcAccessError { reason })
         }
     }
@@ -273,7 +273,7 @@ use super::{in_memory::HashValueStore, HashId, VacantObjectHash};
 #[derive(Serialize, Deserialize, Debug, IntoStaticStr)]
 enum ContextRequest {
     GetContextHashId(ContextHash),
-    GetHash(HashId),
+    GetHash(ObjectReference),
     GetHashId(ObjectReference),
     GetObjectBytes(ObjectReference),
     GetShape(DirectoryShapeId),
@@ -469,10 +469,10 @@ impl IpcContextClient {
 
     pub fn get_hash(
         &self,
-        hash_id: HashId,
+        object_ref: ObjectReference,
     ) -> Result<Option<Cow<ObjectHash>>, ContextServiceError> {
         let mut io = self.io.borrow_mut();
-        io.tx.send(&ContextRequest::GetHash(hash_id))?;
+        io.tx.send(&ContextRequest::GetHash(object_ref))?;
 
         // this might take a while, so we will use unusually long timeout
         match io
@@ -717,13 +717,13 @@ impl IpcContextServer {
                         }
                     }
                 }
-                ContextRequest::GetHash(hash_id) => match crate::ffi::get_context_index()? {
+                ContextRequest::GetHash(object_ref) => match crate::ffi::get_context_index()? {
                     None => io.tx.send(&ContextResponse::GetHashResponse(Err(
                         "Context index unavailable".to_owned(),
                     )))?,
                     Some(index) => {
                         let res = index
-                            .fetch_hash(hash_id)
+                            .fetch_hash(object_ref)
                             .map_err(|err| format!("Context error: {:?}", err));
 
                         io.tx.send(&ContextResponse::GetHashResponse(res))?;

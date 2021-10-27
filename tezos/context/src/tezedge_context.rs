@@ -119,13 +119,12 @@ impl TezedgeIndex {
     /// Returns the raw `ObjectHash` associated to this `hash_id`.
     ///
     /// It reads it from the repository.
-    pub fn fetch_hash(&self, hash_id: HashId) -> Result<Option<ObjectHash>, DBError> {
-        todo!()
-        // Ok(self
-        //     .repository
-        //     .read()?
-        //     .get_hash(hash_id)?
-        //     .map(|h| h.into_owned()))
+    pub fn fetch_hash(&self, object_ref: ObjectReference) -> Result<Option<ObjectHash>, DBError> {
+        Ok(self
+            .repository
+            .read()?
+            .get_hash(object_ref)?
+            .map(|h| h.into_owned()))
     }
 
     /// Fetches object from the repository and deserialize it into `storage`.
