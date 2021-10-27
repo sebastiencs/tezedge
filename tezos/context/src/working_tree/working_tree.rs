@@ -561,7 +561,8 @@ impl WorkingTree {
             },
         };
 
-        match repo.get_hash(hash_id)? {
+        let hash_ref = ObjectReference::new(Some(hash_id), None);
+        match repo.get_hash(hash_ref)? {
             Some(hash) => Ok(hash.into_owned()),
             None => Err(MerkleError::ObjectNotFound {
                 object_ref: ObjectReference::new(Some(hash_id), None),

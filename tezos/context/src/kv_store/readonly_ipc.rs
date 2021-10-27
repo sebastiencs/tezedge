@@ -73,7 +73,9 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
             .map_err(|reason| DBError::IpcAccessError { reason })
     }
 
-    fn get_hash(&self, hash_id: HashId) -> Result<Option<Cow<ObjectHash>>, DBError> {
+    fn get_hash(&self, object_ref: ObjectReference) -> Result<Option<Cow<ObjectHash>>, DBError> {
+        let hash_id = object_ref.hash_id();
+
         if let Some(hash_id) = hash_id.get_readonly_id()? {
             Ok(self.hashes.get_hash(hash_id)?.map(Cow::Borrowed))
         } else {
@@ -208,6 +210,10 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
         _output: &[u8],
     ) -> Result<Option<AbsoluteOffset>, DBError> {
         Ok(None) // no-op
+    }
+
+    fn get_hash_id(&self, object_ref: ObjectReference) -> Result<HashId, DBError> {
+        todo!()
     }
 }
 

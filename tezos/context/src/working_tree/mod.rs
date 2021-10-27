@@ -211,7 +211,7 @@ impl DirEntry {
             .object_hash_id(store, storage)?
             .ok_or(HashingError::HashIdEmpty)?;
         store
-            .get_hash(hash_id)?
+            .get_hash(self.get_reference())?
             .ok_or(HashingError::HashIdNotFound { hash_id })
     }
 
@@ -226,13 +226,33 @@ impl DirEntry {
         match self.hash_id() {
             Some(hash_id) => Ok(Some(hash_id)),
             None => {
-                let hash_id = hash_object(
-                    self.get_object()
-                        .as_ref()
-                        .ok_or(HashingError::MissingObject)?,
-                    store,
-                    storage,
-                )?;
+                let is_inline = match self.get_object() {
+                    Some(Object::Blob(blob_id)) => blob_id.is_inline(),
+                    _ => false,
+                };
+
+                // println!("IS_INLINE={:?} DIR_ENTRY={:?}", is_inline, self);
+
+                let hash_id = if self.get_object().is_none() {
+                    Some(store.get_hash_id(self.get_reference()).unwrap())
+                } else {
+                    hash_object(
+                        self.get_object()
+                            .as_ref()
+                            .ok_or(HashingError::MissingObject)
+                            .unwrap(),
+                        store,
+                        storage,
+                    )?
+                };
+
+                // let hash_id = hash_object(
+                //     self.get_object()
+                //         .as_ref()
+                //         .ok_or(HashingError::MissingObject).unwrap(),
+                //     store,
+                //     storage,
+                // )?;
                 if let Some(hash_id) = hash_id {
                     let mut inner = self.inner.get();
                     inner.set_object_hash_id(hash_id.as_u32());

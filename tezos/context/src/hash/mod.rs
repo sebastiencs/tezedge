@@ -13,6 +13,7 @@ use thiserror::Error;
 
 use ocaml::ocaml_hash_string;
 
+use crate::working_tree::ObjectReference;
 use crate::{
     kv_store::HashId,
     persistent::DBError,
@@ -201,7 +202,7 @@ fn hash_long_inode(
                     };
 
                     let hash = store
-                        .get_hash(hash_id)?
+                        .get_hash(ObjectReference::new(Some(hash_id), None))?
                         .ok_or(HashingError::HashIdNotFound { hash_id })?;
 
                     hasher.update(hash.as_ref());
@@ -344,15 +345,13 @@ pub(crate) fn hash_commit(
     hasher.update(&(OBJECT_HASH_LEN as u64).to_be_bytes());
 
     let root_hash = store
-        .get_hash(commit.root_ref.hash_id())?
+        .get_hash(commit.root_ref)?
         .ok_or(HashingError::ValueExpected("root_hash"))?;
     hasher.update(root_hash.as_ref());
 
     if let Some(parent) = commit.parent_commit_ref {
-        let parent_hash_id = parent.hash_id();
-
         let parent_commit_hash = store
-            .get_hash(parent_hash_id)?
+            .get_hash(parent)?
             .ok_or(HashingError::ValueExpected("parent_commit_hash"))?;
         hasher.update(&(1_u64).to_be_bytes()); // # of parents; we support only 1
         hasher.update(&(parent_commit_hash.len() as u64).to_be_bytes());
@@ -514,10 +513,11 @@ mod tests {
         );
 
         let hash_id = hash_commit(&dummy_commit, repo).unwrap();
+        let object_ref = ObjectReference::new(Some(hash_id), None);
 
         assert_eq!(
             calculated_commit_hash.as_ref(),
-            repo.get_hash(hash_id).unwrap().unwrap().as_ref()
+            repo.get_hash(object_ref).unwrap().unwrap().as_ref()
         );
         assert_eq!(
             expected_commit_hash,
@@ -605,10 +605,11 @@ mod tests {
         );
 
         let hash_id = hash_directory(dummy_dir, repo, &mut storage).unwrap();
+        let object_ref = ObjectReference::new(Some(hash_id), None);
 
         assert_eq!(
             calculated_dir_hash.as_ref(),
-            repo.get_hash(hash_id).unwrap().unwrap().as_ref(),
+            repo.get_hash(object_ref).unwrap().unwrap().as_ref(),
         );
         assert_eq!(
             calculated_dir_hash.as_ref(),
@@ -697,8 +698,22 @@ mod tests {
                     bytes.copy_from_slice(object_hash.as_ref().as_slice().try_into().unwrap())
                 });
 
-                let dir_entry = DirEntry::new_commited(dir_entry_kind, Some(hash_id), None)
-                    .with_offset(0.into());
+                let object = match dir_entry_kind {
+                    DirEntryKind::Blob => Object::Blob(
+                        storage
+                            .add_blob_by_ref(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+                            .unwrap(),
+                    ),
+                    DirEntryKind::Directory => Object::Directory(DirectoryId::empty()),
+                };
+
+                let dir_entry = DirEntry::new_commited(dir_entry_kind, Some(hash_id), Some(object));
+                // .with_offset(0.into());
+
+                dir_entry.set_commited(false);
+
+                // let dir_entry = DirEntry::new_commited(dir_entry_kind, Some(hash_id), None)
+                //     .with_offset(0.into());
 
                 names.insert(binding.name.clone());
 
@@ -761,7 +776,8 @@ mod tests {
 
             let expected_hash = ContextHash::from_base58_check(&test_case.hash).unwrap();
             let computed_hash_id = hash_directory(dir_id, repo, &mut storage).unwrap();
-            let computed_hash = repo.get_hash(computed_hash_id).unwrap().unwrap();
+            let computed_hash_ref = ObjectReference::new(Some(computed_hash_id), None);
+            let computed_hash = repo.get_hash(computed_hash_ref).unwrap().unwrap();
             let computed_hash = ContextHash::try_from_bytes(computed_hash.as_ref()).unwrap();
 
             // The following block makes sure that a serialized & deserialized inode
@@ -769,7 +785,41 @@ mod tests {
             {
                 output.clear();
 
-                let offset = repo.get_current_offset().unwrap();
+                storage
+                    .dir_iterate_unsorted(dir_id, |(_, dir_entry_id)| {
+                        let dir_entry = storage.get_dir_entry(*dir_entry_id).unwrap();
+                        let object = dir_entry.get_object().unwrap();
+                        let object_hash_id = dir_entry.hash_id().unwrap();
+
+                        let offset = repo.get_current_offset().unwrap();
+
+                        let offset = serialize_fun(
+                            &object,
+                            object_hash_id,
+                            &mut output,
+                            &storage,
+                            &mut stats,
+                            &mut batch,
+                            &mut older_objects,
+                            repo,
+                            // 0,
+                            offset,
+                        )
+                        .unwrap();
+
+                        if let Some(offset) = offset {
+                            dir_entry.set_offset(offset);
+                        };
+
+                        Ok(())
+                    })
+                    .unwrap();
+
+                let offset = repo.synchronize_data(batch, &output).unwrap();
+                // let offset = repo.get_current_offset().unwrap();
+
+                let mut batch = Default::default();
+                output.clear();
 
                 let offset = serialize_fun(
                     &Object::Directory(dir_id),
@@ -797,12 +847,12 @@ mod tests {
                             storage.inodes_drop_hash_ids(inode_id);
                         }
 
-                        // println!("DIR RES={:#?}", storage.get_owned_dir(new_dir));
-
                         let new_computed_hash_id =
                             hash_directory(new_dir, repo, &mut storage).unwrap();
+                        let new_computed_hash_ref =
+                            ObjectReference::new(Some(new_computed_hash_id), None);
                         let new_computed_hash =
-                            repo.get_hash(new_computed_hash_id).unwrap().unwrap();
+                            repo.get_hash(new_computed_hash_ref).unwrap().unwrap();
                         let new_computed_hash =
                             ContextHash::try_from_bytes(new_computed_hash.as_ref()).unwrap();
 

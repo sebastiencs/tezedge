@@ -66,7 +66,7 @@ pub trait KeyValueStoreBackend {
     ///
     /// # Arguments
     /// * `hash_id` - HashId of the ObjectHash
-    fn get_hash(&self, hash_id: HashId) -> Result<Option<Cow<ObjectHash>>, DBError>;
+    fn get_hash(&self, object_ref: ObjectReference) -> Result<Option<Cow<ObjectHash>>, DBError>;
     /// Find an object to insert a new ObjectHash
     /// Return the object
     fn get_vacant_object_hash(&mut self) -> Result<VacantObjectHash, DBError>;
@@ -127,6 +127,8 @@ pub trait KeyValueStoreBackend {
         batch: Vec<(HashId, Arc<[u8]>)>,
         output: &[u8],
     ) -> Result<Option<AbsoluteOffset>, DBError>;
+
+    fn get_hash_id(&self, object_ref: ObjectReference) -> Result<HashId, DBError>;
 }
 
 /// Possible errors for schema
@@ -192,7 +194,7 @@ pub(crate) fn get_commit_hash(
     commit_ref: ObjectReference,
     repo: &ContextKeyValueStore,
 ) -> Result<ContextHash, ContextError> {
-    let commit_hash = match repo.get_hash(commit_ref.hash_id())? {
+    let commit_hash = match repo.get_hash(commit_ref)? {
         Some(hash) => hash,
         None => {
             return Err(MerkleError::ObjectNotFound {

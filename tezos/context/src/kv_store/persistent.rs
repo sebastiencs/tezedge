@@ -17,7 +17,9 @@ use crate::{
         get_commit_hash, get_persistent_base_path, DBError, File, FileOffset, FileType, Flushable,
         KeyValueStoreBackend, Persistable,
     },
-    serialize::persistent::{self, AbsoluteOffset},
+    serialize::persistent::{
+        self, deserialize_hash_id, read_object_length, AbsoluteOffset, ObjectHeader, ObjectLength,
+    },
     working_tree::{
         // serializer::{
         //     deserialize_object, read_object_length, serialize_object, AbsoluteOffset, ObjectHeader,
@@ -209,6 +211,29 @@ impl Persistent {
         let vacant = self.get_vacant_object_hash().unwrap();
         vacant.write_with(|entry| *entry = entry_hash)
     }
+
+    fn get_hash_id_from_offset<'a>(&self, object_ref: ObjectReference) -> Result<HashId, DBError> {
+        let offset = object_ref.offset();
+
+        let mut buffer: [u8; 4] = Default::default();
+
+        // Read one byte to get the `ObjectHeader`
+        self.data_file.read_exact_at(&mut buffer[..1], offset);
+        let object_header: ObjectHeader = ObjectHeader::from_bytes([buffer[0]]);
+
+        let header_length: u64 = match object_header.get_length() {
+            ObjectLength::OneByte => 2,
+            ObjectLength::TwoBytes => 3,
+            ObjectLength::FourBytes => 5,
+        };
+
+        let offset = offset.add(header_length);
+        self.data_file.read_exact_at(&mut buffer, offset);
+
+        let hash_id = deserialize_hash_id(&buffer)?.0.unwrap();
+
+        Ok(hash_id)
+    }
 }
 
 fn serialize_context_hash(hash_id: HashId, offset: AbsoluteOffset, hash: &[u8]) -> Vec<u8> {
@@ -230,7 +255,7 @@ impl KeyValueStoreBackend for Persistent {
     }
 
     fn put_context_hash(&mut self, object_ref: ObjectReference) -> Result<(), DBError> {
-        let commit_hash = self.get_hash(object_ref.hash_id()).unwrap().unwrap();
+        let commit_hash = self.get_hash(object_ref).unwrap().unwrap();
         // let commit_hash = self
         //     .hashes
         //     .get_hash(commit_hash_id)?
@@ -268,7 +293,8 @@ impl KeyValueStoreBackend for Persistent {
         Ok(self.context_hashes.get(&hashed).cloned())
     }
 
-    fn get_hash(&self, hash_id: HashId) -> Result<Option<Cow<ObjectHash>>, DBError> {
+    fn get_hash(&self, object_ref: ObjectReference) -> Result<Option<Cow<ObjectHash>>, DBError> {
+        let hash_id = self.get_hash_id(object_ref)?;
         self.hashes.get_hash(hash_id)
     }
 
@@ -412,5 +438,14 @@ impl KeyValueStoreBackend for Persistent {
     ) -> Result<Option<AbsoluteOffset>, DBError> {
         self.append_serialized_data(output)?;
         self.get_current_offset()
+    }
+
+    fn get_hash_id(&self, object_ref: ObjectReference) -> Result<HashId, DBError> {
+        let hash_id = match object_ref.hash_id_opt() {
+            Some(hash_id) => hash_id,
+            None => self.get_hash_id_from_offset(object_ref)?,
+        };
+
+        Ok(hash_id)
     }
 }

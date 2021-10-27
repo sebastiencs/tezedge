@@ -204,8 +204,8 @@ impl KeyValueStoreBackend for InMemory {
         Ok(self.get_context_hash_impl(context_hash).map(Into::into))
     }
 
-    fn get_hash(&self, hash_id: HashId) -> Result<Option<Cow<ObjectHash>>, DBError> {
-        Ok(self.get_hash(hash_id)?.map(Cow::Borrowed))
+    fn get_hash(&self, object_ref: ObjectReference) -> Result<Option<Cow<ObjectHash>>, DBError> {
+        Ok(self.get_hash(object_ref.hash_id())?.map(Cow::Borrowed))
     }
 
     // fn get_value(&self, hash_id: HashId) -> Result<Option<Cow<[u8]>>, DBError> {
@@ -327,6 +327,10 @@ impl KeyValueStoreBackend for InMemory {
     ) -> Result<Option<AbsoluteOffset>, DBError> {
         self.write_batch(batch)?;
         Ok(None)
+    }
+
+    fn get_hash_id(&self, object_ref: ObjectReference) -> Result<HashId, DBError> {
+        todo!()
     }
 }
 

@@ -23,7 +23,7 @@ use crate::{
         storage::{DirectoryId, Inode, PointerToInode},
         Commit, DirEntryKind, ObjectReference,
     },
-    ContextKeyValueStore,
+    ContextKeyValueStore, ObjectHash,
 };
 
 use crate::working_tree::{
@@ -217,6 +217,7 @@ fn serialize_offset(
 fn serialize_shaped_directory(
     shape_id: DirectoryShapeId,
     dir: &[(StringId, DirEntryId)],
+    object_hash_id: HashId,
     offset: AbsoluteOffset,
     output: &mut Vec<u8>,
     storage: &Storage,
@@ -229,11 +230,16 @@ fn serialize_shaped_directory(
     // Replaced by ObjectHeader
     output.write_all(&[0, 0])?;
 
+    let nbytes = serialize_hash_id(object_hash_id.as_u32(), output)?;
+
     let shape_id = shape_id.as_u32();
     output.write_all(&shape_id.to_le_bytes())?;
 
     // Make sure that SHAPED_DIRECTORY_NBYTES_TO_HASHES is correct.
-    debug_assert_eq!(output[start + 2..].len(), SHAPED_DIRECTORY_NBYTES_TO_HASHES);
+    debug_assert_eq!(
+        output[start + 2 + nbytes..].len(),
+        SHAPED_DIRECTORY_NBYTES_TO_HASHES
+    );
 
     for (_, dir_entry_id) in dir {
         let dir_entry = storage.get_dir_entry(*dir_entry_id)?;
@@ -264,8 +270,8 @@ fn serialize_shaped_directory(
 
             output.write_all(&byte[..])?;
 
-            let hash_id: u32 = dir_entry.hash_id().map(|h| h.as_u32()).unwrap_or(0);
-            let _nbytes = serialize_hash_id(hash_id, output)?;
+            // let hash_id: u32 = dir_entry.hash_id().map(|h| h.as_u32()).unwrap_or(0);
+            // let _nbytes = serialize_hash_id(hash_id, output)?;
 
             serialize_offset(output, relative_offset, offset_length);
             // output.write_all(&dir_entry_offset.to_le_bytes())?;
@@ -332,6 +338,7 @@ fn write_object_header(
 
 fn serialize_directory_or_shape(
     dir: &[(StringId, DirEntryId)],
+    object_hash_id: HashId,
     offset: AbsoluteOffset,
     output: &mut Vec<u8>,
     storage: &Storage,
@@ -339,14 +346,31 @@ fn serialize_directory_or_shape(
     stats: &mut SerializeStats,
 ) -> Result<(), SerializationError> {
     if let Some(shape_id) = repository.make_shape(dir, storage)? {
-        serialize_shaped_directory(shape_id, dir, offset, output, storage, stats)
+        serialize_shaped_directory(
+            shape_id,
+            dir,
+            object_hash_id,
+            offset,
+            output,
+            storage,
+            stats,
+        )
     } else {
-        serialize_directory(dir, offset, output, storage, repository, stats)
+        serialize_directory(
+            dir,
+            object_hash_id,
+            offset,
+            output,
+            storage,
+            repository,
+            stats,
+        )
     }
 }
 
 fn serialize_directory(
     dir: &[(StringId, DirEntryId)],
+    object_hash_id: HashId,
     offset: AbsoluteOffset,
     output: &mut Vec<u8>,
     storage: &Storage,
@@ -366,6 +390,8 @@ fn serialize_directory(
     // Replaced by ObjectHeader
     output.write_all(&[0, 0])?;
 
+    serialize_hash_id(object_hash_id.as_u32(), output)?;
+
     // output.write_all(&[ID_DIRECTORY])?;
 
     // // Replaced by the length
@@ -375,7 +401,7 @@ fn serialize_directory(
         let key = storage.get_str(*key_id)?;
         let dir_entry = storage.get_dir_entry(*dir_entry_id)?;
 
-        let hash_id: u32 = dir_entry.hash_id().map(|h| h.as_u32()).unwrap_or(0);
+        // let hash_id: u32 = dir_entry.hash_id().map(|h| h.as_u32()).unwrap_or(0);
         let kind = dir_entry.dir_entry_kind();
 
         let blob_inline = get_inline_blob(storage, &dir_entry);
@@ -427,15 +453,15 @@ fn serialize_directory(
 
             output.write_all(&blob_inline)?;
         } else {
-            let nbytes = serialize_hash_id(hash_id, output)?;
+            // let nbytes = serialize_hash_id(hash_id, output)?;
 
             let relative_offset = relative_offset.ok_or(MissingOffset)?;
             let offset_length = offset_length.ok_or(MissingOffset)?;
 
             serialize_offset(output, relative_offset, offset_length);
 
-            hash_ids_length += nbytes;
-            highest_hash_id = highest_hash_id.max(hash_id);
+            // hash_ids_length += nbytes;
+            // highest_hash_id = highest_hash_id.max(hash_id);
         }
     }
 
@@ -473,7 +499,7 @@ pub fn serialize_object(
     output: &mut Vec<u8>,
     storage: &Storage,
     stats: &mut SerializeStats,
-    batch: &mut Vec<(HashId, Arc<[u8]>)>,
+    batch: &mut Vec<(HashId, Arc<[u8]>)>, // TODO: Unused this
     _referenced_older_objects: &mut Vec<HashId>,
     repository: &mut ContextKeyValueStore,
     offset: Option<AbsoluteOffset>,
@@ -503,9 +529,15 @@ pub fn serialize_object(
             } else {
                 let dir = storage.get_small_dir(*dir_id)?;
 
-                serialize_directory_or_shape(dir, offset, output, storage, repository, stats)?;
-
-                batch.push((object_hash_id, Arc::from(&output[start..])));
+                serialize_directory_or_shape(
+                    dir,
+                    object_hash_id,
+                    offset,
+                    output,
+                    storage,
+                    repository,
+                    stats,
+                )?;
             }
         }
         Object::Blob(blob_id) => {
@@ -515,6 +547,8 @@ pub fn serialize_object(
 
             // Replaced by ObjectHeader
             output.write_all(&[0, 0])?;
+
+            serialize_hash_id(object_hash_id.as_u32(), output)?;
 
             // output.write_all(&[ID_BLOB])?;
 
@@ -527,12 +561,12 @@ pub fn serialize_object(
             write_object_header(output, start, ObjectTag::Blob);
 
             stats.add_blob(blob.len());
-
-            batch.push((object_hash_id, Arc::from(&output[start..])));
         }
         Object::Commit(commit) => {
             // Replaced by ObjectHeader
             output.write_all(&[0, 0])?;
+
+            serialize_hash_id(object_hash_id.as_u32(), output)?;
 
             let author_length = match commit.author.len() {
                 length if length <= 0xFF => ObjectLength::OneByte,
@@ -785,7 +819,7 @@ impl PointersOffsetsHeader {
 fn serialize_inode(
     inode_id: InodeId,
     output: &mut Vec<u8>,
-    hash_id: HashId,
+    object_hash_id: HashId,
     storage: &Storage,
     stats: &mut SerializeStats,
     batch: &mut Vec<(HashId, Arc<[u8]>)>,
@@ -835,6 +869,8 @@ fn serialize_inode(
             output.write_all(&[0, 0])?;
             // output.write_all(&[ID_INODE_POINTERS])?;
 
+            let nbytes = serialize_hash_id(object_hash_id.as_u32(), output)?;
+
             // // Replaced by the length
             // output.write_all(&[0, 0, 0, 0])?;
 
@@ -853,13 +889,16 @@ fn serialize_inode(
             // );
 
             // Make sure that INODE_POINTERS_NBYTES_TO_HASHES is correct.
-            debug_assert_eq!(output[start + 2..].len(), INODE_POINTERS_NBYTES_TO_HASHES);
+            debug_assert_eq!(
+                output[start + 2 + nbytes..].len(),
+                INODE_POINTERS_NBYTES_TO_HASHES
+            );
 
             for pointer in pointers.iter().filter_map(|p| p.as_ref()) {
-                let hash_id = pointer.hash_id().ok_or(MissingHashId)?;
-                let hash_id = hash_id.as_u32();
+                // let hash_id = pointer.hash_id().ok_or(MissingHashId)?;
+                // let hash_id = hash_id.as_u32();
 
-                serialize_hash_id(hash_id, output)?;
+                // serialize_hash_id(hash_id, output)?;
 
                 let (relative_offset, offset_length) =
                     get_relative_offset(offset, pointer.offset());
@@ -882,7 +921,7 @@ fn serialize_inode(
             // let length = output.len() as u32 - start as u32;
             // output[start as usize + 1..start as usize + 5].copy_from_slice(&length.to_le_bytes());
 
-            batch.push((hash_id, Arc::from(&output[start..])));
+            batch.push((object_hash_id, Arc::from(&output[start..])));
 
             // for pointer in pointers.iter().filter_map(|p| p.as_ref()) {
             //     let hash_id = pointer.hash_id().ok_or(MissingHashId)?;
@@ -915,16 +954,24 @@ fn serialize_inode(
             // caller (recursively) confirmed it's a new one.
 
             let dir = storage.get_small_dir(*dir_id)?;
-            serialize_directory(dir, offset, output, storage, repository, stats)?;
+            serialize_directory(
+                dir,
+                object_hash_id,
+                offset,
+                output,
+                storage,
+                repository,
+                stats,
+            )?;
 
-            batch.push((hash_id, Arc::from(&output[start..])));
+            batch.push((object_hash_id, Arc::from(&output[start..])));
         }
     };
 
     Ok(offset)
 }
 
-fn deserialize_hash_id(data: &[u8]) -> Result<(Option<HashId>, usize), DeserializationError> {
+pub fn deserialize_hash_id(data: &[u8]) -> Result<(Option<HashId>, usize), DeserializationError> {
     use DeserializationError::*;
 
     let byte_hash_id = data.get(0).copied().ok_or(UnexpectedEOF)?;
@@ -1041,10 +1088,10 @@ fn deserialize_shaped_directory(
 
                 DirEntry::new_commited(kind, None, Some(Object::Blob(blob_id)))
             } else {
-                let bytes = data.get(pos..).ok_or(UnexpectedEOF)?;
-                let (hash_id, nbytes) = deserialize_hash_id(bytes)?;
+                // let bytes = data.get(pos..).ok_or(UnexpectedEOF)?;
+                // let (hash_id, nbytes) = deserialize_hash_id(bytes)?;
 
-                pos += nbytes;
+                // pos += nbytes;
 
                 let (absolute_offset, nbytes) =
                     deserialize_offset(&data[pos..], offset_length, object_offset);
@@ -1056,8 +1103,9 @@ fn deserialize_shaped_directory(
 
                 pos += nbytes;
 
-                let dir_entry =
-                    DirEntry::new_commited(kind, Some(hash_id.ok_or(MissingHash)?), None);
+                let dir_entry = DirEntry::new_commited(kind, None, None);
+                // let dir_entry =
+                //     DirEntry::new_commited(kind, Some(hash_id.ok_or(MissingHash)?), None);
                 // let dir_entry =
                 //     DirEntry::new_commited(kind, None, None);
                 dir_entry.set_offset(absolute_offset);
@@ -1132,10 +1180,10 @@ fn deserialize_directory(
 
                 DirEntry::new_commited(kind, None, Some(Object::Blob(blob_id)))
             } else {
-                let bytes = data.get(pos..).ok_or(UnexpectedEOF)?;
-                let (hash_id, nbytes) = deserialize_hash_id(bytes)?;
+                // let bytes = data.get(pos..).ok_or(UnexpectedEOF)?;
+                // let (hash_id, nbytes) = deserialize_hash_id(bytes)?;
 
-                pos += nbytes;
+                // pos += nbytes;
 
                 let bytes = data.get(pos..).ok_or(UnexpectedEOF)?;
                 let (absolute_offset, nbytes) =
@@ -1148,8 +1196,9 @@ fn deserialize_directory(
 
                 // pos += 8;
 
-                let dir_entry =
-                    DirEntry::new_commited(kind, Some(hash_id.ok_or(MissingHash)?), None);
+                let dir_entry = DirEntry::new_commited(kind, None, None);
+                // let dir_entry =
+                //     DirEntry::new_commited(kind, Some(hash_id.ok_or(MissingHash)?), None);
                 dir_entry.set_offset(absolute_offset);
                 dir_entry
             };
@@ -1203,6 +1252,9 @@ pub fn deserialize_object(
         .get(header_nbytes..object_length)
         .ok_or(UnexpectedEOF)?;
 
+    let (_object_hash_id, nbytes) = deserialize_hash_id(bytes)?;
+
+    let bytes = bytes.get(nbytes..).ok_or(UnexpectedEOF)?;
     let mut pos = 0;
 
     match header.tag_or_err().map_err(|_| UnknownID)? {
@@ -1346,10 +1398,10 @@ fn deserialize_inode_pointers(
     let mut pointers: [Option<PointerToInode>; 32] = Default::default();
 
     for (index, pointer_index) in indexes_iter.enumerate() {
-        let bytes = data.get(pos..).ok_or(UnexpectedEOF)?;
-        let (hash_id, nbytes) = deserialize_hash_id(bytes)?;
+        // let bytes = data.get(pos..).ok_or(UnexpectedEOF)?;
+        // let (hash_id, nbytes) = deserialize_hash_id(bytes)?;
 
-        pos += nbytes;
+        // pos += nbytes;
 
         let offset_length = offsets_header.get(index);
         let (absolute_offset, nbytes) =
@@ -1396,8 +1448,11 @@ fn deserialize_inode_pointers(
         //         deserialize_inode(data.as_ref(), storage, repository)
         //     })?;
 
+        println!("INODE_ID={:?}", inode_id);
+
         pointers[pointer_index as usize] = Some(PointerToInode::new_commited(
-            Some(hash_id.ok_or(MissingHash)?),
+            None,
+            //Some(hash_id.ok_or(MissingHash)?),
             inode_id,
             Some(absolute_offset),
         ));
@@ -1423,30 +1478,24 @@ pub fn deserialize_inode(
     let header: ObjectHeader = ObjectHeader::from_bytes([header]);
 
     let (header_nbytes, _) = read_object_length(data, &header);
+    let data = data.get(header_nbytes..).ok_or(UnexpectedEOF)?;
+
+    let (_, nbytes) = deserialize_hash_id(data)?;
+    let data = data.get(nbytes..).ok_or(UnexpectedEOF)?;
 
     match header.tag_or_err().map_err(|_| UnknownID)? {
         ObjectTag::InodePointers => {
-            let inode = deserialize_inode_pointers(
-                &data[header_nbytes..],
-                object_offset,
-                storage,
-                repository,
-            )?;
+            let inode = deserialize_inode_pointers(data, object_offset, storage, repository)?;
             storage.add_inode(inode).map_err(Into::into)
         }
         ObjectTag::Directory => {
-            let dir_id = deserialize_directory(&data[header_nbytes..], object_offset, storage)?;
+            let dir_id = deserialize_directory(data, object_offset, storage)?;
             storage
                 .add_inode(Inode::Directory(dir_id))
                 .map_err(Into::into)
         }
         ObjectTag::ShapedDirectory => {
-            let dir_id = deserialize_shaped_directory(
-                &data[header_nbytes..],
-                object_offset,
-                storage,
-                repository,
-            )?;
+            let dir_id = deserialize_shaped_directory(data, object_offset, storage, repository)?;
             storage
                 .add_inode(Inode::Directory(dir_id))
                 .map_err(Into::into)
@@ -1695,24 +1744,21 @@ mod tests {
             .dir_insert(
                 dir_id,
                 "a",
-                DirEntry::new_commited(DirEntryKind::Blob, HashId::new(1), None)
-                    .with_offset(0.into()),
+                DirEntry::new_commited(DirEntryKind::Blob, None, None).with_offset(0.into()),
             )
             .unwrap();
         let dir_id = storage
             .dir_insert(
                 dir_id,
                 "bab",
-                DirEntry::new_commited(DirEntryKind::Blob, HashId::new(2), None)
-                    .with_offset(0.into()),
+                DirEntry::new_commited(DirEntryKind::Blob, None, None).with_offset(0.into()),
             )
             .unwrap();
         let dir_id = storage
             .dir_insert(
                 dir_id,
                 "0aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                DirEntry::new_commited(DirEntryKind::Blob, HashId::new(3), None)
-                    .with_offset(0.into()),
+                DirEntry::new_commited(DirEntryKind::Blob, None, None).with_offset(0.into()),
             )
             .unwrap();
 
@@ -1751,24 +1797,21 @@ mod tests {
             .dir_insert(
                 dir_id,
                 "a",
-                DirEntry::new_commited(DirEntryKind::Blob, HashId::new(1), None)
-                    .with_offset(1.into()),
+                DirEntry::new_commited(DirEntryKind::Blob, None, None).with_offset(1.into()),
             )
             .unwrap();
         let dir_id = storage
             .dir_insert(
                 dir_id,
                 "bab",
-                DirEntry::new_commited(DirEntryKind::Blob, HashId::new(2), None)
-                    .with_offset(2.into()),
+                DirEntry::new_commited(DirEntryKind::Blob, None, None).with_offset(2.into()),
             )
             .unwrap();
         let dir_id = storage
             .dir_insert(
                 dir_id,
                 "0aa",
-                DirEntry::new_commited(DirEntryKind::Blob, HashId::new(3), None)
-                    .with_offset(3.into()),
+                DirEntry::new_commited(DirEntryKind::Blob, None, None).with_offset(3.into()),
             )
             .unwrap();
 
@@ -1809,24 +1852,21 @@ mod tests {
             .dir_insert(
                 dir_id,
                 "a1",
-                DirEntry::new_commited(DirEntryKind::Blob, HashId::new(4), None)
-                    .with_offset(1.into()),
+                DirEntry::new_commited(DirEntryKind::Blob, None, None).with_offset(1.into()),
             )
             .unwrap();
         let dir_id = storage
             .dir_insert(
                 dir_id,
                 "bab1",
-                DirEntry::new_commited(DirEntryKind::Blob, HashId::new(5), None)
-                    .with_offset(2.into()),
+                DirEntry::new_commited(DirEntryKind::Blob, None, None).with_offset(2.into()),
             )
             .unwrap();
         let dir_id = storage
             .dir_insert(
                 dir_id,
                 "0aa1",
-                DirEntry::new_commited(DirEntryKind::Blob, HashId::new(6), None)
-                    .with_offset(3.into()),
+                DirEntry::new_commited(DirEntryKind::Blob, None, None).with_offset(3.into()),
             )
             .unwrap();
 
@@ -2072,8 +2112,8 @@ mod tests {
 
             for (index, pointer) in pointers.iter().enumerate() {
                 let pointer = pointer.as_ref().unwrap();
-                let hash_id = pointer.hash_id().unwrap();
-                assert_eq!(hash_id.as_u32() as usize, index + 1);
+                // let hash_id = pointer.hash_id().unwrap();
+                // assert_eq!(hash_id.as_u32() as usize, index + 1);
 
                 let inode = storage.get_inode(pointer.inode_id()).unwrap();
                 match inode {
@@ -2101,24 +2141,21 @@ mod tests {
             .dir_insert(
                 dir_id,
                 "a",
-                DirEntry::new_commited(DirEntryKind::Blob, HashId::new(1), None)
-                    .with_offset(1.into()),
+                DirEntry::new_commited(DirEntryKind::Blob, None, None).with_offset(1.into()),
             )
             .unwrap();
         let dir_id = storage
             .dir_insert(
                 dir_id,
                 "bab",
-                DirEntry::new_commited(DirEntryKind::Blob, HashId::new(2), None)
-                    .with_offset(2.into()),
+                DirEntry::new_commited(DirEntryKind::Blob, None, None).with_offset(2.into()),
             )
             .unwrap();
         let dir_id = storage
             .dir_insert(
                 dir_id,
                 "0aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                DirEntry::new_commited(DirEntryKind::Blob, HashId::new(3), None)
-                    .with_offset(3.into()),
+                DirEntry::new_commited(DirEntryKind::Blob, None, None).with_offset(3.into()),
             )
             .unwrap();
 
@@ -2175,8 +2212,7 @@ mod tests {
             .dir_insert(
                 dir_id,
                 "a",
-                DirEntry::new_commited(DirEntryKind::Blob, blob_hash_id, None)
-                    .with_offset(0.into()),
+                DirEntry::new_commited(DirEntryKind::Blob, None, None).with_offset(0.into()),
             )
             .unwrap();
 
