@@ -17,7 +17,7 @@ use tezos_timing::SerializeStats;
 use crate::{
     kv_store::HashId,
     persistent::DBError,
-    serialize::{get_inline_blob, COMPACT_HASH_ID_BIT},
+    serialize::{get_inline_blob, ObjectTag, COMPACT_HASH_ID_BIT},
     working_tree::{
         shape::ShapeStrings,
         storage::{DirectoryId, Inode, PointerToInode},
@@ -33,7 +33,10 @@ use crate::working_tree::{
     DirEntry, Object,
 };
 
-use super::{DeserializationError, SerializationError, FULL_23_BITS, FULL_31_BITS};
+use super::{
+    DeserializationError, ObjectHeader, ObjectLength, SerializationError, FULL_23_BITS,
+    FULL_31_BITS,
+};
 
 #[bitfield(bits = 8)]
 #[derive(Clone, Debug, Eq, PartialEq, Copy)]
@@ -59,41 +62,6 @@ pub struct DirEntryHeader {
 
 // Must fit in 1 byte
 assert_eq_size!(DirEntryHeader, u8);
-
-#[derive(BitfieldSpecifier)]
-#[bits = 2]
-#[derive(Clone, Debug, Eq, PartialEq, Copy)]
-pub enum ObjectLength {
-    OneByte,
-    TwoBytes,
-    FourBytes,
-}
-
-#[derive(BitfieldSpecifier)]
-#[bits = 3]
-#[derive(Clone, Debug, Eq, PartialEq, Copy)]
-pub enum ObjectTag {
-    Directory,
-    Blob,
-    Commit,
-    InodePointers,
-    ShapedDirectory,
-}
-
-#[bitfield(bits = 8)]
-#[derive(Debug)]
-pub struct ObjectHeader {
-    tag: ObjectTag,
-    length: ObjectLength,
-    #[skip]
-    _unused: B3,
-}
-
-impl ObjectHeader {
-    pub fn get_length(&self) -> ObjectLength {
-        self.length()
-    }
-}
 
 #[derive(BitfieldSpecifier)]
 #[bits = 2]
@@ -299,6 +267,7 @@ fn write_object_header(
         let header: [u8; 1] = ObjectHeader::new()
             .with_tag(tag)
             .with_length(ObjectLength::OneByte)
+            .with_is_persistent(true)
             .into_bytes();
 
         output[start] = header[0];
@@ -312,6 +281,7 @@ fn write_object_header(
         let header: [u8; 1] = ObjectHeader::new()
             .with_tag(tag)
             .with_length(ObjectLength::TwoBytes)
+            .with_is_persistent(true)
             .into_bytes();
 
         let length: u16 = length as u16 + 1;
@@ -327,6 +297,7 @@ fn write_object_header(
         let header: [u8; 1] = ObjectHeader::new()
             .with_tag(tag)
             .with_length(ObjectLength::FourBytes)
+            .with_is_persistent(true)
             .into_bytes();
 
         let length: u32 = length as u32 + 3;

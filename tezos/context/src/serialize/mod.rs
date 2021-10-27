@@ -1,5 +1,6 @@
 use std::{array::TryFromSliceError, num::TryFromIntError, str::Utf8Error, string::FromUtf8Error};
 
+use modular_bitfield::prelude::*;
 use thiserror::Error;
 
 use crate::{
@@ -23,6 +24,46 @@ const COMPACT_HASH_ID_BIT: u32 = 1 << 23;
 
 const FULL_31_BITS: u32 = 0x7FFFFFFF;
 const FULL_23_BITS: u32 = 0x7FFFFF;
+
+#[derive(BitfieldSpecifier)]
+#[bits = 2]
+#[derive(Clone, Debug, Eq, PartialEq, Copy)]
+pub enum ObjectLength {
+    OneByte,
+    TwoBytes,
+    FourBytes,
+}
+
+#[derive(BitfieldSpecifier)]
+#[bits = 3]
+#[derive(Clone, Debug, Eq, PartialEq, Copy)]
+pub enum ObjectTag {
+    Directory,
+    Blob,
+    Commit,
+    InodePointers,
+    ShapedDirectory,
+}
+
+#[bitfield(bits = 8)]
+#[derive(Debug)]
+pub struct ObjectHeader {
+    tag: ObjectTag,
+    length: ObjectLength,
+    is_persistent: bool,
+    #[skip]
+    _unused: B2,
+}
+
+impl ObjectHeader {
+    pub fn get_length(&self) -> ObjectLength {
+        self.length()
+    }
+
+    pub fn get_persistent(&self) -> bool {
+        self.is_persistent()
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum SerializationError {

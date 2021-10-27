@@ -18,8 +18,8 @@ use tezos_timing::{RepositoryMemoryUsage, SerializeStats};
 use crate::{
     kv_store::{readonly_ipc::ContextServiceError, HashId, HashIdError, VacantObjectHash},
     serialize::{
-        persistent::{read_object_length, AbsoluteOffset, ObjectHeader, ObjectLength},
-        DeserializationError,
+        persistent::{read_object_length, AbsoluteOffset},
+        DeserializationError, ObjectHeader, ObjectLength,
     },
     working_tree::{
         // serializer::{

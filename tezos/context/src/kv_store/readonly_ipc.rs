@@ -13,7 +13,8 @@ use tezos_timing::{RepositoryMemoryUsage, SerializeStats};
 use thiserror::Error;
 
 use crate::persistent::{get_commit_hash, DBError, Flushable, Persistable};
-use crate::serialize::persistent::{deserialize_object, AbsoluteOffset};
+use crate::serialize::persistent::AbsoluteOffset;
+use crate::serialize::{in_memory, persistent, ObjectHeader};
 use crate::working_tree::shape::{DirectoryShapeId, ShapeStrings};
 use crate::working_tree::storage::{DirEntryId, Storage};
 use crate::working_tree::string_interner::{StringId, StringInterner};
@@ -163,11 +164,18 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
         self.get_object_bytes(object_ref, &mut storage.data)?;
 
         let bytes = std::mem::take(&mut storage.data);
-        let result =
-            deserialize_object(&bytes, object_ref.offset(), storage, self).map_err(Into::into);
+
+        let object_header: ObjectHeader = ObjectHeader::from_bytes([bytes[0]; 1]);
+
+        let result = if object_header.get_persistent() {
+            persistent::deserialize_object(&bytes, object_ref.offset(), storage, self)
+        } else {
+            in_memory::deserialize_object(&bytes, storage, self)
+        };
+
         storage.data = bytes;
 
-        result
+        result.map_err(Into::into)
     }
 
     fn get_object_bytes<'a>(

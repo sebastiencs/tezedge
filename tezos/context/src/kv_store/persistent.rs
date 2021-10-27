@@ -17,8 +17,9 @@ use crate::{
         get_commit_hash, get_persistent_base_path, DBError, File, FileOffset, FileType, Flushable,
         KeyValueStoreBackend, Persistable,
     },
-    serialize::persistent::{
-        self, deserialize_hash_id, read_object_length, AbsoluteOffset, ObjectHeader, ObjectLength,
+    serialize::{
+        persistent::{self, deserialize_hash_id, read_object_length, AbsoluteOffset},
+        ObjectHeader, ObjectLength,
     },
     working_tree::{
         // serializer::{
