@@ -12,12 +12,12 @@ use slog::{error, info};
 use tezos_timing::{RepositoryMemoryUsage, SerializeStats};
 use thiserror::Error;
 
-use crate::persistent::{DBError, Flushable, Persistable};
+use crate::persistent::{get_commit_hash, DBError, Flushable, Persistable};
 use crate::serialize::persistent::{deserialize_object, AbsoluteOffset};
 use crate::working_tree::shape::{DirectoryShapeId, ShapeStrings};
 use crate::working_tree::storage::{DirEntryId, Storage};
 use crate::working_tree::string_interner::{StringId, StringInterner};
-use crate::working_tree::working_tree::WorkingTree;
+use crate::working_tree::working_tree::{PostCommitData, WorkingTree};
 use crate::working_tree::{Object, ObjectReference};
 use crate::{
     ffi::TezedgeIndexError, gc::NotGarbageCollected, persistent::KeyValueStoreBackend, ObjectHash,
@@ -200,8 +200,23 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
         message: String,
         date: u64,
     ) -> Result<(ContextHash, Box<SerializeStats>), DBError> {
-        // ADD clear_objects
-        todo!()
+        let PostCommitData {
+            commit_ref,
+            serialize_stats,
+            ..
+        } = working_tree
+            .prepare_commit(date, author, message, parent_commit_ref, self, None)
+            .unwrap();
+
+        // self.append_serialized_data(&output)?;
+        // self.put_context_hash(commit_ref)?;
+
+        let commit_hash = get_commit_hash(commit_ref, self).map_err(Box::new)?;
+
+        // TODO ADD clear_objects
+        self.clear_objects()?;
+
+        Ok((commit_hash, serialize_stats))
     }
 
     fn synchronize_data(
@@ -213,7 +228,13 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
     }
 
     fn get_hash_id(&self, object_ref: ObjectReference) -> Result<HashId, DBError> {
-        todo!()
+        if let Some(hash_id) = object_ref.hash_id_opt() {
+            return Ok(hash_id);
+        };
+
+        self.client
+            .get_hash_id(object_ref)
+            .map_err(|reason| DBError::IpcAccessError { reason })
     }
 }
 
@@ -245,6 +266,7 @@ use super::{in_memory::HashValueStore, HashId, VacantObjectHash};
 enum ContextRequest {
     GetContextHashId(ContextHash),
     GetHash(HashId),
+    GetHashId(ObjectReference),
     GetObjectBytes(ObjectReference),
     GetShape(DirectoryShapeId),
     ContainsObject(HashId),
@@ -255,6 +277,7 @@ enum ContextRequest {
 #[derive(Serialize, Deserialize, Debug, IntoStaticStr)]
 enum ContextResponse {
     GetHashResponse(Result<Option<ObjectHash>, String>),
+    GetHashIdResponse(Result<HashId, String>),
     GetContextHashIdResponse(Result<Option<ObjectReference>, String>),
     GetObjectBytesResponse(Result<Vec<u8>, String>),
     GetShapeResponse(Result<Vec<String>, String>),
@@ -277,7 +300,9 @@ pub enum ContextError {
     #[error("Context get hash id error: {reason}")]
     GetContextHashIdError { reason: String },
     #[error("Context get hash error: {reason}")]
-    GetContextHashError { reason: String },
+    GetHashError { reason: String },
+    #[error("Context get hash id error: {reason}")]
+    GetHashIdError { reason: String },
 }
 
 #[derive(Error, Debug)]
@@ -434,7 +459,6 @@ impl IpcContextClient {
         }
     }
 
-    /// Check if object with hash id exists
     pub fn get_hash(
         &self,
         hash_id: HashId,
@@ -449,7 +473,25 @@ impl IpcContextClient {
         {
             ContextResponse::GetHashResponse(result) => result
                 .map(|h| h.map(Cow::Owned))
-                .map_err(|err| ContextError::GetContextHashError { reason: err }.into()),
+                .map_err(|err| ContextError::GetHashError { reason: err }.into()),
+            message => Err(ContextServiceError::UnexpectedMessage {
+                message: message.into(),
+            }),
+        }
+    }
+
+    pub fn get_hash_id(&self, object_ref: ObjectReference) -> Result<HashId, ContextServiceError> {
+        let mut io = self.io.borrow_mut();
+        io.tx.send(&ContextRequest::GetHashId(object_ref))?;
+
+        // this might take a while, so we will use unusually long timeout
+        match io
+            .rx
+            .try_receive(Some(Self::TIMEOUT), Some(IpcContextListener::IO_TIMEOUT))?
+        {
+            ContextResponse::GetHashIdResponse(result) => {
+                result.map_err(|err| ContextError::GetHashIdError { reason: err }.into())
+            }
             message => Err(ContextServiceError::UnexpectedMessage {
                 message: message.into(),
             }),
@@ -695,6 +737,19 @@ impl IpcContextServer {
                         }
                     }
                 }
+                ContextRequest::GetHashId(object_ref) => match crate::ffi::get_context_index()? {
+                    None => io.tx.send(&ContextResponse::GetHashIdResponse(Err(
+                        "Context index unavailable".to_owned(),
+                    )))?,
+                    Some(index) => {
+                        let repo = index.repository.read().unwrap();
+
+                        let hash_id = repo.get_hash_id(object_ref).unwrap();
+
+                        io.tx
+                            .send(&ContextResponse::GetHashIdResponse(Ok(hash_id)))?;
+                    }
+                },
             }
         }
 

@@ -330,7 +330,7 @@ impl KeyValueStoreBackend for InMemory {
     }
 
     fn get_hash_id(&self, object_ref: ObjectReference) -> Result<HashId, DBError> {
-        todo!()
+        object_ref.hash_id_opt().ok_or(DBError::HashIdFailed)
     }
 }
 
