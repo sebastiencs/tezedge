@@ -195,7 +195,7 @@ pub struct StringInterner {
 
 impl PartialEq for StringInterner {
     fn eq(&self, other: &Self) -> bool {
-        self.all_strings.len() == other.all_strings.len()
+        self.all_strings.len() == other.all_strings.len() && self.big_strings == other.big_strings
     }
 }
 
@@ -212,14 +212,16 @@ impl StringInterner {
             return;
         }
 
-        debug_assert!(self.all_strings.len() < other.all_strings.len());
+        if self.all_strings.len() != other.all_strings.len() {
+            debug_assert!(self.all_strings.len() < other.all_strings.len());
 
-        // Append the missing chunk into Self
-        let self_len = self.all_strings.len();
-        self.all_strings.push_str(&other.all_strings[self_len..]);
-        self.string_to_offset.extend(&other.string_to_offset);
+            // Append the missing chunk into Self
+            let self_len = self.all_strings.len();
+            self.all_strings.push_str(&other.all_strings[self_len..]);
+            self.string_to_offset.extend(&other.string_to_offset);
 
-        self.all_strings_to_serialize = other.all_strings_to_serialize.clone();
+            self.all_strings_to_serialize = other.all_strings_to_serialize.clone();
+        }
 
         debug_assert_eq!(self.all_strings, other.all_strings);
 
@@ -353,5 +355,30 @@ mod tests {
         assert!(a.is_big());
         assert_eq!(interner.get(a).unwrap(), long_str);
         assert_eq!(interner.get(b).unwrap(), long_str);
+
+        // Make sure that StringInterner::extend_from works
+
+        let mut other_interner = StringInterner::default();
+        other_interner.extend_from(&interner);
+
+        assert_eq!(interner.all_strings, other_interner.all_strings);
+        assert_eq!(
+            interner.big_strings.strings,
+            other_interner.big_strings.strings
+        );
+
+        let long_str = std::iter::repeat("b")
+            .take(STRING_INTERN_THRESHOLD)
+            .collect::<String>();
+        let _ = interner.get_string_id(&long_str);
+
+        // We added a big string to `interner`, it should be copied to `other_interner`.
+        other_interner.extend_from(&interner);
+
+        assert_eq!(interner.all_strings, other_interner.all_strings);
+        assert_eq!(
+            interner.big_strings.strings,
+            other_interner.big_strings.strings
+        );
     }
 }
