@@ -1409,6 +1409,16 @@ impl Storage {
             self.inodes.clear();
         }
     }
+
+    pub fn deallocate(&mut self) {
+        self.nodes = IndexMap::new();
+        self.directories = Vec::new();
+        self.temp_dir = Vec::new();
+        self.blobs = Vec::new();
+        self.inodes = Vec::new();
+        self.data = Vec::new();
+        self.strings = StringInterner::default();
+    }
 }
 
 #[cfg(test)]

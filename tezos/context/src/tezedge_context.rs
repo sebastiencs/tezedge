@@ -42,6 +42,55 @@ use crate::{
 // because it is not used on Rust, but we need a type to represent it.
 pub struct PatchContextFunction {}
 
+struct TezedgeIndexSynchronized<'a> {
+    index: &'a TezedgeIndex,
+}
+
+impl<'a> TezedgeIndexSynchronized<'a> {
+    fn synchronized(index: &'a TezedgeIndex) -> Result<TezedgeIndexSynchronized<'a>, ContextError> {
+        let repository = index.repository.write()?;
+        let mut storage = index.storage.borrow_mut();
+
+        repository.synchronize_strings_into(&mut storage.strings);
+
+        Ok(TezedgeIndexSynchronized { index })
+    }
+}
+
+impl std::ops::Deref for TezedgeIndexSynchronized<'_> {
+    type Target = TezedgeIndex;
+
+    fn deref(&self) -> &Self::Target {
+        &self.index
+    }
+}
+
+impl Drop for TezedgeIndexSynchronized<'_> {
+    fn drop(&mut self) {
+        let mut storage = self.storage.borrow_mut();
+        storage.deallocate();
+    }
+}
+
+struct TezedgeContextWithDeallocation<'a> {
+    ctx: &'a TezedgeContext,
+}
+
+impl std::ops::Deref for TezedgeContextWithDeallocation<'_> {
+    type Target = TezedgeContext;
+
+    fn deref(&self) -> &Self::Target {
+        &self.ctx
+    }
+}
+
+impl Drop for TezedgeContextWithDeallocation<'_> {
+    fn drop(&mut self) {
+        let mut storage = self.index.storage.borrow_mut();
+        storage.deallocate();
+    }
+}
+
 /// The index is how we interact with the actual storage used to store the
 /// context data. All reading and writing to the storage is done through the index.
 #[derive(Clone)]
@@ -73,6 +122,10 @@ impl TezedgeIndex {
             repository,
             storage: Default::default(),
         }
+    }
+
+    fn synchronized(&self) -> Result<TezedgeIndexSynchronized, ContextError> {
+        TezedgeIndexSynchronized::synchronized(self)
     }
 
     // /// Fetches object from the repository associated to this `hash_id`.
@@ -628,6 +681,77 @@ impl TezedgeIndex {
             repository: Arc::clone(&self.repository),
         })
     }
+
+    fn get_key_from_history_impl(
+        &self,
+        context_hash: &ContextHash,
+        key: &ContextKey,
+    ) -> Result<Option<ContextValue>, ContextError> {
+        let object_ref = {
+            let repository = self.repository.write()?;
+
+            match repository.get_context_hash(context_hash)? {
+                Some(hash_id) => hash_id,
+                None => {
+                    return Err(ContextError::UnknownContextHashError {
+                        context_hash: context_hash.to_base58_check(),
+                    })
+                }
+            }
+        };
+
+        match self.get_history(object_ref, key) {
+            Err(MerkleError::ValueNotFound { key: _ }) => Ok(None),
+            Err(MerkleError::ObjectNotFound { .. }) => Ok(None),
+            Err(err) => Err(ContextError::MerkleStorageError { error: err }),
+            Ok(val) => Ok(Some(val)),
+        }
+    }
+
+    fn get_key_values_by_prefix_impl(
+        &self,
+        context_hash: &ContextHash,
+        prefix: &ContextKey,
+    ) -> Result<Option<Vec<(ContextKeyOwned, ContextValue)>>, ContextError> {
+        let object_ref = {
+            let repository = self.repository.read()?;
+            match repository.get_context_hash(context_hash)? {
+                Some(hash_id) => hash_id,
+                None => {
+                    return Err(ContextError::UnknownContextHashError {
+                        context_hash: context_hash.to_base58_check(),
+                    })
+                }
+            }
+        };
+
+        self.get_context_key_values_by_prefix(object_ref, prefix)
+            .map_err(Into::into)
+    }
+
+    fn get_context_tree_by_prefix_impl(
+        &self,
+        context_hash: &ContextHash,
+        prefix: &ContextKey,
+        depth: Option<usize>,
+    ) -> Result<StringTreeObject, ContextError> {
+        let object_ref = {
+            let repository = self.repository.read()?;
+            match repository.get_context_hash(context_hash)? {
+                Some(hash_id) => hash_id,
+                None => {
+                    return Err(ContextError::UnknownContextHashError {
+                        context_hash: context_hash.to_base58_check(),
+                    })
+                }
+            }
+        };
+
+        let mut storage = self.storage.borrow_mut();
+
+        self._get_context_tree_by_prefix(object_ref, prefix, depth, &mut storage)
+            .map_err(ContextError::from)
+    }
 }
 
 impl IndexApi<TezedgeContext> for TezedgeIndex {
@@ -648,8 +772,6 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
     }
 
     fn checkout(&self, context_hash: &ContextHash) -> Result<Option<TezedgeContext>, ContextError> {
-        // println!("CHECKOUT {:?}", context_hash);
-
         let object_ref = {
             let repository = self.repository.read()?;
 
@@ -708,29 +830,8 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
         context_hash: &ContextHash,
         key: &ContextKey,
     ) -> Result<Option<ContextValue>, ContextError> {
-        let object_ref = {
-            let repository = self.repository.read()?;
-
-            match repository.get_context_hash(context_hash)? {
-                Some(hash_id) => hash_id,
-                None => {
-                    return Err(ContextError::UnknownContextHashError {
-                        context_hash: context_hash.to_base58_check(),
-                    })
-                }
-            }
-        };
-
-        println!("GET_KEY_FROM_HISTORY={:?}", object_ref);
-
-        // println!("HASH_ID={:?}, OFFSET={:?}", hash_id, offset);
-
-        match self.get_history(object_ref, key) {
-            Err(MerkleError::ValueNotFound { key: _ }) => Ok(None),
-            Err(MerkleError::ObjectNotFound { .. }) => Ok(None),
-            Err(err) => Err(ContextError::MerkleStorageError { error: err }),
-            Ok(val) => Ok(Some(val)),
-        }
+        let index = self.synchronized()?;
+        index.get_key_from_history_impl(context_hash, key)
     }
 
     fn get_key_values_by_prefix(
@@ -738,20 +839,8 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
         context_hash: &ContextHash,
         prefix: &ContextKey,
     ) -> Result<Option<Vec<(ContextKeyOwned, ContextValue)>>, ContextError> {
-        let object_ref = {
-            let repository = self.repository.read()?;
-            match repository.get_context_hash(context_hash)? {
-                Some(hash_id) => hash_id,
-                None => {
-                    return Err(ContextError::UnknownContextHashError {
-                        context_hash: context_hash.to_base58_check(),
-                    })
-                }
-            }
-        };
-
-        self.get_context_key_values_by_prefix(object_ref, prefix)
-            .map_err(Into::into)
+        let index = self.synchronized()?;
+        index.get_key_values_by_prefix_impl(context_hash, prefix)
     }
 
     fn get_context_tree_by_prefix(
@@ -760,22 +849,8 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
         prefix: &ContextKey,
         depth: Option<usize>,
     ) -> Result<StringTreeObject, ContextError> {
-        let object_ref = {
-            let repository = self.repository.read()?;
-            match repository.get_context_hash(context_hash)? {
-                Some(hash_id) => hash_id,
-                None => {
-                    return Err(ContextError::UnknownContextHashError {
-                        context_hash: context_hash.to_base58_check(),
-                    })
-                }
-            }
-        };
-
-        let mut storage = self.storage.borrow_mut();
-
-        self._get_context_tree_by_prefix(object_ref, prefix, depth, &mut storage)
-            .map_err(ContextError::from)
+        let index = self.synchronized()?;
+        index.get_context_tree_by_prefix_impl(context_hash, prefix, depth)
     }
 }
 
@@ -862,14 +937,22 @@ impl ShellContextApi for TezedgeContext {
         message: String,
         date: i64,
     ) -> Result<ContextHash, ContextError> {
-        self.index.synchronize_interned_strings_to_repository()?;
+        let ctx = self.with_deallocation();
+        ctx.commit_impl(author, message, date)
 
-        // Objects to be inserted are obtained from the commit call and written here
-        let date: u64 = date.try_into()?;
-        let mut repository = self.index.repository.write()?;
+        // self.index.synchronize_interned_strings_to_repository()?;
 
-        let (commit_hash, serialize_stats) =
-            repository.commit(&self.tree, self.parent_commit_ref, author, message, date)?;
+        // let (commit_hash, serialize_stats) = {
+        //     let mut repository = self.index.repository.write()?;
+        //     let date: u64 = date.try_into()?;
+
+        //     repository.commit(&self.tree, self.parent_commit_ref, author, message, date)?
+        // };
+
+        // let mut repository = self.index.repository.write()?;
+
+        // let (commit_hash, serialize_stats) =
+        //     repository.commit(&self.tree, self.parent_commit_ref, author, message, date)?;
 
         // let PostCommitData {
         //     commit_ref,
@@ -902,13 +985,17 @@ impl ShellContextApi for TezedgeContext {
         // let commit_hash = self.get_commit_hash(commit_ref, &*repository)?;
         // repository.clear_objects()?;
 
-        std::mem::drop(repository);
-        send_statistics(BlockMemoryUsage {
-            context: Box::new(self.get_memory_usage()?),
-            serialize: serialize_stats,
-        });
+        // std::mem::drop(repository);
 
-        Ok(commit_hash)
+        // send_statistics(BlockMemoryUsage {
+        //     context: Box::new(self.get_memory_usage()?),
+        //     serialize: serialize_stats,
+        // });
+
+        // let mut storage = self.index.storage.borrow_mut();
+        // storage.deallocate();
+
+        // Ok(commit_hash)
     }
 
     fn hash(
@@ -1037,6 +1124,33 @@ impl TezedgeContext {
             index: self.index.clone(),
             ..*self
         }
+    }
+
+    fn with_deallocation(&self) -> TezedgeContextWithDeallocation<'_> {
+        TezedgeContextWithDeallocation { ctx: self }
+    }
+
+    fn commit_impl(
+        &self,
+        author: String,
+        message: String,
+        date: i64,
+    ) -> Result<ContextHash, ContextError> {
+        self.index.synchronize_interned_strings_to_repository()?;
+
+        let (commit_hash, serialize_stats) = {
+            let mut repository = self.index.repository.write()?;
+            let date: u64 = date.try_into()?;
+
+            repository.commit(&self.tree, self.parent_commit_ref, author, message, date)?
+        };
+
+        send_statistics(BlockMemoryUsage {
+            context: Box::new(self.get_memory_usage()?),
+            serialize: serialize_stats,
+        });
+
+        Ok(commit_hash)
     }
 }
 
