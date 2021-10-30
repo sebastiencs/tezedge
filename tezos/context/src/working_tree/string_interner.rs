@@ -420,9 +420,7 @@ mod tests {
         assert_eq!(interner.get(a), Some("a"));
         assert_eq!(interner.get(a), interner.get(b));
 
-        let long_str = std::iter::repeat("a")
-            .take(STRING_INTERN_THRESHOLD)
-            .collect::<String>();
+        let long_str = "a".repeat(STRING_INTERN_THRESHOLD);
 
         let a = interner.get_string_id(&long_str);
         let b = interner.get_string_id(&long_str);
@@ -442,9 +440,7 @@ mod tests {
             other_interner.big_strings.strings
         );
 
-        let long_str = std::iter::repeat("b")
-            .take(STRING_INTERN_THRESHOLD)
-            .collect::<String>();
+        let long_str = "b".repeat(STRING_INTERN_THRESHOLD);
         let _ = interner.get_string_id(&long_str);
 
         // We added a big string to `interner`, it should be copied to `other_interner`.

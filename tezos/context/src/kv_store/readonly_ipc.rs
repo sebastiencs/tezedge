@@ -185,9 +185,7 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
     ) -> Result<&'a [u8], DBError> {
         if let Some(hash_id) = object_ref
             .hash_id_opt()
-            .map(|h| h.get_readonly_id())
-            .transpose()?
-            .flatten()
+            .and_then(|h| h.get_readonly_id().ok()?)
         {
             let bytes = self.hashes.get_value(hash_id)?.unwrap();
             buffer.clear();
