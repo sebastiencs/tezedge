@@ -925,7 +925,7 @@ fn serialize_inode(
             // caller (recursively) confirmed it's a new one.
 
             let dir = storage.get_small_dir(*dir_id)?;
-            serialize_directory(
+            serialize_directory_or_shape(
                 dir,
                 object_hash_id,
                 offset,
