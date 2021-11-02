@@ -247,6 +247,12 @@ impl StringInterner {
             return;
         }
 
+        if self.all_strings.is_empty() && self.big_strings.strings.is_empty() {
+            // Optimize the case when we're empty (avoid call to `HashMap::extent` bellow)
+            *self = other.clone();
+            return;
+        }
+
         if self.all_strings.len() != other.all_strings.len() {
             debug_assert!(self.all_strings.len() < other.all_strings.len());
 
