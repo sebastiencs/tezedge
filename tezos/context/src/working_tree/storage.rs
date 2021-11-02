@@ -563,11 +563,11 @@ type IsNewKey = bool;
 impl Storage {
     pub fn new() -> Self {
         Self {
-            directories: Vec::with_capacity(1024),
+            directories: Vec::with_capacity(16384),
             temp_dir: Vec::with_capacity(128),
             blobs: Vec::with_capacity(2048),
             strings: Default::default(),
-            nodes: IndexMap::with_capacity(2048),
+            nodes: IndexMap::with_capacity(4096),
             inodes: Vec::with_capacity(256),
             data: Vec::with_capacity(100_000),
         }

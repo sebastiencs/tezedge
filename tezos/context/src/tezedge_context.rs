@@ -787,6 +787,9 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
         // to keep the latest version around and copy only when not different?
         let index = self.with_clear_storage()?;
 
+        // let mut storage = self.storage.borrow_mut();
+        // storage.clear();
+
         let dir_id = {
             let mut storage = index.storage.borrow_mut();
 
