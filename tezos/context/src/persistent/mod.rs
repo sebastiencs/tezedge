@@ -302,6 +302,7 @@ impl File {
             .read(true)
             .write(true)
             .truncate(false)
+            .append(true)
             .create(true)
             .open(PathBuf::from(base_path).join(file_type.get_path()))
             .unwrap();
