@@ -269,9 +269,10 @@ impl KeyValueStoreBackend for InMemory {
         &self,
         object_ref: ObjectReference,
         storage: &mut Storage,
+        strings: &mut StringInterner,
     ) -> Result<Object, DBError> {
         let object_bytes = self.get_value(object_ref.hash_id())?.unwrap_or(&[]);
-        in_memory::deserialize_object(object_bytes, storage, self).map_err(Into::into)
+        in_memory::deserialize_object(object_bytes, storage, strings, self).map_err(Into::into)
     }
 
     fn get_object_bytes<'a>(

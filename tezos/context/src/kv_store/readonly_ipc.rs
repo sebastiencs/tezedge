@@ -160,6 +160,7 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
         &self,
         object_ref: ObjectReference,
         storage: &mut Storage,
+        strings: &mut StringInterner,
     ) -> Result<Object, DBError> {
         self.get_object_bytes(object_ref, &mut storage.data)?;
 
@@ -168,9 +169,9 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
         let object_header: ObjectHeader = ObjectHeader::from_bytes([bytes[0]; 1]);
 
         let result = if object_header.get_persistent() {
-            persistent::deserialize_object(&bytes, object_ref.offset(), storage, self)
+            persistent::deserialize_object(&bytes, object_ref.offset(), storage, strings, self)
         } else {
-            in_memory::deserialize_object(&bytes, storage, self)
+            in_memory::deserialize_object(&bytes, storage, strings, self)
         };
 
         storage.data = bytes;

@@ -435,12 +435,18 @@ impl KeyValueStoreBackend for Persistent {
         &self,
         object_ref: ObjectReference,
         storage: &mut Storage,
+        strings: &mut StringInterner,
     ) -> Result<Object, DBError> {
         self.get_object_bytes(object_ref, &mut storage.data)?;
 
         let object_bytes = std::mem::take(&mut storage.data);
-        let result =
-            persistent::deserialize_object(&object_bytes, object_ref.offset(), storage, self);
+        let result = persistent::deserialize_object(
+            &object_bytes,
+            object_ref.offset(),
+            storage,
+            strings,
+            self,
+        );
         storage.data = object_bytes;
 
         result.map_err(Into::into)

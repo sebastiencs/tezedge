@@ -104,6 +104,7 @@ pub trait KeyValueStoreBackend {
         &self,
         object_ref: ObjectReference,
         storage: &mut Storage,
+        strings: &mut StringInterner,
     ) -> Result<Object, DBError>;
 
     fn get_object_bytes<'a>(

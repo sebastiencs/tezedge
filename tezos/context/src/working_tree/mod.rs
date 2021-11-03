@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use crate::hash::{hash_object, HashingError, ObjectHash};
 use crate::{kv_store::HashId, ContextKeyValueStore};
 
+use self::string_interner::StringInterner;
 use self::{
     storage::{BlobId, DirectoryId, Storage},
     working_tree::MerkleError,
@@ -206,9 +207,10 @@ impl DirEntry {
         &self,
         store: &'a mut ContextKeyValueStore,
         storage: &Storage,
+        strings: &StringInterner,
     ) -> Result<Cow<'a, ObjectHash>, HashingError> {
         let hash_id = self
-            .object_hash_id(store, storage)?
+            .object_hash_id(store, storage, strings)?
             .ok_or(HashingError::HashIdEmpty)?;
         store
             .get_hash(self.get_reference())?
@@ -222,6 +224,7 @@ impl DirEntry {
         &self,
         store: &mut ContextKeyValueStore,
         storage: &Storage,
+        strings: &StringInterner,
     ) -> Result<Option<HashId>, HashingError> {
         match self.hash_id() {
             Some(hash_id) => Ok(Some(hash_id)),
@@ -243,6 +246,7 @@ impl DirEntry {
                             .unwrap(),
                         store,
                         storage,
+                        strings,
                     )?
                 };
 
