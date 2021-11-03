@@ -96,16 +96,35 @@ struct Hashes {
 }
 
 impl Hashes {
-    fn try_new(base_path: &str) -> Self {
-        let hashes_file = File::new(base_path, FileType::Hashes);
+    fn try_new(hashes_file: File) -> Self {
+        let list = Self::deserialize_hashes(&mut hashes_file);
 
         Self {
-            list: Vec::with_capacity(1000),
+            list,
             hashes_file,
             // hashes_file_index: 0,
-            list_first_index: 0,
+            list_first_index: list.len(),
             bytes: Vec::with_capacity(1000),
         }
+    }
+
+    fn deserialize_hashes(hashes_file: &mut File) -> Vec<ObjectHash> {
+        let list = Vec::with_capacity(1000);
+
+        let mut offset = 0u64;
+        let end = hashes_file.offset().as_u64();
+
+        while offset < end {
+            // TODO: it is probably better to preallocate list with capacity all at once (plus extra),
+            // then write directly on the elements with `read_exact_at`.
+            let hash_bytes: ObjectHash = Default::default();
+            hashes_file.read_exact_at(&mut hash_bytes, offset.into());
+            offset += hash_bytes.len() as u64;
+
+            list.push(hash_bytes)
+        }
+
+        list
     }
 
     fn get_hash(&self, hash_id: HashId) -> Result<Option<Cow<ObjectHash>>, DBError> {
@@ -179,13 +198,29 @@ impl Persistent {
         let big_strings_file = File::new(&base_path, FileType::BigStrings);
         let big_strings_offsets_file = File::new(&base_path, FileType::BigStringsOffsets);
 
-        let hashes = Hashes::try_new(&base_path);
-        // let hashes_file = File::new(&base_path, FileType::Hashes);
+        /*
+        TODO:
 
-        let mut context_hashes_cycles = VecDeque::with_capacity(PRESERVE_CYCLE_COUNT);
-        for _ in 0..PRESERVE_CYCLE_COUNT {
-            context_hashes_cycles.push_back(Default::default())
-        }
+        fill Persistent::{shape,string_interner,context_hashes, hashes}
+        Persistent::hashes::list_first_index need to be set to number of hashes in the file hashes.db
+        */
+
+        //let hashes = Hashes::try_new(&base_path);
+        let hashes_file = File::new(&base_path, FileType::Hashes);
+
+        //let mut context_hashes_cycles = VecDeque::with_capacity(PRESERVE_CYCLE_COUNT);
+        //for _ in 0..PRESERVE_CYCLE_COUNT {
+        //    context_hashes_cycles.push_back(Default::default())
+        //}
+
+        let shapes = DirectoryShapes::deserialize(&mut shape_file, &mut shape_index_file);
+        let string_interner = StringInterner::deserialize(
+            &mut strings_file,
+            &mut big_strings_file,
+            &mut big_strings_offsets_file,
+        );
+        let (hashes, context_hashes, context_hashes_cycles) =
+            deserialize_hashes(hashes_file, &mut commit_index_file);
 
         Ok(Self {
             data_file,
@@ -198,10 +233,10 @@ impl Persistent {
             big_strings_offsets_file,
             // hashes_file,
             // hashes_file_index: 0,
-            shapes: DirectoryShapes::default(),
-            string_interner: StringInterner::default(),
+            shapes,
+            string_interner,
             // hashes: Default::default(),
-            context_hashes: Default::default(),
+            context_hashes,
             context_hashes_cycles,
             // data: Vec::with_capacity(100_000),
         })
@@ -237,12 +272,59 @@ impl Persistent {
     }
 }
 
+fn deserialize_hashes(
+    hashes_file: File,
+    commit_index_file: &mut File,
+) -> (
+    Hashes,
+    std::collections::HashMap<u64, ObjectReference, crate::NoHash>,
+    VecDeque<Vec<u64>>,
+) {
+    let hashes = Hashes::try_new(hashes_file);
+    let context_hashes: std::collections::HashMap<u64, ObjectReference, crate::NoHash> =
+        Default::default();
+    let context_hashes_cycles: VecDeque<Vec<u64>> = Default::default();
+
+    let mut offset = 0u64;
+    let end = commit_index_file.offset().as_u64();
+
+    while offset < end {
+        // commit index file is a sequence of entries that look like:
+        // [hash_id u32 ne bytes | offset u64 ne bytes | hash <HASH_LEN> bytes]
+        let hash_id_bytes = [0u8; 4];
+        commit_index_file.read_exact_at(&mut hash_id_bytes, offset.into());
+        offset += hash_id_bytes.len() as u64;
+        let hash_id = u32::from_ne_bytes(hash_id_bytes);
+
+        let hash_offset_bytes = [0u8; 8];
+        commit_index_file.read_exact_at(&mut hash_offset_bytes, offset.into());
+        offset += hash_offset_bytes.len() as u64;
+        let hash_offset = u64::from_ne_bytes(hash_offset_bytes);
+
+        let commit_hash: ObjectHash = Default::default();
+        commit_index_file.read_exact_at(&mut commit_hash, offset.into());
+        offset += commit_hash.len() as u64;
+
+        let object_reference = ObjectReference {
+            hash_id: HashId::new(hash_id),
+            offset: Some(hash_offset.into()),
+        };
+
+        context_hashes.insert(hash_offset, object_reference);
+    }
+
+    // TODO context_hash_cycles?
+
+    (hashes, context_hashes, context_hashes_cycles)
+}
+
 fn serialize_context_hash(hash_id: HashId, offset: AbsoluteOffset, hash: &[u8]) -> Vec<u8> {
     let mut output = Vec::<u8>::with_capacity(100);
 
     let offset: u64 = offset.as_u64();
     let hash_id: u32 = hash_id.as_u32();
 
+    // TODO: why ne bytes? will make the storage files non-portable
     output.write_all(&hash_id.to_ne_bytes()).unwrap();
     output.write_all(&offset.to_ne_bytes()).unwrap();
     output.write_all(hash).unwrap();

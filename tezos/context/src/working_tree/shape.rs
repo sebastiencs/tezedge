@@ -11,7 +11,7 @@ use std::{
     hash::Hasher,
 };
 
-use crate::kv_store::index_map::IndexMap;
+use crate::{kv_store::index_map::IndexMap, persistent::File};
 use modular_bitfield::prelude::*;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -224,5 +224,23 @@ impl DirectoryShapes {
         self.to_serialize.clear();
 
         output
+    }
+
+    // TODO: should return Result<Self, Error> instead, deserialization can fail.
+    pub fn deserialize(shapes_file: &mut File, shapes_index_file: &mut File) -> Self {
+        let result = Self::default();
+
+        for offset in 0..shapes_file.offset().as_u64() {
+            let offset = offset.into();
+            let string_id_bytes = [0u8; 4];
+            shapes_file.read_exact_at(&mut string_id_bytes, offset);
+            let string_id = StringId::deserialize(string_id_bytes);
+
+            result.shapes.push(string_id)
+        }
+
+        // TODO: what to do with shapes_index_file? how is `hash_to_strings` rebuilt?
+
+        result
     }
 }

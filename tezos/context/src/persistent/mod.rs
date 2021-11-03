@@ -300,14 +300,15 @@ impl File {
         let file = OpenOptions::new()
             .read(true)
             .write(true)
-            .truncate(true)
+            .truncate(false)
             .create(true)
             .open(PathBuf::from(base_path).join(file_type.get_path()))
             .unwrap();
+        let offset = file.metadata().unwrap().len();
 
         Self {
             file,
-            offset: 0,
+            offset,
             file_type,
         }
     }
