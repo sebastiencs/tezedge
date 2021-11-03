@@ -1293,7 +1293,7 @@ impl Timing {
 
                 path.push(FILENAME_DB);
 
-                std::fs::remove_file(&path).ok();
+                // std::fs::remove_file(&path).ok();
                 Connection::open(&path)?
             }
             None => Connection::open_in_memory()?,
