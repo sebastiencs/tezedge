@@ -692,11 +692,12 @@ impl TezedgeIndex {
     fn with_clear_storage(&self) -> Result<Self, MerkleError> {
         // let storage: Rc<RefCell<Storage>> = Default::default();
 
-        // {
-        //     let repository = self.repository.read()?;
+        {
+            let repository = self.repository.read()?;
 
-        //     repository.synchronize_strings_into(&mut storage.borrow_mut().strings);
-        // }
+            let mut strings = self.string_interner.borrow_mut();
+            repository.synchronize_strings_into(&mut strings);
+        }
 
         Ok(Self {
             storage: Default::default(),
