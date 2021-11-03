@@ -56,7 +56,6 @@ pub struct Persistent {
 
     // hashes: Hashes,
     pub context_hashes: Map<u64, ObjectReference>,
-    context_hashes_cycles: VecDeque<Vec<u64>>,
 }
 
 impl GarbageCollector for Persistent {
@@ -220,8 +219,7 @@ impl Persistent {
             &mut big_strings_file,
             &mut big_strings_offsets_file,
         );
-        let (hashes, context_hashes, context_hashes_cycles) =
-            deserialize_hashes(hashes_file, &mut commit_index_file);
+        let (hashes, context_hashes) = deserialize_hashes(hashes_file, &mut commit_index_file);
 
         Ok(Self {
             data_file,
@@ -238,7 +236,6 @@ impl Persistent {
             string_interner,
             // hashes: Default::default(),
             context_hashes,
-            context_hashes_cycles,
             // data: Vec::with_capacity(100_000),
         })
     }
@@ -279,12 +276,10 @@ fn deserialize_hashes(
 ) -> (
     Hashes,
     std::collections::HashMap<u64, ObjectReference, crate::NoHash>,
-    VecDeque<Vec<u64>>,
 ) {
     let hashes = Hashes::try_new(hashes_file);
     let mut context_hashes: std::collections::HashMap<u64, ObjectReference, crate::NoHash> =
         Default::default();
-    let context_hashes_cycles: VecDeque<Vec<u64>> = Default::default();
 
     let mut offset = 0u64;
     let end = commit_index_file.offset().as_u64();
@@ -311,9 +306,7 @@ fn deserialize_hashes(
         context_hashes.insert(hash_offset, object_reference);
     }
 
-    // TODO context_hash_cycles?
-
-    (hashes, context_hashes, context_hashes_cycles)
+    (hashes, context_hashes)
 }
 
 fn serialize_context_hash(hash_id: HashId, offset: AbsoluteOffset, hash: &[u8]) -> Vec<u8> {
@@ -356,9 +349,6 @@ impl KeyValueStoreBackend for Persistent {
         self.commit_index_file.append(&output);
 
         self.context_hashes.insert(hashed, object_ref);
-        if let Some(back) = self.context_hashes_cycles.back_mut() {
-            back.push(hashed);
-        };
 
         Ok(())
     }
