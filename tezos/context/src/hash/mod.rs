@@ -13,6 +13,7 @@ use thiserror::Error;
 
 use ocaml::ocaml_hash_string;
 
+use crate::working_tree::string_interner::StringInterner;
 use crate::working_tree::ObjectReference;
 use crate::{
     kv_store::HashId,
@@ -107,6 +108,7 @@ fn hash_long_inode(
     inode: &Inode,
     store: &mut ContextKeyValueStore,
     storage: &Storage,
+    strings: &StringInterner,
 ) -> Result<HashId, HashingError> {
     let mut hasher = VarBlake2b::new(OBJECT_HASH_LEN)?;
 
@@ -132,7 +134,7 @@ fn hash_long_inode(
             // | \len(name)  |     name     |  kind  |  hash  |
 
             for (name, dir_entry_id) in dir {
-                let name = storage.get_str(*name)?;
+                let name = strings.get(*name).ok_or(StorageError::StringNotFound)?;
 
                 leb128::write::unsigned(&mut hasher, name.len() as u64)?;
                 hasher.update(name.as_bytes());
@@ -152,7 +154,7 @@ fn hash_long_inode(
                 if let Some(blob) = blob_inlined {
                     hasher.update(&hash_inlined_blob(blob)?);
                 } else {
-                    hasher.update(dir_entry.object_hash(store, storage)?.as_ref());
+                    hasher.update(dir_entry.object_hash(store, storage, strings)?.as_ref());
                 }
             }
         }
@@ -195,7 +197,7 @@ fn hash_long_inode(
                         None => {
                             let inode_id = pointer.inode_id();
                             let inode = storage.get_inode(inode_id)?;
-                            let hash_id = hash_long_inode(inode, store, storage)?;
+                            let hash_id = hash_long_inode(inode, store, storage, strings)?;
                             pointer.set_hash_id(Some(hash_id));
                             hash_id
                         }
@@ -227,6 +229,7 @@ fn hash_short_inode(
     dir_id: DirectoryId,
     store: &mut ContextKeyValueStore,
     storage: &Storage,
+    strings: &StringInterner,
 ) -> Result<HashId, HashingError> {
     let mut hasher = VarBlake2b::new(OBJECT_HASH_LEN)?;
 
@@ -250,7 +253,7 @@ fn hash_short_inode(
         hasher.update(encode_irmin_dir_entry_kind(&v.dir_entry_kind()));
         // Key length is written in LEB128 encoding
 
-        let k = storage.get_str(*k)?;
+        let k = strings.get(*k).ok_or(StorageError::StringNotFound)?;
         leb128::write::unsigned(&mut hasher, k.len() as u64)?;
         hasher.update(k.as_bytes());
         hasher.update(&(OBJECT_HASH_LEN as u64).to_be_bytes());
@@ -263,7 +266,7 @@ fn hash_short_inode(
         if let Some(blob) = blob_inlined {
             hasher.update(&hash_inlined_blob(blob)?);
         } else {
-            hasher.update(v.object_hash(store, storage)?.as_ref());
+            hasher.update(v.object_hash(store, storage, strings)?.as_ref());
         }
     }
 
@@ -280,12 +283,13 @@ pub(crate) fn hash_directory(
     dir_id: DirectoryId,
     store: &mut ContextKeyValueStore,
     storage: &Storage,
+    strings: &StringInterner,
 ) -> Result<HashId, HashingError> {
     if let Some(inode_id) = dir_id.get_inode_id() {
         let inode = storage.get_inode(inode_id)?;
-        hash_long_inode(&inode, store, storage)
+        hash_long_inode(&inode, store, storage, strings)
     } else {
-        hash_short_inode(dir_id, store, storage)
+        hash_short_inode(dir_id, store, storage, strings)
     }
 }
 
@@ -377,10 +381,11 @@ pub(crate) fn hash_object(
     object: &Object,
     store: &mut ContextKeyValueStore,
     storage: &Storage,
+    strings: &StringInterner,
 ) -> Result<Option<HashId>, HashingError> {
     match object {
         Object::Commit(commit) => hash_commit(commit, store).map(Some),
-        Object::Directory(dir_id) => hash_directory(*dir_id, store, storage).map(Some),
+        Object::Directory(dir_id) => hash_directory(*dir_id, store, storage, strings).map(Some),
         Object::Blob(blob_id) => hash_blob(*blob_id, store, storage),
     }
 }
@@ -551,12 +556,15 @@ mod tests {
         let dummy_dir = DirectoryId::empty();
 
         let mut storage = Storage::new();
+        let mut strings = StringInterner::default();
 
         let blob_id = storage.add_blob_by_ref(&[1]).unwrap();
 
         let dir_entry = DirEntry::new(DirEntryKind::Blob, Object::Blob(blob_id));
 
-        let dummy_dir = storage.dir_insert(dummy_dir, "a", dir_entry).unwrap();
+        let dummy_dir = storage
+            .dir_insert(dummy_dir, "a", dir_entry, &mut strings)
+            .unwrap();
 
         // hexademical representation of above directory:
         //
@@ -604,7 +612,7 @@ mod tests {
             hex::encode(calculated_dir_hash.as_ref())
         );
 
-        let hash_id = hash_directory(dummy_dir, repo, &mut storage).unwrap();
+        let hash_id = hash_directory(dummy_dir, repo, &mut storage, &strings).unwrap();
         let object_ref = ObjectReference::new(Some(hash_id), None);
 
         assert_eq!(
@@ -668,6 +676,7 @@ mod tests {
 
         // let mut repo = InMemory::try_new().expect("failed to create context");
         let mut storage = Storage::new();
+        let mut strings = StringInterner::default();
         let mut output = Vec::new();
         let mut older_objects = Vec::new();
         let mut stats = SerializeStats::default();
@@ -718,11 +727,11 @@ mod tests {
                 names.insert(binding.name.clone());
 
                 dir_id = storage
-                    .dir_insert(dir_id, binding.name.as_str(), dir_entry)
+                    .dir_insert(dir_id, binding.name.as_str(), dir_entry, &mut strings)
                     .unwrap();
 
                 assert!(storage
-                    .dir_find_dir_entry(dir_id, binding.name.as_str())
+                    .dir_find_dir_entry(dir_id, binding.name.as_str(), &strings)
                     .is_some());
             }
 
@@ -740,6 +749,7 @@ mod tests {
                             &key,
                             DirEntry::new_commited(DirEntryKind::Blob, Some(hash_id), None)
                                 .with_offset(0.into()),
+                            &mut strings,
                         )
                         .unwrap();
                     let a = dir_id;
@@ -752,6 +762,7 @@ mod tests {
                             &key,
                             DirEntry::new_commited(DirEntryKind::Blob, Some(hash_id), None)
                                 .with_offset(0.into()),
+                            &mut strings,
                         )
                         .unwrap();
                     let b = dir_id;
@@ -762,11 +773,11 @@ mod tests {
                 // Remove the elements we just inserted
                 for index in 0..10000 {
                     let key = format!("abc{}", index);
-                    dir_id = storage.dir_remove(dir_id, &key).unwrap();
+                    dir_id = storage.dir_remove(dir_id, &key, &strings).unwrap();
                     let a = dir_id;
 
                     // Remove the same key twice
-                    dir_id = storage.dir_remove(dir_id, &key).unwrap();
+                    dir_id = storage.dir_remove(dir_id, &key, &strings).unwrap();
                     let b = dir_id;
 
                     // The 2nd remove should not modify the existing inode or create a new one
@@ -775,7 +786,7 @@ mod tests {
             }
 
             let expected_hash = ContextHash::from_base58_check(&test_case.hash).unwrap();
-            let computed_hash_id = hash_directory(dir_id, repo, &mut storage).unwrap();
+            let computed_hash_id = hash_directory(dir_id, repo, &mut storage, &strings).unwrap();
             let computed_hash_ref = ObjectReference::new(Some(computed_hash_id), None);
             let computed_hash = repo.get_hash(computed_hash_ref).unwrap().unwrap();
             let computed_hash = ContextHash::try_from_bytes(computed_hash.as_ref()).unwrap();
@@ -798,6 +809,7 @@ mod tests {
                             object_hash_id,
                             &mut output,
                             &storage,
+                            &strings,
                             &mut stats,
                             &mut batch,
                             &mut older_objects,
@@ -826,6 +838,7 @@ mod tests {
                     computed_hash_id,
                     &mut output,
                     &storage,
+                    &strings,
                     &mut stats,
                     &mut batch,
                     &mut older_objects,
@@ -837,7 +850,9 @@ mod tests {
                 repo.synchronize_data(batch, &output).unwrap();
 
                 let object_ref = ObjectReference::new(Some(computed_hash_id), offset);
-                let object = repo.get_object(object_ref, &mut storage).unwrap();
+                let object = repo
+                    .get_object(object_ref, &mut storage, &mut strings)
+                    .unwrap();
 
                 match object {
                     Object::Directory(new_dir) => {
@@ -848,7 +863,7 @@ mod tests {
                         }
 
                         let new_computed_hash_id =
-                            hash_directory(new_dir, repo, &mut storage).unwrap();
+                            hash_directory(new_dir, repo, &mut storage, &strings).unwrap();
                         let new_computed_hash_ref =
                             ObjectReference::new(Some(new_computed_hash_id), None);
                         let new_computed_hash =
