@@ -96,35 +96,16 @@ struct Hashes {
 
 impl Hashes {
     fn try_new(mut hashes_file: File) -> Self {
-        let list = Self::deserialize_hashes(&mut hashes_file);
-        let list_first_index = list.len();
+        let list_first_index =
+            (hashes_file.offset().as_u64() as usize) / crate::hash::OBJECT_HASH_LEN;
 
         Self {
-            list,
+            list: Vec::with_capacity(1000),
             hashes_file,
             // hashes_file_index: 0,
             list_first_index,
             bytes: Vec::with_capacity(1000),
         }
-    }
-
-    fn deserialize_hashes(hashes_file: &mut File) -> Vec<ObjectHash> {
-        let mut list = Vec::with_capacity(1000);
-
-        let mut offset = 0u64;
-        let end = hashes_file.offset().as_u64();
-
-        while offset < end {
-            // TODO: it is probably better to preallocate list with capacity all at once (plus extra),
-            // then write directly on the elements with `read_exact_at`.
-            let mut hash_bytes: ObjectHash = Default::default();
-            hashes_file.read_exact_at(&mut hash_bytes, offset.into());
-            offset += hash_bytes.len() as u64;
-
-            list.push(hash_bytes)
-        }
-
-        list
     }
 
     fn get_hash(&self, hash_id: HashId) -> Result<Option<Cow<ObjectHash>>, DBError> {
@@ -303,7 +284,11 @@ fn deserialize_hashes(
 
         let object_reference = ObjectReference::new(HashId::new(hash_id), Some(hash_offset.into()));
 
-        context_hashes.insert(hash_offset, object_reference);
+        let mut hasher = DefaultHasher::new();
+        hasher.write(&commit_hash);
+        let hashed = hasher.finish();
+
+        context_hashes.insert(hashed, object_reference);
     }
 
     (hashes, context_hashes)

@@ -248,7 +248,7 @@ impl DirectoryShapes {
         let mut shape_slice_id_bytes = [0u8; 8];
 
         while offset < shape_index_file_end {
-            shapes_file.read_exact_at(&mut shape_slice_id_bytes, offset.into());
+            shapes_index_file.read_exact_at(&mut shape_slice_id_bytes, offset.into());
 
             offset += shape_slice_id_bytes.len() as u64;
 
