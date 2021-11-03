@@ -203,23 +203,26 @@ impl BigStrings {
         let mut offset = 0u64;
         let end = big_strings_file.offset().as_u64();
 
+        let mut length_bytes = [0u8; 4];
+        let mut string_bytes = [0u8; 256]; //  30 should be enough here
+
         // big_strings_file is a sequence of
         // [u32 length le bytes | ... <length> bytes string]
         // big_strings_offsets_file is a sequence of:
         // [u32 start le bytes | u32 end le bytes]
         // but using `result.push_str` with the string seems to be enough to also update the offsets?
         while offset < end {
-            let mut length_bytes = [0u8; 4];
             big_strings_file.read_exact_at(&mut length_bytes, offset.into());
 
             let length = u32::from_le_bytes(length_bytes) as usize;
             offset += length_bytes.len() as u64;
 
-            let mut string_bytes = [0u8; 256]; //  30 should be enough here
             big_strings_file.read_exact_at(&mut string_bytes[0..length], offset.into());
-            let _index = result.push_str(std::str::from_utf8(&string_bytes[0..length]).unwrap());
-
             offset += length as u64;
+
+            let _index = result.push_str(std::str::from_utf8(&string_bytes[..length]).unwrap());
+
+            // offset += length as u64;
         }
 
         result
@@ -416,19 +419,22 @@ impl StringInterner {
         let mut offset = 0u64;
         let end = strings_file.offset().as_u64();
 
-        while offset < end {
-            let mut length_byte = [0u8; 1];
-            strings_file.read_exact_at(&mut length_byte, offset.into());
+        let mut length_byte = [0u8; 1];
+        let mut string_bytes = [0u8; 256]; //  30 should be enough here
 
-            let length = u8::from_le_bytes(length_byte) as usize;
+        while offset < end {
+            strings_file.read_exact_at(&mut length_byte, offset.into());
             offset += length_byte.len() as u64;
 
-            let mut string_bytes = [0u8; 256]; //  30 should be enough here
-            strings_file.read_exact_at(&mut string_bytes[0..length], offset.into());
-            let _string_id =
-                result.get_string_id(std::str::from_utf8(&string_bytes[0..length]).unwrap());
+            let length = u8::from_le_bytes(length_byte) as usize;
+            strings_file.read_exact_at(&mut string_bytes[..length], offset.into());
 
             offset += length as u64;
+
+            let _string_id =
+                result.get_string_id(std::str::from_utf8(&string_bytes[..length]).unwrap());
+
+            // offset += length as u64;
 
             // Need to keep this clear, everything being added has been serialized already
             result.all_strings_to_serialize.clear();

@@ -229,17 +229,50 @@ impl DirectoryShapes {
     // TODO: should return Result<Self, Error> instead, deserialization can fail.
     pub fn deserialize(shapes_file: &mut File, shapes_index_file: &mut File) -> Self {
         let mut result = Self::default();
+        let mut string_id_bytes = [0u8; 4];
 
-        for offset in 0..shapes_file.offset().as_u64() {
-            let offset = offset.into();
-            let mut string_id_bytes = [0u8; 4];
-            shapes_file.read_exact_at(&mut string_id_bytes, offset);
+        let mut offset = 0;
+        let shape_file_end = shapes_file.offset().as_u64();
+
+        while offset < shape_file_end {
+            shapes_file.read_exact_at(&mut string_id_bytes, offset.into());
             let string_id = StringId::deserialize(string_id_bytes);
+
+            offset += string_id_bytes.len() as u64;
 
             result.shapes.push(string_id)
         }
 
-        // TODO: what to do with shapes_index_file? how is `hash_to_strings` rebuilt?
+        let mut offset = 0;
+        let shape_index_file_end = shapes_index_file.offset().as_u64();
+        let mut shape_slice_id_bytes = [0u8; 8];
+
+        while offset < shape_index_file_end {
+            shapes_file.read_exact_at(&mut shape_slice_id_bytes, offset.into());
+
+            offset += shape_slice_id_bytes.len() as u64;
+
+            let slice_id: ShapeSliceId = ShapeSliceId::from_bytes(shape_slice_id_bytes);
+
+            let start: usize = slice_id.start() as usize;
+            let end: usize = start + slice_id.length() as usize;
+
+            let slice = &result.shapes[start..end];
+
+            result.temp.clear();
+            let mut hasher = DefaultHasher::new();
+            hasher.write_usize(slice.len());
+            for key_id in slice {
+                hasher.write_u32(key_id.as_u32());
+                result.temp.push(*key_id);
+            }
+            let shape_hash = DirectoryShapeHash(hasher.finish());
+
+            let shape_id = result.id_to_hash.push(shape_hash).unwrap();
+            result
+                .hash_to_strings
+                .insert(shape_hash, (shape_id, slice_id));
+        }
 
         result
     }
