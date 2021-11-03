@@ -228,11 +228,11 @@ impl DirectoryShapes {
 
     // TODO: should return Result<Self, Error> instead, deserialization can fail.
     pub fn deserialize(shapes_file: &mut File, shapes_index_file: &mut File) -> Self {
-        let result = Self::default();
+        let mut result = Self::default();
 
         for offset in 0..shapes_file.offset().as_u64() {
             let offset = offset.into();
-            let string_id_bytes = [0u8; 4];
+            let mut string_id_bytes = [0u8; 4];
             shapes_file.read_exact_at(&mut string_id_bytes, offset);
             let string_id = StringId::deserialize(string_id_bytes);
 
