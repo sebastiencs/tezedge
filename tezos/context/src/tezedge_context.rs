@@ -1169,10 +1169,8 @@ impl TezedgeContext {
         date: i64,
     ) -> Result<ContextHash, ContextError> {
         let now = std::time::Instant::now();
-
         self.index.synchronize_interned_strings_to_repository()?;
-
-        println!("SYNC={:?}", now.elapsed());
+        let sync = now.elapsed();
 
         let now = std::time::Instant::now();
         let (commit_hash, serialize_stats) = {
@@ -1181,17 +1179,19 @@ impl TezedgeContext {
 
             repository.commit(&self.tree, self.parent_commit_ref, author, message, date)?
         };
-
-        println!("COMMIT={:?}", now.elapsed());
+        let commit = now.elapsed();
 
         let now = std::time::Instant::now();
-
         send_statistics(BlockMemoryUsage {
             context: Box::new(self.get_memory_usage()?),
             serialize: serialize_stats,
         });
+        let send = now.elapsed();
 
-        println!("SEND STATS={:?}", now.elapsed());
+        println!(
+            "COMMIT_IMPL SYNC={:?} COMMIT={:?} SEND={:?}",
+            sync, commit, send
+        );
 
         Ok(commit_hash)
     }
