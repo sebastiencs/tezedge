@@ -790,9 +790,9 @@ impl WorkingTree {
         serialize_function: Option<SerializeObjectSignature>,
         offset: Option<AbsoluteOffset>,
     ) -> Result<PostCommitData, MerkleError> {
-        let now = std::time::Instant::now();
+        // let now = std::time::Instant::now();
         let root_hash_id = self.get_root_directory_hash(store)?;
-        println!("COMPUTE HASH = {:?}", now.elapsed());
+        // println!("COMPUTE HASH = {:?}", now.elapsed());
         let root = self.get_root_directory();
 
         let new_commit = Commit {

@@ -227,14 +227,20 @@ impl DirEntry {
         match self.hash_id() {
             Some(hash_id) => Ok(Some(hash_id)),
             None => {
-                let is_inline = match self.get_object() {
-                    Some(Object::Blob(blob_id)) => blob_id.is_inline(),
-                    _ => false,
-                };
+                // let is_inline = match self.get_object() {
+                //     Some(Object::Blob(blob_id)) => blob_id.is_inline(),
+                //     _ => false,
+                // };
 
                 // println!("IS_INLINE={:?} DIR_ENTRY={:?}", is_inline, self);
 
-                let hash_id = if self.get_object().is_none() {
+                let hash_id = if let Some(hash_id) = self
+                    .get_offset()
+                    .as_ref()
+                    .and_then(|off| storage.offsets_to_hash_id.get(off))
+                {
+                    Some(*hash_id)
+                } else if self.get_object().is_none() {
                     Some(store.get_hash_id(self.get_reference()).unwrap())
                 } else {
                     hash_object(
@@ -247,6 +253,20 @@ impl DirEntry {
                         strings,
                     )?
                 };
+
+                // let hash_id = if self.get_object().is_none() {
+                //     Some(store.get_hash_id(self.get_reference()).unwrap())
+                // } else {
+                //     hash_object(
+                //         self.get_object()
+                //             .as_ref()
+                //             .ok_or(HashingError::MissingObject)
+                //             .unwrap(),
+                //         store,
+                //         storage,
+                //         strings,
+                //     )?
+                // };
 
                 // let hash_id = hash_object(
                 //     self.get_object()

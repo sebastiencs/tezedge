@@ -448,7 +448,7 @@ impl KeyValueStoreBackend for Persistent {
     ) -> Result<(ContextHash, Box<SerializeStats>), DBError> {
         let offset = self.data_file.offset();
 
-        let now = std::time::Instant::now();
+        // let now = std::time::Instant::now();
 
         let PostCommitData {
             commit_ref,
@@ -467,25 +467,25 @@ impl KeyValueStoreBackend for Persistent {
             )
             .unwrap();
 
-        let prepare = now.elapsed();
-        let now = std::time::Instant::now();
+        // let prepare = now.elapsed();
+        // let now = std::time::Instant::now();
 
         let commit_hash = get_commit_hash(commit_ref, self).map_err(Box::new)?;
 
-        let get_commit = now.elapsed();
+        // let get_commit = now.elapsed();
 
-        let now = std::time::Instant::now();
+        // let now = std::time::Instant::now();
         self.commit_to_disk(&output)?;
-        let to_disk = now.elapsed();
+        // let to_disk = now.elapsed();
 
-        let now = std::time::Instant::now();
+        // let now = std::time::Instant::now();
         self.put_context_hash(commit_ref)?;
-        let put = now.elapsed();
+        // let put = now.elapsed();
 
-        println!(
-            "PERSISTENT::COMMIT PREPARE={:?} GET_COMMIT={:?} TO_DISK={:?} PUT={:?}",
-            prepare, get_commit, to_disk, put
-        );
+        // println!(
+        //     "PERSISTENT::COMMIT PREPARE={:?} GET_COMMIT={:?} TO_DISK={:?} PUT={:?}",
+        //     prepare, get_commit, to_disk, put
+        // );
 
         Ok((commit_hash, serialize_stats))
     }
