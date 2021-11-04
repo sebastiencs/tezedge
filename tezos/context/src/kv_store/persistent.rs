@@ -91,25 +91,23 @@ struct Hashes {
     hashes_file: File,
 
     bytes: Vec<u8>,
-    // hashes_file_index: usize,
 }
 
 impl Hashes {
-    fn try_new(mut hashes_file: File) -> Self {
+    fn try_new(hashes_file: File) -> Self {
         let list_first_index =
             (hashes_file.offset().as_u64() as usize) / crate::hash::OBJECT_HASH_LEN;
 
         Self {
             list: Vec::with_capacity(1000),
             hashes_file,
-            // hashes_file_index: 0,
             list_first_index,
             bytes: Vec::with_capacity(1000),
         }
     }
 
     fn get_hash(&self, hash_id: HashId) -> Result<Cow<ObjectHash>, DBError> {
-        let hash_id_index: usize = hash_id.try_into().unwrap();
+        let hash_id_index: usize = hash_id.try_into()?;
 
         let is_in_file = hash_id_index < self.list_first_index;
 
@@ -141,9 +139,7 @@ impl Hashes {
 
         Ok(VacantObjectHash {
             entry: Some(&mut self.list[list_length]),
-            // entry: Some(&mut self.hashes_file),
-            hash_id: HashId::try_from(index).unwrap(),
-            // data: Default::default(),
+            hash_id: HashId::try_from(index)?,
         })
     }
 
@@ -342,13 +338,7 @@ impl KeyValueStoreBackend for Persistent {
     }
 
     fn put_context_hash(&mut self, object_ref: ObjectReference) -> Result<(), DBError> {
-        let commit_hash = self.get_hash(object_ref).unwrap();
-        // let commit_hash = self
-        //     .hashes
-        //     .get_hash(commit_hash_id)?
-        //     .ok_or(DBError::MissingObject {
-        //         hash_id: commit_hash_id,
-        //     })?;
+        let commit_hash = self.get_hash(object_ref)?;
 
         let mut hasher = DefaultHasher::new();
         hasher.write(&commit_hash[..]);
