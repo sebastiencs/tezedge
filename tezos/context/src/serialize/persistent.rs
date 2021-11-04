@@ -1238,7 +1238,11 @@ pub fn deserialize_object(
         .get(header_nbytes..object_length)
         .ok_or(UnexpectedEOF)?;
 
-    let (_object_hash_id, nbytes) = deserialize_hash_id(bytes)?;
+    let (object_hash_id, nbytes) = deserialize_hash_id(bytes)?;
+
+    storage
+        .offsets_to_hash_id
+        .insert(object_offset, object_hash_id.unwrap());
 
     let bytes = bytes.get(nbytes..).ok_or(UnexpectedEOF)?;
     let mut pos = 0;

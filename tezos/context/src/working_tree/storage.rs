@@ -9,6 +9,7 @@
 use std::{
     cell::Cell,
     cmp::Ordering,
+    collections::HashMap,
     convert::{TryFrom, TryInto},
     mem::size_of,
     ops::{Range, RangeInclusive},
@@ -524,6 +525,8 @@ pub struct Storage {
 
     /// Objects bytes are read from disk into this vector
     pub data: Vec<u8>,
+
+    pub offsets_to_hash_id: HashMap<AbsoluteOffset, HashId>,
 }
 
 #[derive(Debug)]
@@ -570,6 +573,7 @@ impl Storage {
             nodes: IndexMap::with_capacity(4096),
             inodes: Vec::with_capacity(256),
             data: Vec::with_capacity(100_000),
+            offsets_to_hash_id: HashMap::default(),
         }
     }
 
@@ -1454,6 +1458,7 @@ impl Storage {
         self.blobs = Vec::new();
         self.inodes = Vec::new();
         self.data = Vec::new();
+        self.offsets_to_hash_id = HashMap::default();
         // self.strings = StringInterner::default();
     }
 }
