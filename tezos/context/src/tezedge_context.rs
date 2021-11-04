@@ -88,8 +88,12 @@ impl std::ops::Deref for TezedgeContextWithDeallocation<'_> {
 
 impl Drop for TezedgeContextWithDeallocation<'_> {
     fn drop(&mut self) {
+        let now = std::time::Instant::now();
+
         let mut storage = self.index.storage.borrow_mut();
         storage.deallocate();
+
+        println!("DEALLOC={:?}", now.elapsed());
     }
 }
 
@@ -1164,8 +1168,13 @@ impl TezedgeContext {
         message: String,
         date: i64,
     ) -> Result<ContextHash, ContextError> {
+        let now = std::time::Instant::now();
+
         self.index.synchronize_interned_strings_to_repository()?;
 
+        println!("SYNC={:?}", now.elapsed());
+
+        let now = std::time::Instant::now();
         let (commit_hash, serialize_stats) = {
             let mut repository = self.index.repository.write()?;
             let date: u64 = date.try_into()?;
@@ -1173,10 +1182,16 @@ impl TezedgeContext {
             repository.commit(&self.tree, self.parent_commit_ref, author, message, date)?
         };
 
+        println!("COMMIT={:?}", now.elapsed());
+
+        let now = std::time::Instant::now();
+
         send_statistics(BlockMemoryUsage {
             context: Box::new(self.get_memory_usage()?),
             serialize: serialize_stats,
         });
+
+        println!("SEND STATS={:?}", now.elapsed());
 
         Ok(commit_hash)
     }
