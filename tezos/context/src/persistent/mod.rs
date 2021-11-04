@@ -284,14 +284,18 @@ impl File {
 
         std::fs::create_dir_all(&base_path).unwrap();
 
+        use std::os::unix::fs::OpenOptionsExt;
+
         let file = OpenOptions::new()
             .read(true)
             .write(true)
             .truncate(false)
             .append(true)
             .create(true)
+            .custom_flags(libc::O_NOATIME)
             .open(PathBuf::from(base_path).join(file_type.get_path()))
             .unwrap();
+
         let offset = file.metadata().unwrap().len();
 
         Self {
@@ -306,7 +310,8 @@ impl File {
     }
 
     pub fn sync(&mut self) {
-        self.file.sync_all().unwrap();
+        self.file.sync_data().unwrap();
+        // self.file.sync_all().unwrap();
     }
 
     pub fn append(&mut self, bytes: impl AsRef<[u8]>) -> FileOffset {

@@ -3613,6 +3613,7 @@ dependencies = [
  "ipc",
  "lazy_static",
  "leb128",
+ "libc",
  "modular-bitfield",
  "ocaml-interop",
  "rand 0.8.4",
