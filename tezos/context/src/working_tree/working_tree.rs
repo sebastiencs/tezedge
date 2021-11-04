@@ -571,12 +571,7 @@ impl WorkingTree {
         };
 
         let hash_ref = ObjectReference::new(Some(hash_id), None);
-        match repo.get_hash(hash_ref)? {
-            Some(hash) => Ok(hash.into_owned()),
-            None => Err(MerkleError::ObjectNotFound {
-                object_ref: ObjectReference::new(Some(hash_id), None),
-            }),
-        }
+        Ok(repo.get_hash(hash_ref)?.into_owned())
     }
 
     /// Checks if the root of this working tree is a directory or a value.
@@ -793,6 +788,7 @@ impl WorkingTree {
         parent_commit_ref: Option<ObjectReference>,
         store: &mut ContextKeyValueStore,
         serialize_function: Option<SerializeObjectSignature>,
+        offset: Option<AbsoluteOffset>,
     ) -> Result<PostCommitData, MerkleError> {
         let root_hash_id = self.get_root_directory_hash(store)?;
         let root = self.get_root_directory();
@@ -812,7 +808,6 @@ impl WorkingTree {
         if let Some(serialize_function) = serialize_function {
             // produce objects to be persisted to storage
 
-            let offset = store.get_current_offset()?;
             let mut data = SerializingData::new(store, offset, serialize_function);
 
             let storage = self.index.storage.borrow();

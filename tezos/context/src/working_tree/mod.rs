@@ -209,12 +209,10 @@ impl DirEntry {
         storage: &Storage,
         strings: &StringInterner,
     ) -> Result<Cow<'a, ObjectHash>, HashingError> {
-        let hash_id = self
+        let _ = self
             .object_hash_id(store, storage, strings)?
             .ok_or(HashingError::HashIdEmpty)?;
-        store
-            .get_hash(self.get_reference())?
-            .ok_or(HashingError::HashIdNotFound { hash_id })
+        store.get_hash(self.get_reference()).map_err(Into::into)
     }
 
     /// Returns the `HashId` of this dir_entry, it will compute the hash if necessary.
