@@ -791,6 +791,18 @@ impl WorkingTree {
         offset: Option<AbsoluteOffset>,
     ) -> Result<PostCommitData, MerkleError> {
         // let now = std::time::Instant::now();
+
+        {
+            // let now = std::time::Instant::now();
+            let storage = self.index.storage.borrow();
+            self.fetch_hash_ids_recursively(
+                Object::Directory(self.get_root_directory()),
+                &storage,
+                store,
+            );
+            // println!("FETCH HASHIDS {:?}", now.elapsed());
+        }
+
         let root_hash_id = self.get_root_directory_hash(store)?;
         // println!("COMPUTE HASH = {:?}", now.elapsed());
         let root = self.get_root_directory();
@@ -979,6 +991,33 @@ impl WorkingTree {
         let storage = self.index.storage.borrow();
         let strings = self.index.string_interner.borrow();
         hash_directory(root, store, &storage, &strings).map_err(MerkleError::from)
+    }
+
+    fn fetch_hash_ids_recursively(
+        &self,
+        object: Object,
+        storage: &Storage,
+        repository: &ContextKeyValueStore,
+    ) {
+        match &object {
+            Object::Blob(_blob_id) => {}
+            Object::Commit(_) => {}
+            Object::Directory(dir_id) => {
+                storage
+                    .dir_iterate_unsorted(*dir_id, |&(_, dir_entry_id)| {
+                        let dir_entry = storage.get_dir_entry(dir_entry_id)?;
+
+                        dir_entry.fetch_hash_id(repository, storage);
+
+                        if let Some(object) = dir_entry.get_object() {
+                            self.fetch_hash_ids_recursively(object, storage, repository);
+                        };
+
+                        Ok(())
+                    })
+                    .unwrap();
+            }
+        }
     }
 
     fn write_objects_recursively(

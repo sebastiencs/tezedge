@@ -215,6 +215,28 @@ impl DirEntry {
         store.get_hash(self.get_reference()).map_err(Into::into)
     }
 
+    pub fn fetch_hash_id(&self, repository: &ContextKeyValueStore, storage: &Storage) {
+        if self.hash_id().is_some() {
+            return;
+        }
+
+        let hash_id = if let Some(hash_id) = self
+            .get_offset()
+            .as_ref()
+            .and_then(|off| storage.offsets_to_hash_id.get(off))
+        {
+            *hash_id
+        } else if self.get_object().is_none() {
+            repository.get_hash_id(self.get_reference()).unwrap()
+        } else {
+            return;
+        };
+
+        let mut inner = self.inner.get();
+        inner.set_object_hash_id(hash_id.as_u32());
+        self.inner.set(inner);
+    }
+
     /// Returns the `HashId` of this dir_entry, it will compute the hash if necessary.
     ///
     /// If this dir_entry is an inlined blob, this will return `None`.
@@ -239,10 +261,13 @@ impl DirEntry {
                     .as_ref()
                     .and_then(|off| storage.offsets_to_hash_id.get(off))
                 {
+                    println!("Cache for HashId");
                     Some(*hash_id)
                 } else if self.get_object().is_none() {
+                    println!("Read file for HashId");
                     Some(store.get_hash_id(self.get_reference()).unwrap())
                 } else {
+                    // println!("Compute hash");
                     hash_object(
                         self.get_object()
                             .as_ref()
