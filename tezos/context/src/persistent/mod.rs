@@ -66,7 +66,7 @@ pub trait KeyValueStoreBackend {
     ///
     /// # Arguments
     /// * `hash_id` - HashId of the ObjectHash
-    fn get_hash(&self, object_ref: ObjectReference) -> Result<Option<Cow<ObjectHash>>, DBError>;
+    fn get_hash(&self, object_ref: ObjectReference) -> Result<Cow<ObjectHash>, DBError>;
     /// Find an object to insert a new ObjectHash
     /// Return the object
     fn get_vacant_object_hash(&mut self) -> Result<VacantObjectHash, DBError>;
@@ -93,7 +93,6 @@ pub trait KeyValueStoreBackend {
     /// Update `string_interner` to be in sync with the repository `StringInterner`.
     fn synchronize_strings_into(&self, string_interner: &mut StringInterner);
 
-    fn get_current_offset(&self) -> Result<Option<AbsoluteOffset>, DBError>;
     fn get_object(
         &self,
         object_ref: ObjectReference,
@@ -130,8 +129,6 @@ pub trait KeyValueStoreBackend {
 /// Possible errors for schema
 #[derive(Debug, Error)]
 pub enum DBError {
-    #[error("Column family {name} is missing")]
-    MissingColumnFamily { name: &'static str },
     #[error("Database incompatibility {name}")]
     DatabaseIncompatibility { name: String },
     #[error("Value already exists {key}")]
@@ -151,8 +148,8 @@ pub enum DBError {
     MemoryStatisticsOverflow,
     #[error("IPC Context access error: {reason:?}")]
     IpcAccessError { reason: ContextServiceError },
-    #[error("Missing object: {hash_id:?}")]
-    MissingObject { hash_id: HashId },
+    #[error("Missing object: {object_ref:?}")]
+    MissingObject { object_ref: ObjectReference },
     #[error("Conversion from/to HashId failed")]
     HashIdFailed,
     #[error("Deserialization error: {error:?}")]
@@ -170,6 +167,8 @@ pub enum DBError {
         #[from]
         error: Box<ContextError>,
     },
+    #[error("Hash not found: {object_ref:?}")]
+    HashNotFound { object_ref: ObjectReference },
 }
 
 impl From<HashIdError> for DBError {
@@ -190,15 +189,7 @@ pub(crate) fn get_commit_hash(
     commit_ref: ObjectReference,
     repo: &ContextKeyValueStore,
 ) -> Result<ContextHash, ContextError> {
-    let commit_hash = match repo.get_hash(commit_ref)? {
-        Some(hash) => hash,
-        None => {
-            return Err(MerkleError::ObjectNotFound {
-                object_ref: commit_ref,
-            }
-            .into())
-        }
-    };
+    let commit_hash = repo.get_hash(commit_ref)?;
     let commit_hash = ContextHash::try_from(&commit_hash[..])?;
     Ok(commit_hash)
 }

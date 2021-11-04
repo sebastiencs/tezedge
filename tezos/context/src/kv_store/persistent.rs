@@ -108,7 +108,7 @@ impl Hashes {
         }
     }
 
-    fn get_hash(&self, hash_id: HashId) -> Result<Option<Cow<ObjectHash>>, DBError> {
+    fn get_hash(&self, hash_id: HashId) -> Result<Cow<ObjectHash>, DBError> {
         let hash_id_index: usize = hash_id.try_into().unwrap();
 
         let is_in_file = hash_id_index < self.list_first_index;
@@ -121,13 +121,15 @@ impl Hashes {
             self.hashes_file
                 .read_exact_at(&mut hash, (offset as u64).into());
 
-            Ok(Some(Cow::Owned(hash)))
+            Ok(Cow::Owned(hash))
         } else {
             let index = hash_id_index - self.list_first_index;
 
             match self.list.get(index) {
-                Some(hash) => Ok(Some(Cow::Borrowed(hash))),
-                None => Ok(None),
+                Some(hash) => Ok(Cow::Borrowed(hash)),
+                None => Err(DBError::HashNotFound {
+                    object_ref: hash_id.into(),
+                }),
             }
         }
     }
@@ -340,7 +342,7 @@ impl KeyValueStoreBackend for Persistent {
     }
 
     fn put_context_hash(&mut self, object_ref: ObjectReference) -> Result<(), DBError> {
-        let commit_hash = self.get_hash(object_ref).unwrap().unwrap();
+        let commit_hash = self.get_hash(object_ref).unwrap();
         // let commit_hash = self
         //     .hashes
         //     .get_hash(commit_hash_id)?
@@ -375,7 +377,7 @@ impl KeyValueStoreBackend for Persistent {
         Ok(self.context_hashes.get(&hashed).cloned())
     }
 
-    fn get_hash(&self, object_ref: ObjectReference) -> Result<Option<Cow<ObjectHash>>, DBError> {
+    fn get_hash(&self, object_ref: ObjectReference) -> Result<Cow<ObjectHash>, DBError> {
         let hash_id = self.get_hash_id(object_ref)?;
         self.hashes.get_hash(hash_id)
     }
@@ -413,10 +415,6 @@ impl KeyValueStoreBackend for Persistent {
 
     fn synchronize_strings_into(&self, string_interner: &mut StringInterner) {
         string_interner.extend_from(&self.string_interner);
-    }
-
-    fn get_current_offset(&self) -> Result<Option<AbsoluteOffset>, DBError> {
-        Ok(Some(self.data_file.offset()))
     }
 
     fn get_object(
@@ -458,6 +456,8 @@ impl KeyValueStoreBackend for Persistent {
         message: String,
         date: u64,
     ) -> Result<(ContextHash, Box<SerializeStats>), DBError> {
+        let offset = self.data_file.offset();
+
         let PostCommitData {
             commit_ref,
             serialize_stats,
@@ -471,6 +471,7 @@ impl KeyValueStoreBackend for Persistent {
                 parent_commit_ref,
                 self,
                 Some(persistent::serialize_object),
+                Some(offset),
             )
             .unwrap();
 
@@ -497,6 +498,6 @@ impl KeyValueStoreBackend for Persistent {
         output: &[u8],
     ) -> Result<Option<AbsoluteOffset>, DBError> {
         self.commit_to_disk(output)?;
-        self.get_current_offset()
+        Ok(Some(self.data_file.offset()))
     }
 }

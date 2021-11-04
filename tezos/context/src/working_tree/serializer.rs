@@ -1798,8 +1798,7 @@ mod tests {
         let mut older_objects = Vec::new();
         let fake_hash_id = HashId::try_from(1).unwrap();
 
-        repo.append_serialized_data(&[0, 0, 0, 0, 0, 0]).unwrap();
-        let offset = repo.get_current_offset().unwrap().unwrap();
+        let offset = repo.append_serialized_data(&[0, 0, 0, 0, 0, 0]).unwrap();
 
         // Test Object::Directory
 
@@ -1885,8 +1884,7 @@ mod tests {
             )
             .unwrap();
 
-        repo.append_serialized_data(&bytes).unwrap();
-        let offset = repo.get_current_offset().unwrap().unwrap();
+        let offset = repo.append_serialized_data(&bytes).unwrap();
         bytes.clear();
 
         let mut bytes = Vec::with_capacity(1024);
@@ -1945,8 +1943,7 @@ mod tests {
 
         // println!("LAAAAA={:?}", storage.get_owned_dir(dir_id).unwrap(),);
 
-        repo.append_serialized_data(&bytes).unwrap();
-        let offset = repo.get_current_offset().unwrap().unwrap();
+        let offset = repo.append_serialized_data(&bytes).unwrap();
         bytes.clear();
 
         let mut bytes = Vec::with_capacity(1024);
@@ -2014,8 +2011,7 @@ mod tests {
 
         // Test Object::Commit
 
-        repo.append_serialized_data(&bytes).unwrap();
-        let offset = repo.get_current_offset().unwrap().unwrap();
+        let offset = repo.append_serialized_data(&bytes).unwrap();
         bytes.clear();
 
         let commit = Commit {

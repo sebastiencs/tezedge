@@ -177,12 +177,8 @@ impl TezedgeIndex {
     /// Returns the raw `ObjectHash` associated to this `hash_id`.
     ///
     /// It reads it from the repository.
-    pub fn fetch_hash(&self, object_ref: ObjectReference) -> Result<Option<ObjectHash>, DBError> {
-        Ok(self
-            .repository
-            .read()?
-            .get_hash(object_ref)?
-            .map(|h| h.into_owned()))
+    pub fn fetch_hash(&self, object_ref: ObjectReference) -> Result<ObjectHash, DBError> {
+        Ok(self.repository.read()?.get_hash(object_ref)?.into_owned())
     }
 
     /// Fetches object from the repository and deserialize it into `storage`.
@@ -1046,6 +1042,7 @@ impl ShellContextApi for TezedgeContext {
             message,
             self.parent_commit_ref,
             &mut *repository,
+            None,
             None,
         )?;
 
