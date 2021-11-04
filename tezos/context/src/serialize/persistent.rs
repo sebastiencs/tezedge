@@ -1728,8 +1728,7 @@ mod tests {
         let mut older_objects = Vec::new();
         let fake_hash_id = HashId::try_from(1).unwrap();
 
-        repo.append_serialized_data(&[0, 0, 0, 0, 0, 0]).unwrap();
-        let offset = repo.get_current_offset().unwrap();
+        let offset = repo.synchronize_data(&[], &[0, 0, 0, 0, 0, 0]).unwrap();
 
         // Test Object::Directory
 
@@ -1817,8 +1816,7 @@ mod tests {
             )
             .unwrap();
 
-        repo.append_serialized_data(&bytes).unwrap();
-        let offset = repo.get_current_offset().unwrap();
+        let offset = repo.synchronize_data(&[], &bytes).unwrap();
         bytes.clear();
 
         let mut bytes = Vec::with_capacity(1024);
@@ -1879,8 +1877,7 @@ mod tests {
 
         // println!("LAAAAA={:?}", storage.get_owned_dir(dir_id).unwrap(),);
 
-        repo.append_serialized_data(&bytes).unwrap();
-        let offset = repo.get_current_offset().unwrap();
+        let offset = repo.synchronize_data(&[], &bytes).unwrap();
         bytes.clear();
 
         let mut bytes = Vec::with_capacity(1024);
@@ -1955,8 +1952,7 @@ mod tests {
 
         // Test Object::Commit
 
-        repo.append_serialized_data(&bytes).unwrap();
-        let offset = repo.get_current_offset().unwrap();
+        let offset = repo.synchronize_data(&[], &bytes).unwrap();
         bytes.clear();
 
         let commit = Commit {
@@ -1991,8 +1987,7 @@ mod tests {
 
         // Test Object::Commit with no parent
 
-        repo.append_serialized_data(&bytes).unwrap();
-        let offset = repo.get_current_offset().unwrap();
+        let offset = repo.synchronize_data(&[], &bytes).unwrap();
         bytes.clear();
 
         let commit = Commit {
@@ -2035,8 +2030,7 @@ mod tests {
 
         // data.extend_from_slice(&[1,2,3,4,5]);
 
-        repo.append_serialized_data(&bytes).unwrap();
-        let offset = repo.get_current_offset().unwrap();
+        let offset = repo.synchronize_data(&[], &bytes).unwrap();
 
         bytes.clear();
 
@@ -2111,7 +2105,7 @@ mod tests {
         // let offset = data.len();
 
         println!("DATA LENGTH={:?}", bytes.len());
-        repo.append_serialized_data(&bytes).unwrap();
+        repo.synchronize_data(&[], &bytes).unwrap();
 
         println!("ID={:?}", batch.last().unwrap().1[0]);
         let new_inode_id = deserialize_inode(
@@ -2201,7 +2195,7 @@ mod tests {
         .unwrap();
 
         // let offset = data.len();
-        repo.append_serialized_data(&bytes).unwrap();
+        repo.synchronize_data(&[], &bytes).unwrap();
 
         assert_eq!(batch.len(), 1);
 

@@ -204,21 +204,12 @@ impl KeyValueStoreBackend for InMemory {
         Ok(self.get_context_hash_impl(context_hash).map(Into::into))
     }
 
-    fn get_hash(&self, object_ref: ObjectReference) -> Result<Option<Cow<ObjectHash>>, DBError> {
-        Ok(self.get_hash(object_ref.hash_id())?.map(Cow::Borrowed))
+    fn get_hash(&self, object_ref: ObjectReference) -> Result<Cow<ObjectHash>, DBError> {
+        self.get_hash(object_ref.hash_id()).map(Cow::Borrowed)
     }
-
-    // fn get_value(&self, hash_id: HashId) -> Result<Option<Cow<[u8]>>, DBError> {
-    //     Ok(self.get_value(hash_id)?.map(Cow::Borrowed))
-    // }
 
     fn get_vacant_object_hash(&mut self) -> Result<VacantObjectHash, DBError> {
         self.get_vacant_entry_hash()
-    }
-
-    fn clear_objects(&mut self) -> Result<(), DBError> {
-        // `InMemory` has its own garbage collection
-        Ok(())
     }
 
     fn memory_usage(&self) -> RepositoryMemoryUsage {
@@ -252,17 +243,6 @@ impl KeyValueStoreBackend for InMemory {
 
     fn get_str(&self, string_id: StringId) -> Option<&str> {
         self.string_interner.get(string_id)
-    }
-
-    fn get_current_offset(&self) -> Result<Option<AbsoluteOffset>, DBError> {
-        Ok(None)
-    }
-
-    fn append_serialized_data(&mut self, data: &[u8]) -> Result<(), DBError> {
-        unimplemented!()
-    }
-    fn synchronize_full(&mut self) -> Result<(), DBError> {
-        unimplemented!()
     }
 
     fn get_object(
@@ -310,6 +290,7 @@ impl KeyValueStoreBackend for InMemory {
                 parent_commit_ref,
                 self,
                 Some(in_memory::serialize_object),
+                None,
             )
             .unwrap();
 
@@ -321,17 +302,18 @@ impl KeyValueStoreBackend for InMemory {
         Ok((commit_hash, serialize_stats))
     }
 
-    fn synchronize_data(
-        &mut self,
-        batch: Vec<(HashId, Arc<[u8]>)>,
-        _output: &[u8],
-    ) -> Result<Option<AbsoluteOffset>, DBError> {
-        self.write_batch(batch)?;
-        Ok(None)
-    }
-
     fn get_hash_id(&self, object_ref: ObjectReference) -> Result<HashId, DBError> {
         object_ref.hash_id_opt().ok_or(DBError::HashIdFailed)
+    }
+
+    #[cfg(test)]
+    fn synchronize_data(
+        &mut self,
+        batch: &[(HashId, Arc<[u8]>)],
+        _output: &[u8],
+    ) -> Result<Option<AbsoluteOffset>, DBError> {
+        self.write_batch(batch.to_vec())?;
+        Ok(None)
     }
 }
 
@@ -389,8 +371,12 @@ impl InMemory {
         self.hashes.get_vacant_object_hash().map_err(Into::into)
     }
 
-    pub(crate) fn get_hash(&self, hash_id: HashId) -> Result<Option<&ObjectHash>, DBError> {
-        self.hashes.get_hash(hash_id).map_err(Into::into)
+    pub(crate) fn get_hash(&self, hash_id: HashId) -> Result<&ObjectHash, DBError> {
+        self.hashes
+            .get_hash(hash_id)?
+            .ok_or_else(|| DBError::HashNotFound {
+                object_ref: hash_id.into(),
+            })
     }
 
     pub(crate) fn get_value(&self, hash_id: HashId) -> Result<Option<&[u8]>, DBError> {
@@ -451,7 +437,7 @@ impl InMemory {
             .hashes
             .get_hash(commit_hash_id)?
             .ok_or(DBError::MissingObject {
-                hash_id: commit_hash_id,
+                object_ref: commit_hash_id.into(),
             })?;
 
         let mut hasher = DefaultHasher::new();

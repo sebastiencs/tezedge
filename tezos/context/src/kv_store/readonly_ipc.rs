@@ -45,6 +45,11 @@ impl ReadonlyIpcBackend {
             hashes: HashValueStore::new(None),
         })
     }
+
+    fn clear_objects(&mut self) -> Result<(), DBError> {
+        self.hashes.clear();
+        Ok(())
+    }
 }
 
 impl NotGarbageCollected for ReadonlyIpcBackend {}
@@ -74,11 +79,14 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
             .map_err(|reason| DBError::IpcAccessError { reason })
     }
 
-    fn get_hash(&self, object_ref: ObjectReference) -> Result<Option<Cow<ObjectHash>>, DBError> {
+    fn get_hash(&self, object_ref: ObjectReference) -> Result<Cow<ObjectHash>, DBError> {
         let hash_id = object_ref.hash_id_opt();
 
         if let Some(hash_id) = hash_id.and_then(|h| h.get_readonly_id().ok()?) {
-            Ok(self.hashes.get_hash(hash_id)?.map(Cow::Borrowed))
+            self.hashes
+                .get_hash(hash_id)?
+                .map(Cow::Borrowed)
+                .ok_or_else(|| DBError::HashNotFound { object_ref })
         } else {
             // let hash_id_index: usize = hash_id.try_into().unwrap();
 
@@ -104,11 +112,6 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
             .get_vacant_object_hash()?
             .set_readonly_runner()
             .map_err(Into::into)
-    }
-
-    fn clear_objects(&mut self) -> Result<(), DBError> {
-        self.hashes.clear();
-        Ok(())
     }
 
     fn memory_usage(&self) -> RepositoryMemoryUsage {
@@ -142,18 +145,6 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
 
     fn synchronize_strings_into(&self, _string_interner: &mut StringInterner) {
         // Readonly protocol runner doesn't update strings.
-    }
-
-    fn get_current_offset(&self) -> Result<Option<AbsoluteOffset>, DBError> {
-        Ok(None)
-    }
-
-    fn append_serialized_data(&mut self, data: &[u8]) -> Result<(), DBError> {
-        unimplemented!()
-    }
-
-    fn synchronize_full(&mut self) -> Result<(), DBError> {
-        unimplemented!()
     }
 
     fn get_object(
@@ -212,26 +203,14 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
             serialize_stats,
             ..
         } = working_tree
-            .prepare_commit(date, author, message, parent_commit_ref, self, None)
+            .prepare_commit(date, author, message, parent_commit_ref, self, None, None)
             .unwrap();
-
-        // self.append_serialized_data(&output)?;
-        // self.put_context_hash(commit_ref)?;
 
         let commit_hash = get_commit_hash(commit_ref, self).map_err(Box::new)?;
 
-        // TODO ADD clear_objects
         self.clear_objects()?;
 
         Ok((commit_hash, serialize_stats))
-    }
-
-    fn synchronize_data(
-        &mut self,
-        _batch: Vec<(HashId, Arc<[u8]>)>,
-        _output: &[u8],
-    ) -> Result<Option<AbsoluteOffset>, DBError> {
-        Ok(None) // no-op
     }
 
     fn get_hash_id(&self, object_ref: ObjectReference) -> Result<HashId, DBError> {
@@ -242,6 +221,15 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
         self.client
             .get_hash_id(object_ref)
             .map_err(|reason| DBError::IpcAccessError { reason })
+    }
+
+    #[cfg(test)]
+    fn synchronize_data(
+        &mut self,
+        _batch: &[(HashId, Arc<[u8]>)],
+        _output: &[u8],
+    ) -> Result<Option<AbsoluteOffset>, DBError> {
+        Ok(None) // no-op
     }
 }
 
@@ -283,7 +271,7 @@ enum ContextRequest {
 /// This is generated as a response to the `ContextRequest` command.
 #[derive(Serialize, Deserialize, Debug, IntoStaticStr)]
 enum ContextResponse {
-    GetHashResponse(Result<Option<ObjectHash>, String>),
+    GetHashResponse(Result<ObjectHash, String>),
     GetHashIdResponse(Result<HashId, String>),
     GetContextHashIdResponse(Result<Option<ObjectReference>, String>),
     GetObjectBytesResponse(Result<Vec<u8>, String>),
@@ -469,7 +457,7 @@ impl IpcContextClient {
     pub fn get_hash(
         &self,
         object_ref: ObjectReference,
-    ) -> Result<Option<Cow<ObjectHash>>, ContextServiceError> {
+    ) -> Result<Cow<ObjectHash>, ContextServiceError> {
         let mut io = self.io.borrow_mut();
         io.tx.send(&ContextRequest::GetHash(object_ref))?;
 
@@ -479,7 +467,7 @@ impl IpcContextClient {
             .try_receive(Some(Self::TIMEOUT), Some(IpcContextListener::IO_TIMEOUT))?
         {
             ContextResponse::GetHashResponse(result) => result
-                .map(|h| h.map(Cow::Owned))
+                .map(Cow::Owned)
                 .map_err(|err| ContextError::GetHashError { reason: err }.into()),
             message => Err(ContextServiceError::UnexpectedMessage {
                 message: message.into(),
