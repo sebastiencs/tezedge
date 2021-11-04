@@ -501,6 +501,10 @@ fn start_timing(recv: Receiver<Vec<TimingMessage>>) {
     let mut timing = Timing::new();
     let mut transaction = None;
 
+    if let Err(e) = timing.reload_global_stats(&sql) {
+        eprintln!("Fail to reload timing database {:?}", e);
+    }
+
     for msgpack in recv {
         for msg in msgpack {
             if let Err(err) = timing.process_msg(&sql, &mut transaction, msg) {
@@ -1280,6 +1284,157 @@ impl Timing {
                 ":one_hundred_s_total_time": &range_stats.one_hundred_s.total_time,
             },
         )?;
+
+        Ok(())
+    }
+
+    fn reload_global_stats(&mut self, sql: &Connection) -> Result<(), SQLError> {
+        let mut stmt = sql.prepare(
+            "
+    SELECT
+      query_name,
+      root,
+      one_to_ten_us_count,
+      one_to_ten_us_mean_time,
+      one_to_ten_us_max_time,
+      one_to_ten_us_total_time,
+      ten_to_one_hundred_us_count,
+      ten_to_one_hundred_us_mean_time,
+      ten_to_one_hundred_us_max_time,
+      ten_to_one_hundred_us_total_time,
+      one_hundred_us_to_one_ms_count,
+      one_hundred_us_to_one_ms_mean_time,
+      one_hundred_us_to_one_ms_max_time,
+      one_hundred_us_to_one_ms_total_time,
+      one_to_ten_ms_count,
+      one_to_ten_ms_mean_time,
+      one_to_ten_ms_max_time,
+      one_to_ten_ms_total_time,
+      ten_to_one_hundred_ms_count,
+      ten_to_one_hundred_ms_mean_time,
+      ten_to_one_hundred_ms_max_time,
+      ten_to_one_hundred_ms_total_time,
+      one_hundred_ms_to_one_s_count,
+      one_hundred_ms_to_one_s_mean_time,
+      one_hundred_ms_to_one_s_max_time,
+      one_hundred_ms_to_one_s_total_time,
+      one_to_ten_s_count,
+      one_to_ten_s_mean_time,
+      one_to_ten_s_max_time,
+      one_to_ten_s_total_time,
+      ten_to_one_hundred_s_count,
+      ten_to_one_hundred_s_mean_time,
+      ten_to_one_hundred_s_max_time,
+      ten_to_one_hundred_s_total_time,
+      one_hundred_s_count,
+      one_hundred_s_mean_time,
+      one_hundred_s_max_time,
+      one_hundred_s_total_time,
+      total_time,
+      queries_count,
+      context_name
+    FROM
+      global_query_stats
+       ",
+        )?;
+
+        let mut rows = stmt.query([])?;
+
+        while let Some(row) = rows.next()? {
+            let context_name: &str = match row.get_ref(40)?.as_str() {
+                Ok(context_name) => context_name,
+                Err(_) => continue,
+            };
+
+            let (global_stats, commit_stats, checkout_stats) = match context_name {
+                "tezedge" => (
+                    &mut self.tezedge_global_stats,
+                    &mut self.tezedge_commit_stats,
+                    &mut self.tezedge_checkout_stats,
+                ),
+                "irmin" => (
+                    &mut self.irmin_global_stats,
+                    &mut self.irmin_commit_stats,
+                    &mut self.irmin_checkout_stats,
+                ),
+                _ => continue,
+            };
+
+            let query_name = match row.get_ref(0)?.as_str() {
+                Ok(name) if !name.is_empty() => name,
+                _ => continue,
+            };
+
+            let root = match row.get_ref(1)?.as_str() {
+                Ok(root) if !root.is_empty() => root,
+                _ => continue,
+            };
+
+            let mut query_stats = match query_name {
+                "commit" => commit_stats,
+                "checkout" => checkout_stats,
+                _ => {
+                    let entry = match global_stats.get_mut(root) {
+                        Some(entry) => entry,
+                        None => {
+                            let mut stats = QueryStatsWithRange::default();
+                            stats.root = root.to_string();
+                            global_stats.insert(root.to_string(), stats);
+                            global_stats.get_mut(root).unwrap()
+                        }
+                    };
+                    match query_name {
+                        "mem" => &mut entry.mem,
+                        "mem_tree" => &mut entry.mem_tree,
+                        "find" => &mut entry.find,
+                        "find_tree" => &mut entry.find_tree,
+                        "add" => &mut entry.add,
+                        "add_tree" => &mut entry.add_tree,
+                        "remove" => &mut entry.remove,
+                        _ => continue,
+                    }
+                }
+            };
+
+            query_stats.one_to_ten_us.count = row.get(2)?;
+            query_stats.one_to_ten_us.mean_time = row.get(3)?;
+            query_stats.one_to_ten_us.max_time = row.get(4)?;
+            query_stats.one_to_ten_us.total_time = row.get(5)?;
+            query_stats.ten_to_one_hundred_us.count = row.get(6)?;
+            query_stats.ten_to_one_hundred_us.mean_time = row.get(7)?;
+            query_stats.ten_to_one_hundred_us.max_time = row.get(8)?;
+            query_stats.ten_to_one_hundred_us.total_time = row.get(9)?;
+            query_stats.one_hundred_us_to_one_ms.count = row.get(10)?;
+            query_stats.one_hundred_us_to_one_ms.mean_time = row.get(11)?;
+            query_stats.one_hundred_us_to_one_ms.max_time = row.get(12)?;
+            query_stats.one_hundred_us_to_one_ms.total_time = row.get(13)?;
+            query_stats.one_to_ten_ms.count = row.get(14)?;
+            query_stats.one_to_ten_ms.mean_time = row.get(15)?;
+            query_stats.one_to_ten_ms.max_time = row.get(16)?;
+            query_stats.one_to_ten_ms.total_time = row.get(17)?;
+            query_stats.ten_to_one_hundred_ms.count = row.get(18)?;
+            query_stats.ten_to_one_hundred_ms.mean_time = row.get(19)?;
+            query_stats.ten_to_one_hundred_ms.max_time = row.get(20)?;
+            query_stats.ten_to_one_hundred_ms.total_time = row.get(21)?;
+            query_stats.one_hundred_ms_to_one_s.count = row.get(22)?;
+            query_stats.one_hundred_ms_to_one_s.mean_time = row.get(23)?;
+            query_stats.one_hundred_ms_to_one_s.max_time = row.get(24)?;
+            query_stats.one_hundred_ms_to_one_s.total_time = row.get(25)?;
+            query_stats.one_to_ten_s.count = row.get(26)?;
+            query_stats.one_to_ten_s.mean_time = row.get(27)?;
+            query_stats.one_to_ten_s.max_time = row.get(28)?;
+            query_stats.one_to_ten_s.total_time = row.get(29)?;
+            query_stats.ten_to_one_hundred_s.count = row.get(30)?;
+            query_stats.ten_to_one_hundred_s.mean_time = row.get(31)?;
+            query_stats.ten_to_one_hundred_s.max_time = row.get(32)?;
+            query_stats.ten_to_one_hundred_s.total_time = row.get(33)?;
+            query_stats.one_hundred_s.count = row.get(34)?;
+            query_stats.one_hundred_s.mean_time = row.get(35)?;
+            query_stats.one_hundred_s.max_time = row.get(36)?;
+            query_stats.one_hundred_s.total_time = row.get(37)?;
+            query_stats.total_time = row.get(38)?;
+            query_stats.queries_count = row.get(39)?;
+        }
 
         Ok(())
     }
