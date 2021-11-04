@@ -827,7 +827,7 @@ mod tests {
                     })
                     .unwrap();
 
-                let offset = repo.synchronize_data(batch, &output).unwrap();
+                let offset = repo.synchronize_data(&batch, &output).unwrap();
                 // let offset = repo.get_current_offset().unwrap();
 
                 let mut batch = Default::default();
@@ -847,7 +847,7 @@ mod tests {
                     offset,
                 )
                 .unwrap();
-                repo.synchronize_data(batch, &output).unwrap();
+                repo.synchronize_data(&batch, &output).unwrap();
 
                 let object_ref = ObjectReference::new(Some(computed_hash_id), offset);
                 let object = repo

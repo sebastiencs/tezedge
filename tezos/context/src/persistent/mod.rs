@@ -70,9 +70,6 @@ pub trait KeyValueStoreBackend {
     /// Find an object to insert a new ObjectHash
     /// Return the object
     fn get_vacant_object_hash(&mut self) -> Result<VacantObjectHash, DBError>;
-    /// Manually clear the objects, this should be a no-operation if the implementation
-    /// has its own garbage collection
-    fn clear_objects(&mut self) -> Result<(), DBError>;
     /// Memory usage
     fn memory_usage(&self) -> RepositoryMemoryUsage;
     /// Returns the strings of the directory shape
@@ -97,9 +94,6 @@ pub trait KeyValueStoreBackend {
     fn synchronize_strings_into(&self, string_interner: &mut StringInterner);
 
     fn get_current_offset(&self) -> Result<Option<AbsoluteOffset>, DBError>;
-    fn append_serialized_data(&mut self, data: &[u8]) -> Result<(), DBError>;
-    fn synchronize_full(&mut self) -> Result<(), DBError>;
-
     fn get_object(
         &self,
         object_ref: ObjectReference,
@@ -122,14 +116,15 @@ pub trait KeyValueStoreBackend {
         date: u64,
     ) -> Result<(ContextHash, Box<SerializeStats>), DBError>;
 
+    fn get_hash_id(&self, object_ref: ObjectReference) -> Result<HashId, DBError>;
+
     /// [test-only]
+    #[cfg(test)]
     fn synchronize_data(
         &mut self,
-        batch: Vec<(HashId, Arc<[u8]>)>,
+        batch: &[(HashId, Arc<[u8]>)],
         output: &[u8],
     ) -> Result<Option<AbsoluteOffset>, DBError>;
-
-    fn get_hash_id(&self, object_ref: ObjectReference) -> Result<HashId, DBError>;
 }
 
 /// Possible errors for schema

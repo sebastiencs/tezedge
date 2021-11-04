@@ -208,17 +208,8 @@ impl KeyValueStoreBackend for InMemory {
         Ok(self.get_hash(object_ref.hash_id())?.map(Cow::Borrowed))
     }
 
-    // fn get_value(&self, hash_id: HashId) -> Result<Option<Cow<[u8]>>, DBError> {
-    //     Ok(self.get_value(hash_id)?.map(Cow::Borrowed))
-    // }
-
     fn get_vacant_object_hash(&mut self) -> Result<VacantObjectHash, DBError> {
         self.get_vacant_entry_hash()
-    }
-
-    fn clear_objects(&mut self) -> Result<(), DBError> {
-        // `InMemory` has its own garbage collection
-        Ok(())
     }
 
     fn memory_usage(&self) -> RepositoryMemoryUsage {
@@ -256,13 +247,6 @@ impl KeyValueStoreBackend for InMemory {
 
     fn get_current_offset(&self) -> Result<Option<AbsoluteOffset>, DBError> {
         Ok(None)
-    }
-
-    fn append_serialized_data(&mut self, data: &[u8]) -> Result<(), DBError> {
-        unimplemented!()
-    }
-    fn synchronize_full(&mut self) -> Result<(), DBError> {
-        unimplemented!()
     }
 
     fn get_object(
@@ -321,17 +305,18 @@ impl KeyValueStoreBackend for InMemory {
         Ok((commit_hash, serialize_stats))
     }
 
-    fn synchronize_data(
-        &mut self,
-        batch: Vec<(HashId, Arc<[u8]>)>,
-        _output: &[u8],
-    ) -> Result<Option<AbsoluteOffset>, DBError> {
-        self.write_batch(batch)?;
-        Ok(None)
-    }
-
     fn get_hash_id(&self, object_ref: ObjectReference) -> Result<HashId, DBError> {
         object_ref.hash_id_opt().ok_or(DBError::HashIdFailed)
+    }
+
+    #[cfg(test)]
+    fn synchronize_data(
+        &mut self,
+        batch: &[(HashId, Arc<[u8]>)],
+        _output: &[u8],
+    ) -> Result<Option<AbsoluteOffset>, DBError> {
+        self.write_batch(batch.to_vec())?;
+        Ok(None)
     }
 }
 

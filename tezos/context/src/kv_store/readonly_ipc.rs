@@ -45,6 +45,11 @@ impl ReadonlyIpcBackend {
             hashes: HashValueStore::new(None),
         })
     }
+
+    fn clear_objects(&mut self) -> Result<(), DBError> {
+        self.hashes.clear();
+        Ok(())
+    }
 }
 
 impl NotGarbageCollected for ReadonlyIpcBackend {}
@@ -106,11 +111,6 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
             .map_err(Into::into)
     }
 
-    fn clear_objects(&mut self) -> Result<(), DBError> {
-        self.hashes.clear();
-        Ok(())
-    }
-
     fn memory_usage(&self) -> RepositoryMemoryUsage {
         self.hashes.get_memory_usage()
     }
@@ -146,14 +146,6 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
 
     fn get_current_offset(&self) -> Result<Option<AbsoluteOffset>, DBError> {
         Ok(None)
-    }
-
-    fn append_serialized_data(&mut self, data: &[u8]) -> Result<(), DBError> {
-        unimplemented!()
-    }
-
-    fn synchronize_full(&mut self) -> Result<(), DBError> {
-        unimplemented!()
     }
 
     fn get_object(
@@ -215,23 +207,11 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
             .prepare_commit(date, author, message, parent_commit_ref, self, None)
             .unwrap();
 
-        // self.append_serialized_data(&output)?;
-        // self.put_context_hash(commit_ref)?;
-
         let commit_hash = get_commit_hash(commit_ref, self).map_err(Box::new)?;
 
-        // TODO ADD clear_objects
         self.clear_objects()?;
 
         Ok((commit_hash, serialize_stats))
-    }
-
-    fn synchronize_data(
-        &mut self,
-        _batch: Vec<(HashId, Arc<[u8]>)>,
-        _output: &[u8],
-    ) -> Result<Option<AbsoluteOffset>, DBError> {
-        Ok(None) // no-op
     }
 
     fn get_hash_id(&self, object_ref: ObjectReference) -> Result<HashId, DBError> {
@@ -242,6 +222,15 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
         self.client
             .get_hash_id(object_ref)
             .map_err(|reason| DBError::IpcAccessError { reason })
+    }
+
+    #[cfg(test)]
+    fn synchronize_data(
+        &mut self,
+        _batch: &[(HashId, Arc<[u8]>)],
+        _output: &[u8],
+    ) -> Result<Option<AbsoluteOffset>, DBError> {
+        Ok(None) // no-op
     }
 }
 
