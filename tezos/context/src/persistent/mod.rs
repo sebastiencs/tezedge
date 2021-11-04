@@ -290,7 +290,7 @@ impl File {
             .read(true)
             .write(true)
             .truncate(false)
-            .append(true)
+            // .append(true)
             .create(true)
             .custom_flags(libc::O_NOATIME)
             .open(PathBuf::from(base_path).join(file_type.get_path()))
@@ -315,9 +315,14 @@ impl File {
     }
 
     pub fn append(&mut self, bytes: impl AsRef<[u8]>) -> FileOffset {
+        use std::os::unix::prelude::FileExt;
+
         let bytes = bytes.as_ref();
 
         let offset = self.offset;
+
+        // self.file.write_all_at(bytes, offset).unwrap();
+
         self.offset += bytes.len() as u64;
 
         self.file.write_all(bytes).unwrap();
