@@ -145,12 +145,12 @@ impl BigStrings {
             return;
         }
 
-        self.strings.reserve(
-            other
-                .strings
-                .capacity()
-                .saturating_sub(self.strings.capacity()),
-        );
+        // self.strings.reserve(
+        //     other
+        //         .strings
+        //         .capacity()
+        //         .saturating_sub(self.strings.capacity()),
+        // );
 
         debug_assert!(self.strings.len() < other.strings.len());
         // Append the missing chunk into Self
@@ -162,16 +162,16 @@ impl BigStrings {
         // Append the missing chunk into Self
         let self_len = self.offsets.len();
 
-        self.offsets.reserve(
-            other
-                .offsets
-                .capacity()
-                .saturating_sub(self.offsets.capacity()),
-        );
+        // self.offsets.reserve(
+        //     other
+        //         .offsets
+        //         .capacity()
+        //         .saturating_sub(self.offsets.capacity()),
+        // );
         self.offsets.extend_from_slice(&other.offsets[self_len..]);
         debug_assert_eq!(self.offsets, other.offsets);
 
-        self.hashes = other.hashes.clone();
+        // self.hashes = other.hashes.clone();
     }
 
     fn serialize_big_strings(&mut self, output: &mut SerializeStrings) {
@@ -255,6 +255,18 @@ impl PartialEq for StringInterner {
 impl Eq for StringInterner {}
 
 impl StringInterner {
+    pub fn clone_after_reload(&mut self, other: &Self) {
+        if self == other {
+            return;
+        }
+
+        if !self.all_strings.is_empty() {
+            eprintln!("StringInterner::clone_after_reload should be executed with empty self");
+        }
+
+        *self = other.clone();
+    }
+
     /// This extends `Self::all_strings` and `Self::string_to_offset` from `other`.
     ///
     /// The other fields (`big_strings`) is not considered
@@ -265,36 +277,29 @@ impl StringInterner {
             return;
         }
 
-        // if self.all_strings.is_empty() && self.big_strings.strings.is_empty() {
-        //     // Optimize the case when we're empty (avoid call to `HashMap::extent` bellow)
-
-        //     *self = other.clone();
-        //     return;
-        // }
-
         if self.all_strings.len() != other.all_strings.len() {
             debug_assert!(self.all_strings.len() < other.all_strings.len());
 
-            self.all_strings.reserve(
-                other
-                    .all_strings
-                    .capacity()
-                    .saturating_sub(self.all_strings.capacity()),
-            );
+            // self.all_strings.reserve(
+            //     other
+            //         .all_strings
+            //         .capacity()
+            //         .saturating_sub(self.all_strings.capacity()),
+            // );
 
             // Append the missing chunk into Self
             let self_len = self.all_strings.len();
             self.all_strings.push_str(&other.all_strings[self_len..]);
             // self.string_to_offset.extend(&other.string_to_offset);
 
-            self.string_to_offset = other.string_to_offset.clone();
+            // self.string_to_offset = other.string_to_offset.clone();
 
-            self.all_strings_to_serialize.reserve(
-                other
-                    .all_strings_to_serialize
-                    .capacity()
-                    .saturating_sub(self.all_strings_to_serialize.capacity()),
-            );
+            // self.all_strings_to_serialize.reserve(
+            //     other
+            //         .all_strings_to_serialize
+            //         .capacity()
+            //         .saturating_sub(self.all_strings_to_serialize.capacity()),
+            // );
             self.all_strings_to_serialize
                 .extend_from_slice(&other.all_strings_to_serialize);
         }
