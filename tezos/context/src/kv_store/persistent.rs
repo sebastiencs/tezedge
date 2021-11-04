@@ -264,12 +264,12 @@ impl Persistent {
 
         self.hashes.commit();
 
-        self.data_file.sync();
-        self.strings_file.sync();
-        self.big_strings_file.sync();
-        self.big_strings_offsets_file.sync();
-        self.hashes.hashes_file.sync();
-        self.commit_index_file.sync();
+        // self.data_file.sync();
+        // self.strings_file.sync();
+        // self.big_strings_file.sync();
+        // self.big_strings_offsets_file.sync();
+        // self.hashes.hashes_file.sync();
+        // self.commit_index_file.sync();
 
         Ok(())
     }
