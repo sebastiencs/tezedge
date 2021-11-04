@@ -1049,9 +1049,7 @@ impl ShellContextApi for TezedgeContext {
             None,
         )?;
 
-        let commit_hash = get_commit_hash(commit_ref, &*repository)?;
-        repository.clear_objects()?;
-        Ok(commit_hash)
+        get_commit_hash(commit_ref, &*repository)
     }
 
     fn get_last_commit_hash(&self) -> Result<Option<Vec<u8>>, ContextError> {

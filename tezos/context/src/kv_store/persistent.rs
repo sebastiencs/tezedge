@@ -249,6 +249,32 @@ impl Persistent {
 
         Ok(hash_id)
     }
+
+    fn commit_to_disk(&mut self, data: &[u8]) -> Result<(), DBError> {
+        self.data_file.append(data);
+
+        let strings = self.string_interner.serialize();
+
+        self.strings_file.append(&strings.strings);
+        self.big_strings_file.append(&strings.big_strings);
+        self.big_strings_offsets_file
+            .append(&strings.big_strings_offsets);
+
+        let shapes = self.shapes.serialize();
+        self.shape_file.append(&shapes.shapes);
+        self.shape_index_file.append(&shapes.index);
+
+        self.hashes.commit();
+
+        self.data_file.sync();
+        self.strings_file.sync();
+        self.big_strings_file.sync();
+        self.big_strings_offsets_file.sync();
+        self.hashes.hashes_file.sync();
+        self.commit_index_file.sync();
+
+        Ok(())
+    }
 }
 
 fn deserialize_hashes(
@@ -354,16 +380,8 @@ impl KeyValueStoreBackend for Persistent {
         self.hashes.get_hash(hash_id)
     }
 
-    // fn get_value(&self, hash_id: HashId) -> Result<Option<Cow<[u8]>>, DBError> {
-    //     todo!()
-    // }
-
     fn get_vacant_object_hash(&mut self) -> Result<VacantObjectHash, DBError> {
         self.hashes.get_vacant_object_hash()
-    }
-
-    fn clear_objects(&mut self) -> Result<(), DBError> {
-        Ok(())
     }
 
     fn memory_usage(&self) -> RepositoryMemoryUsage {
@@ -399,36 +417,6 @@ impl KeyValueStoreBackend for Persistent {
 
     fn get_current_offset(&self) -> Result<Option<AbsoluteOffset>, DBError> {
         Ok(Some(self.data_file.offset()))
-    }
-
-    fn append_serialized_data(&mut self, data: &[u8]) -> Result<(), DBError> {
-        self.data_file.append(data);
-
-        let strings = self.string_interner.serialize();
-
-        self.strings_file.append(&strings.strings);
-        self.big_strings_file.append(&strings.big_strings);
-        self.big_strings_offsets_file
-            .append(&strings.big_strings_offsets);
-
-        let shapes = self.shapes.serialize();
-        self.shape_file.append(shapes.shapes);
-        self.shape_index_file.append(shapes.index);
-
-        self.hashes.commit();
-
-        self.data_file.sync();
-        self.strings_file.sync();
-        self.big_strings_file.sync();
-        self.big_strings_offsets_file.sync();
-        self.hashes.hashes_file.sync();
-        self.commit_index_file.sync();
-
-        Ok(())
-    }
-
-    fn synchronize_full(&mut self) -> Result<(), DBError> {
-        Ok(())
     }
 
     fn get_object(
@@ -486,20 +474,11 @@ impl KeyValueStoreBackend for Persistent {
             )
             .unwrap();
 
-        self.append_serialized_data(&output)?;
+        self.commit_to_disk(&output)?;
         self.put_context_hash(commit_ref)?;
 
         let commit_hash = get_commit_hash(commit_ref, self).map_err(Box::new)?;
         Ok((commit_hash, serialize_stats))
-    }
-
-    fn synchronize_data(
-        &mut self,
-        batch: Vec<(HashId, Arc<[u8]>)>,
-        output: &[u8],
-    ) -> Result<Option<AbsoluteOffset>, DBError> {
-        self.append_serialized_data(output)?;
-        self.get_current_offset()
     }
 
     fn get_hash_id(&self, object_ref: ObjectReference) -> Result<HashId, DBError> {
@@ -509,5 +488,15 @@ impl KeyValueStoreBackend for Persistent {
         };
 
         Ok(hash_id)
+    }
+
+    #[cfg(test)]
+    fn synchronize_data(
+        &mut self,
+        _batch: &[(HashId, Arc<[u8]>)],
+        output: &[u8],
+    ) -> Result<Option<AbsoluteOffset>, DBError> {
+        self.commit_to_disk(output)?;
+        self.get_current_offset()
     }
 }
