@@ -238,7 +238,7 @@ impl KeyValueStoreBackend for InMemory {
     }
 
     fn synchronize_strings_into(&self, string_interner: &mut StringInterner) {
-        string_interner.extend_from(&self.string_interner);
+        string_interner.clone_after_reload(&self.string_interner);
     }
 
     fn get_str(&self, string_id: StringId) -> Option<&str> {
