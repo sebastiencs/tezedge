@@ -1190,10 +1190,10 @@ impl TezedgeContext {
         });
         let send = now.elapsed();
 
-        println!(
-            "COMMIT_IMPL SYNC={:?} COMMIT={:?} SEND={:?}",
-            sync, commit, send
-        );
+        // println!(
+        //     "COMMIT_IMPL SYNC={:?} COMMIT={:?} SEND={:?}",
+        //     sync, commit, send
+        // );
 
         Ok(commit_hash)
     }
