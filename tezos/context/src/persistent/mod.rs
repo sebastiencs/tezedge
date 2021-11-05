@@ -346,6 +346,16 @@ impl File {
         // println!("{:?} READING {:?} AT OFFSET {:?} FILE_OFFSET={:?} ID={:?}", self.file_type, buffer.len(), offset, self.offset(), buffer.get(0));
     }
 
+    pub fn read_a_few_bytes(&self, buffer: &mut [u8], offset: AbsoluteOffset) {
+        let eof = self.offset as usize;
+        // let offset = offset.as_u64();
+        let end = offset.as_u64() as usize + 10;
+
+        // let buffer = &mut buffer[..end.min(eof)];
+
+        self.read_exact_at(buffer, offset);
+    }
+
     pub fn get_object_bytes<'a>(
         &self,
         object_ref: ObjectReference,

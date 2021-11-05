@@ -228,22 +228,20 @@ impl Persistent {
     fn get_hash_id_from_offset<'a>(&self, object_ref: ObjectReference) -> Result<HashId, DBError> {
         let offset = object_ref.offset();
 
-        let mut buffer: [u8; 4] = Default::default();
+        let mut buffer: [u8; 10] = Default::default();
+
+        self.data_file.read_a_few_bytes(&mut buffer, offset);
 
         // Read one byte to get the `ObjectHeader`
-        self.data_file.read_exact_at(&mut buffer[..1], offset);
         let object_header: ObjectHeader = ObjectHeader::from_bytes([buffer[0]]);
 
-        let header_length: u64 = match object_header.get_length() {
+        let header_length: usize = match object_header.get_length() {
             ObjectLength::OneByte => 2,
             ObjectLength::TwoBytes => 3,
             ObjectLength::FourBytes => 5,
         };
 
-        let offset = offset.add(header_length);
-        self.data_file.read_exact_at(&mut buffer, offset);
-
-        let hash_id = deserialize_hash_id(&buffer)?.0.unwrap();
+        let hash_id = deserialize_hash_id(&buffer[header_length..])?.0.unwrap();
 
         Ok(hash_id)
     }
