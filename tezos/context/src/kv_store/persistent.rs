@@ -264,12 +264,24 @@ impl Persistent {
 
         self.hashes.commit();
 
+        // let now = std::time::Instant::now();
         self.data_file.sync();
+        // println!("FSYNC DATA={:?} BYTES={:?}", now.elapsed(), data.len());
+        // let now = std::time::Instant::now();
         self.strings_file.sync();
+        // println!("FSYNC STRINGS={:?} BYTES={:?}", now.elapsed(), strings.strings.len());
+        // let now = std::time::Instant::now();
         self.big_strings_file.sync();
+        // println!("FSYNC BIG_STRINGS={:?} BYTES={:?}", now.elapsed(), strings.big_strings.len());
+        // let now = std::time::Instant::now();
         self.big_strings_offsets_file.sync();
+        // println!("FSYNC BIG_STRINGS_OFFSETS={:?} BYTES={:?}", now.elapsed(), strings.big_strings_offsets.len());
+        // let now = std::time::Instant::now();
         self.hashes.hashes_file.sync();
+        // println!("FSYNC HASHES={:?} BYTES={:?}", now.elapsed(), self.hashes.bytes.len());
+        // let now = std::time::Instant::now();
         self.commit_index_file.sync();
+        // println!("FSYNC INDEX={:?}", now.elapsed());
 
         Ok(())
     }
@@ -368,7 +380,12 @@ impl KeyValueStoreBackend for Persistent {
     }
 
     fn get_hash(&self, object_ref: ObjectReference) -> Result<Cow<ObjectHash>, DBError> {
-        let hash_id = self.get_hash_id(object_ref)?;
+        let hash_id = match object_ref.hash_id_opt() {
+            Some(hash_id) => hash_id,
+            None => self.get_hash_id(object_ref)?,
+        };
+
+        // let hash_id = self.get_hash_id(object_ref)?;
         self.hashes.get_hash(hash_id)
     }
 
@@ -448,7 +465,7 @@ impl KeyValueStoreBackend for Persistent {
     ) -> Result<(ContextHash, Box<SerializeStats>), DBError> {
         let offset = self.data_file.offset();
 
-        // let now = std::time::Instant::now();
+        let now = std::time::Instant::now();
 
         let PostCommitData {
             commit_ref,
@@ -467,34 +484,38 @@ impl KeyValueStoreBackend for Persistent {
             )
             .unwrap();
 
-        // let prepare = now.elapsed();
-        // let now = std::time::Instant::now();
+        let prepare = now.elapsed();
+        let now = std::time::Instant::now();
 
         let commit_hash = get_commit_hash(commit_ref, self).map_err(Box::new)?;
 
-        // let get_commit = now.elapsed();
+        let get_commit = now.elapsed();
 
-        // let now = std::time::Instant::now();
+        let now = std::time::Instant::now();
         self.commit_to_disk(&output)?;
-        // let to_disk = now.elapsed();
+        let to_disk = now.elapsed();
 
-        // let now = std::time::Instant::now();
+        let now = std::time::Instant::now();
         self.put_context_hash(commit_ref)?;
-        // let put = now.elapsed();
+        let put = now.elapsed();
 
-        // println!(
-        //     "PERSISTENT::COMMIT PREPARE={:?} GET_COMMIT={:?} TO_DISK={:?} PUT={:?}",
-        //     prepare, get_commit, to_disk, put
-        // );
+        println!(
+            "PERSISTENT::COMMIT PREPARE={:?} GET_COMMIT={:?} TO_DISK={:?} PUT={:?}",
+            prepare, get_commit, to_disk, put
+        );
 
         Ok((commit_hash, serialize_stats))
     }
 
     fn get_hash_id(&self, object_ref: ObjectReference) -> Result<HashId, DBError> {
+        let now = std::time::Instant::now();
+
         let hash_id = match object_ref.hash_id_opt() {
             Some(hash_id) => hash_id,
             None => self.get_hash_id_from_offset(object_ref)?,
         };
+
+        // println!("GET_HASH_ID_FROM_OFFSET={:?}", now.elapsed());
 
         Ok(hash_id)
     }
