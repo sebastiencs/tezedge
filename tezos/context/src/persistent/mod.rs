@@ -339,11 +339,18 @@ impl File {
     pub fn read_exact_at(&self, buffer: &mut [u8], offset: AbsoluteOffset) {
         use std::os::unix::prelude::FileExt;
 
-        // println!("{:?} READING {:?} AT OFFSET {:?} FILE_OFFSET={:?}", self.file_type, buffer.len(), offset, self.offset());
-
         self.file.read_exact_at(buffer, offset.as_u64()).unwrap();
+    }
 
-        // println!("{:?} READING {:?} AT OFFSET {:?} FILE_OFFSET={:?} ID={:?}", self.file_type, buffer.len(), offset, self.offset(), buffer.get(0));
+    pub fn read_a_few_bytes(&self, mut buffer: &mut [u8], offset: AbsoluteOffset) {
+        let eof = self.offset as usize;
+        let end = offset.as_u64() as usize + 10;
+
+        if eof < end {
+            buffer = &mut buffer[..10 - (end - eof)];
+        }
+
+        self.read_exact_at(buffer, offset);
     }
 
     pub fn get_object_bytes<'a>(

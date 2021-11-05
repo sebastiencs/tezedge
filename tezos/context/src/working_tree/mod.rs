@@ -271,10 +271,10 @@ impl DirEntry {
                     .as_ref()
                     .and_then(|off| storage.offsets_to_hash_id.get(off))
                 {
-                    println!("Cache for HashId");
+                    // println!("Cache for HashId");
                     Some(*hash_id)
                 } else if self.get_object().is_none() {
-                    println!("Read file for HashId");
+                    // println!("Read file for HashId");
                     Some(store.get_hash_id(self.get_reference()).unwrap())
                 } else {
                     // println!("Compute hash");

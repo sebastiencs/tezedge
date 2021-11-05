@@ -790,20 +790,21 @@ impl WorkingTree {
         serialize_function: Option<SerializeObjectSignature>,
         offset: Option<AbsoluteOffset>,
     ) -> Result<PostCommitData, MerkleError> {
-        // let now = std::time::Instant::now();
+        let now = std::time::Instant::now();
+        // {
+        //     let storage = self.index.storage.borrow();
+        //     self.fetch_hash_ids_recursively(
+        //         Object::Directory(self.get_root_directory()),
+        //         &storage,
+        //         store,
+        //     );
+        //     // println!("FETCH HASHIDS {:?}", now.elapsed());
+        // }
+        let fetch = now.elapsed();
 
-        {
-            // let now = std::time::Instant::now();
-            let storage = self.index.storage.borrow();
-            self.fetch_hash_ids_recursively(
-                Object::Directory(self.get_root_directory()),
-                &storage,
-                store,
-            );
-            // println!("FETCH HASHIDS {:?}", now.elapsed());
-        }
-
+        let now = std::time::Instant::now();
         let root_hash_id = self.get_root_directory_hash(store)?;
+        let compute = now.elapsed();
         // println!("COMPUTE HASH = {:?}", now.elapsed());
         let root = self.get_root_directory();
 
@@ -815,7 +816,9 @@ impl WorkingTree {
             message,
         };
         let object = Object::Commit(Box::new(new_commit.clone()));
+        let now = std::time::Instant::now();
         let commit_hash = hash_commit(&new_commit, store)?;
+        let hash_commit = now.elapsed();
 
         // TODO: Don't unwrap_or(0)
 
@@ -826,6 +829,8 @@ impl WorkingTree {
 
             let storage = self.index.storage.borrow();
             let strings = self.index.string_interner.borrow();
+
+            let now = std::time::Instant::now();
             let commit_offset = self.write_objects_recursively(
                 object,
                 commit_hash,
@@ -834,6 +839,9 @@ impl WorkingTree {
                 &storage,
                 &strings,
             )?;
+            let ser = now.elapsed();
+
+            // println!("COMMIT FETCH={:?} COMPUTE_HASH={:?} HASH_COMMIT={:?} SERIALIZATION={:?}", fetch, compute, hash_commit, ser);
 
             Ok(PostCommitData {
                 commit_ref: ObjectReference::new(Some(commit_hash), commit_offset),
