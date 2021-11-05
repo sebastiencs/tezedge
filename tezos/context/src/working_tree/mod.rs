@@ -220,6 +220,11 @@ impl DirEntry {
             return;
         }
 
+        match self.get_object() {
+            Some(Object::Blob(blob_id)) if blob_id.is_inline() => return,
+            _ => {}
+        }
+
         let hash_id = if let Some(hash_id) = self
             .get_offset()
             .as_ref()
@@ -255,6 +260,11 @@ impl DirEntry {
                 // };
 
                 // println!("IS_INLINE={:?} DIR_ENTRY={:?}", is_inline, self);
+
+                match self.get_object() {
+                    Some(Object::Blob(blob_id)) if blob_id.is_inline() => return Ok(None),
+                    _ => {}
+                }
 
                 let hash_id = if let Some(hash_id) = self
                     .get_offset()
