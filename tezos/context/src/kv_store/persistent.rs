@@ -499,10 +499,10 @@ impl KeyValueStoreBackend for Persistent {
         self.put_context_hash(commit_ref)?;
         let put = now.elapsed();
 
-        println!(
-            "PERSISTENT::COMMIT PREPARE={:?} GET_COMMIT={:?} TO_DISK={:?} PUT={:?}",
-            prepare, get_commit, to_disk, put
-        );
+        // println!(
+        //     "PERSISTENT::COMMIT PREPARE={:?} GET_COMMIT={:?} TO_DISK={:?} PUT={:?}",
+        //     prepare, get_commit, to_disk, put
+        // );
 
         Ok((commit_hash, serialize_stats))
     }

@@ -793,14 +793,14 @@ impl WorkingTree {
         // let now = std::time::Instant::now();
 
         {
-            let now = std::time::Instant::now();
+            // let now = std::time::Instant::now();
             let storage = self.index.storage.borrow();
             self.fetch_hash_ids_recursively(
                 Object::Directory(self.get_root_directory()),
                 &storage,
                 store,
             );
-            println!("FETCH HASHIDS {:?}", now.elapsed());
+            // println!("FETCH HASHIDS {:?}", now.elapsed());
         }
 
         let root_hash_id = self.get_root_directory_hash(store)?;
