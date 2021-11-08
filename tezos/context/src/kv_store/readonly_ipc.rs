@@ -5,7 +5,12 @@
 //! It is used by read-only protocol runners to be able to access the in-memory context
 //! owned by the writable protocol runner.
 
-use std::{borrow::Cow, path::Path, sync::Arc};
+use std::{borrow::Cow, path::Path};
+
+#[cfg(test)]
+use crate::serialize::persistent::AbsoluteOffset;
+#[cfg(test)]
+use std::sync::Arc;
 
 use crypto::hash::ContextHash;
 use slog::{error, info};
@@ -13,7 +18,7 @@ use tezos_timing::{RepositoryMemoryUsage, SerializeStats};
 use thiserror::Error;
 
 use crate::persistent::{get_commit_hash, DBError, Flushable, Persistable};
-use crate::serialize::persistent::AbsoluteOffset;
+
 use crate::serialize::{in_memory, persistent, ObjectHeader};
 use crate::working_tree::shape::{DirectoryShapeId, ShapeStrings};
 use crate::working_tree::storage::{DirEntryId, Storage};

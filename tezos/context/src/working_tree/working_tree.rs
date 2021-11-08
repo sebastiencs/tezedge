@@ -61,8 +61,8 @@ use tezos_timing::SerializeStats;
 use crate::{
     gc::GarbageCollectionError,
     serialize::{
-        persistent::{AbsoluteOffset, SerializeObjectSignature},
-        DeserializationError, SerializationError,
+        persistent::AbsoluteOffset, DeserializationError, SerializationError,
+        SerializeObjectSignature,
     },
     tezedge_context::TezedgeIndex,
 };
@@ -86,12 +86,22 @@ use super::{
 
 pub struct PostCommitData {
     pub commit_ref: ObjectReference,
-    // pub commit_hash_id: HashId,
-    // pub commit_offset: u64,
     pub batch: Vec<(HashId, Arc<[u8]>)>,
     pub reused: Vec<HashId>,
     pub serialize_stats: Box<SerializeStats>,
     pub output: Vec<u8>,
+}
+
+impl PostCommitData {
+    fn empty_with_commit(commit_hash: HashId) -> Self {
+        Self {
+            commit_ref: ObjectReference::new(Some(commit_hash), None),
+            batch: Default::default(),
+            reused: Default::default(),
+            serialize_stats: Default::default(),
+            output: Default::default(),
+        }
+    }
 }
 
 // The root of the 'working tree' can be either a Directory or a Value
@@ -786,11 +796,10 @@ impl WorkingTree {
         author: String,
         message: String,
         parent_commit_ref: Option<ObjectReference>,
-        store: &mut ContextKeyValueStore,
+        repository: &mut ContextKeyValueStore,
         serialize_function: Option<SerializeObjectSignature>,
         offset: Option<AbsoluteOffset>,
     ) -> Result<PostCommitData, MerkleError> {
-        let now = std::time::Instant::now();
         // {
         //     let storage = self.index.storage.borrow();
         //     self.fetch_hash_ids_recursively(
@@ -800,65 +809,46 @@ impl WorkingTree {
         //     );
         //     // println!("FETCH HASHIDS {:?}", now.elapsed());
         // }
-        let fetch = now.elapsed();
 
-        let now = std::time::Instant::now();
-        let root_hash_id = self.get_root_directory_hash(store)?;
-        let compute = now.elapsed();
-        // println!("COMPUTE HASH = {:?}", now.elapsed());
+        let root_hash_id = self.get_root_directory_hash(repository)?;
         let root = self.get_root_directory();
 
         let new_commit = Commit {
-            parent_commit_ref: parent_commit_ref.clone(),
+            parent_commit_ref,
             root_ref: ObjectReference::new(Some(root_hash_id), None), // offset is modified later
             time,
             author,
             message,
         };
-        let object = Object::Commit(Box::new(new_commit.clone()));
-        let now = std::time::Instant::now();
-        let commit_hash = hash_commit(&new_commit, store)?;
-        let hash_commit = now.elapsed();
+        let commit_hash = hash_commit(&new_commit, repository)?;
+        let commit_object = Object::Commit(Box::new(new_commit));
 
-        // TODO: Don't unwrap_or(0)
+        let serialize_function = match serialize_function {
+            Some(serialize_function) => serialize_function,
+            None => return Ok(PostCommitData::empty_with_commit(commit_hash)),
+        };
 
-        if let Some(serialize_function) = serialize_function {
-            // produce objects to be persisted to storage
+        let mut data = SerializingData::new(repository, offset, serialize_function);
 
-            let mut data = SerializingData::new(store, offset, serialize_function);
+        let storage = self.index.storage.borrow();
+        let strings = self.index.string_interner.borrow();
 
-            let storage = self.index.storage.borrow();
-            let strings = self.index.string_interner.borrow();
+        let commit_offset = self.write_objects_recursively(
+            commit_object,
+            commit_hash,
+            Some(root),
+            &mut data,
+            &storage,
+            &strings,
+        )?;
 
-            let now = std::time::Instant::now();
-            let commit_offset = self.write_objects_recursively(
-                object,
-                commit_hash,
-                Some(root),
-                &mut data,
-                &storage,
-                &strings,
-            )?;
-            let ser = now.elapsed();
-
-            // println!("COMMIT FETCH={:?} COMPUTE_HASH={:?} HASH_COMMIT={:?} SERIALIZATION={:?}", fetch, compute, hash_commit, ser);
-
-            Ok(PostCommitData {
-                commit_ref: ObjectReference::new(Some(commit_hash), commit_offset),
-                batch: data.batch,
-                reused: data.referenced_older_objects,
-                serialize_stats: data.stats,
-                output: data.serialized,
-            })
-        } else {
-            Ok(PostCommitData {
-                commit_ref: ObjectReference::new(Some(commit_hash), None),
-                batch: Default::default(),
-                reused: Default::default(),
-                serialize_stats: Default::default(),
-                output: Default::default(),
-            })
-        }
+        Ok(PostCommitData {
+            commit_ref: ObjectReference::new(Some(commit_hash), commit_offset),
+            batch: data.batch,
+            reused: data.referenced_older_objects,
+            serialize_stats: data.stats,
+            output: data.serialized,
+        })
     }
 
     /// Returns a new version of the WorkingTree with the tree replaced
@@ -992,13 +982,13 @@ impl WorkingTree {
     /// a value or directory).
     pub fn get_root_directory_hash(
         &self,
-        store: &mut ContextKeyValueStore,
+        repository: &mut ContextKeyValueStore,
     ) -> Result<HashId, MerkleError> {
         // TOOD: unnecessery recalculation, should be one when set_staged_root
         let root = self.get_root_directory();
         let storage = self.index.storage.borrow();
         let strings = self.index.string_interner.borrow();
-        hash_directory(root, store, &storage, &strings).map_err(MerkleError::from)
+        hash_directory(root, repository, &storage, &strings).map_err(MerkleError::from)
     }
 
     fn fetch_hash_ids_recursively(

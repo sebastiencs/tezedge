@@ -3,12 +3,12 @@
 
 //! This module implements the Tezos context API.
 
+use std::rc::Rc;
 use std::{
     cell::RefCell,
     convert::TryInto,
     sync::{Arc, RwLock},
 };
-use std::{convert::TryFrom, rc::Rc};
 
 use crypto::hash::ContextHash;
 use ocaml_interop::BoxRoot;
@@ -50,7 +50,6 @@ struct TezedgeIndexSynchronized<'a> {
 impl<'a> TezedgeIndexSynchronized<'a> {
     fn synchronized(index: &'a TezedgeIndex) -> Result<TezedgeIndexSynchronized<'a>, ContextError> {
         let repository = index.repository.write()?;
-        // let mut storage = index.storage.borrow_mut();
         let mut strings = index.string_interner.borrow_mut();
 
         repository.synchronize_strings_into(&mut strings);
@@ -88,12 +87,8 @@ impl std::ops::Deref for TezedgeContextWithDeallocation<'_> {
 
 impl Drop for TezedgeContextWithDeallocation<'_> {
     fn drop(&mut self) {
-        // let now = std::time::Instant::now();
-
         let mut storage = self.index.storage.borrow_mut();
         storage.deallocate();
-
-        // println!("DEALLOC={:?}", now.elapsed());
     }
 }
 
@@ -136,46 +131,21 @@ impl TezedgeIndex {
         TezedgeIndexSynchronized::synchronized(self)
     }
 
-    // /// Fetches object from the repository associated to this `hash_id`.
-    // ///
-    // /// This returns the raw owned value (`Vec<u8>`).
-    // /// `Self::fetch_object` should be used to avoid allocating a `Vec<u8>`.
-    // pub fn fetch_object_bytes(&self, hash_id: HashId) -> Result<Option<Vec<u8>>, DBError> {
-    //     let repo = self.repository.read()?;
-    //     Ok(repo.get_value(hash_id)?.map(|v| v.to_vec()))
-    // }
-
     /// Fetches object from the repository and deserialize it into `Self::storage`.
     ///
     /// Returns the deserialized `Object`.
     /// If the object has not be found, this returns Ok(None).
     pub fn fetch_object(
         &self,
-        // hash_id: HashId,
         object_ref: ObjectReference,
         storage: &mut Storage,
         strings: &mut StringInterner,
     ) -> Result<Option<Object>, DBError> {
-        let repo = self.repository.read()?;
+        let repository = self.repository.read()?;
 
-        repo.get_object(object_ref, storage, strings).map(Some)
-
-        // repo.get_value_from_offset(&mut storage.data, object_ref)?;
-
-        // Ok(Some(deserialize_object(
-        //     object_ref.offset(), // &storage.data,
-        //     storage,
-        //     &*repo,
-        // )?))
-
-        // match repo.get_value_from_offset(&mut storage.data, offset)? {
-        //     None => Ok(None),
-        //     Some(object_bytes) => Ok(Some(deserialize_object(
-        //         object_bytes.as_ref(),
-        //         storage,
-        //         &*repo,
-        //     )?)),
-        // }
+        repository
+            .get_object(object_ref, storage, strings)
+            .map(Some)
     }
 
     /// Returns the raw `ObjectHash` associated to this `hash_id`.
@@ -192,7 +162,6 @@ impl TezedgeIndex {
     pub fn get_object(
         &self,
         object_ref: ObjectReference,
-        //hash_id: HashId,
         storage: &mut Storage,
         strings: &mut StringInterner,
     ) -> Result<Object, MerkleError> {
@@ -208,7 +177,6 @@ impl TezedgeIndex {
     pub fn fetch_commit(
         &self,
         object_ref: ObjectReference,
-        //hash: HashId,
         storage: &mut Storage,
         strings: &mut StringInterner,
     ) -> Result<Option<Commit>, DBError> {
@@ -232,7 +200,6 @@ impl TezedgeIndex {
     pub fn get_commit(
         &self,
         object_ref: ObjectReference,
-        //hash_id: HashId,
         storage: &mut Storage,
         strings: &mut StringInterner,
     ) -> Result<Commit, MerkleError> {
@@ -251,7 +218,6 @@ impl TezedgeIndex {
     pub fn fetch_directory(
         &self,
         object_ref: ObjectReference,
-        //hash_id: HashId,
         storage: &mut Storage,
         strings: &mut StringInterner,
     ) -> Result<Option<DirectoryId>, DBError> {
@@ -275,7 +241,6 @@ impl TezedgeIndex {
     pub fn get_directory(
         &self,
         object_ref: ObjectReference,
-        //hash_id: HashId,
         storage: &mut Storage,
         strings: &mut StringInterner,
     ) -> Result<DirectoryId, MerkleError> {
@@ -289,8 +254,8 @@ impl TezedgeIndex {
 
     /// Checks if the repository contains this `hash_id`.
     pub fn contains(&self, hash_id: HashId) -> Result<bool, DBError> {
-        let db = self.repository.read()?;
-        db.contains(hash_id)
+        let repository = self.repository.read()?;
+        repository.contains(hash_id)
     }
 
     /// Returns the `HashId` associated to this `context_hash`.
@@ -300,8 +265,8 @@ impl TezedgeIndex {
         &self,
         context_hash: &ContextHash,
     ) -> Result<Option<ObjectReference>, MerkleError> {
-        let db = self.repository.read()?;
-        Ok(db.get_context_hash(context_hash)?)
+        let repository = self.repository.read()?;
+        Ok(repository.get_context_hash(context_hash)?)
     }
 
     /// Convert key in array form to string form
@@ -336,12 +301,9 @@ impl TezedgeIndex {
         let object_ref = dir_entry.get_reference();
 
         let object = self.get_object(object_ref, storage, strings)?;
-        //        let object = self.get_object(hash_id, storage)?;
 
         let dir_entry = storage.get_dir_entry(dir_entry_id)?;
         dir_entry.set_object(&object)?;
-
-        // println!("DIR_ENTRY={:?}", dir_entry);
 
         Ok(object)
     }
@@ -351,7 +313,6 @@ impl TezedgeIndex {
     pub fn _get_context_tree_by_prefix(
         &self,
         object_ref: ObjectReference,
-        //context_hash: HashId,
         prefix: &ContextKey,
         depth: Option<usize>,
         storage: &mut Storage,
@@ -520,11 +481,10 @@ impl TezedgeIndex {
     pub fn get_history(
         &self,
         object_ref: ObjectReference,
-        //commit_hash: HashId,
         key: &ContextKey,
     ) -> Result<ContextValue, MerkleError> {
-        let mut storage = (&*self.storage).borrow_mut();
-        let mut strings = (&*self.string_interner).borrow_mut();
+        let mut storage = self.storage.borrow_mut();
+        let mut strings = self.string_interner.borrow_mut();
 
         let commit = self.get_commit(object_ref, &mut storage, &mut strings)?;
 
@@ -574,11 +534,10 @@ impl TezedgeIndex {
     pub fn get_context_key_values_by_prefix(
         &self,
         object_ref: ObjectReference,
-        //context_hash: HashId,
         prefix: &ContextKey,
     ) -> Result<Option<Vec<(ContextKeyOwned, ContextValue)>>, MerkleError> {
-        let mut storage = (&*self.storage).borrow_mut();
-        let mut strings = (&*self.string_interner).borrow_mut();
+        let mut storage = self.storage.borrow_mut();
+        let mut strings = self.string_interner.borrow_mut();
 
         let commit = self.get_commit(object_ref, &mut storage, &mut strings)?;
 
@@ -679,7 +638,6 @@ impl TezedgeIndex {
     /// - The repository needs those interned strings when it sends the directory shapes to the
     ///   read only protocol runner.
     fn synchronize_interned_strings_to_repository(&self) -> Result<(), MerkleError> {
-        let mut storage = self.storage.borrow_mut();
         let mut strings = self.string_interner.borrow_mut();
         let mut repository = self.repository.write()?;
         repository.synchronize_strings_from(&strings);
@@ -692,12 +650,10 @@ impl TezedgeIndex {
 
     /// A clone of `Self` but with a clear storage with strings in sync to the `repository` strings.
     fn with_clear_storage(&self) -> Result<Self, MerkleError> {
-        // let storage: Rc<RefCell<Storage>> = Default::default();
-
         {
             let repository = self.repository.read()?;
-
             let mut strings = self.string_interner.borrow_mut();
+
             repository.synchronize_strings_into(&mut strings);
         }
 
@@ -812,14 +768,9 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
             }
         };
 
-        // println!("CHECKOUT HASH_ID={:?} OFFSET={:?}", hash_id, offset);
-
         // TODO: should we always be copying this value? is it possibe
         // to keep the latest version around and copy only when not different?
         let index = self.with_clear_storage()?;
-
-        // let mut storage = self.storage.borrow_mut();
-        // storage.clear();
 
         let dir_id = {
             let mut storage = index.storage.borrow_mut();
@@ -829,8 +780,6 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
                 Some(commit) => commit,
                 None => return Ok(None),
             };
-
-            // println!("CHECKOUT COMMIT={:?}", commit);
 
             match self.fetch_directory(commit.root_ref, &mut storage, &mut strings)? {
                 Some(dir_id) => dir_id,
@@ -843,8 +792,6 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
         Ok(Some(TezedgeContext::new(
             index,
             Some(object_ref),
-            // Some(hash_id),
-            // Some(offset),
             Some(Rc::new(tree)),
         )))
     }
@@ -974,63 +921,6 @@ impl ShellContextApi for TezedgeContext {
     ) -> Result<ContextHash, ContextError> {
         let ctx = self.with_deallocation();
         ctx.commit_impl(author, message, date)
-
-        // self.index.synchronize_interned_strings_to_repository()?;
-
-        // let (commit_hash, serialize_stats) = {
-        //     let mut repository = self.index.repository.write()?;
-        //     let date: u64 = date.try_into()?;
-
-        //     repository.commit(&self.tree, self.parent_commit_ref, author, message, date)?
-        // };
-
-        // let mut repository = self.index.repository.write()?;
-
-        // let (commit_hash, serialize_stats) =
-        //     repository.commit(&self.tree, self.parent_commit_ref, author, message, date)?;
-
-        // let PostCommitData {
-        //     commit_ref,
-        //     // commit_hash_id,
-        //     // commit_offset,
-        //     batch,
-        //     reused,
-        //     serialize_stats,
-        //     output,
-        // } = self.tree.prepare_commit(
-        //     date,
-        //     author,
-        //     message,
-        //     &self.parent_commit_ref,
-        //     &mut *repository,
-        //     true,
-        // )?;
-
-        // // println!("POST COMMIT HASH_ID={:?} OFFSET={:?} DATA_LENGTH={:?}", commit_hash_id, commit_offset, output.len());
-
-        // repository.append_serialized_data(&output)?;
-
-        // // let commit_ref = ObjectReference::new(Some(commit_hash_id), commit_offset);
-
-        // // FIXME: only write objects if there are any, empty commits should not produce anything
-        // repository.write_batch(batch)?;
-        // repository.put_context_hash(commit_ref)?;
-        // repository.block_applied(reused)?;
-
-        // let commit_hash = self.get_commit_hash(commit_ref, &*repository)?;
-        // repository.clear_objects()?;
-
-        // std::mem::drop(repository);
-
-        // send_statistics(BlockMemoryUsage {
-        //     context: Box::new(self.get_memory_usage()?),
-        //     serialize: serialize_stats,
-        // });
-
-        // let mut storage = self.index.storage.borrow_mut();
-        // storage.deallocate();
-
-        // Ok(commit_hash)
     }
 
     fn hash(
@@ -1068,25 +958,11 @@ impl ShellContextApi for TezedgeContext {
             .get_object_bytes(object_ref, &mut buffer)
             .map(|bytes| Some(bytes.to_vec()))
             .map_err(Into::into)
-
-        // repository.get_value_from_offset(&mut buffer, object_ref)?;
-
-        // match self.parent_commit_hash_offset {
-        //     Some(offset) => repository.get_value_from_offset(&mut buffer, offset)?,
-        //     None => return Ok(None),
-        // };
-
-        // let value = match self.parent_commit_hash {
-        //     Some(hash_id) => repository.get_value(hash_id)?,
-        //     None => return Ok(None),
-        // };
-
-        // Ok(Some(buffer))
     }
 
     fn get_memory_usage(&self) -> Result<ContextMemoryUsage, ContextError> {
         let repository = self.index.repository.read()?;
-        let storage = (&*self.index.storage).borrow();
+        let storage = self.index.storage.borrow();
 
         let usage = ContextMemoryUsage {
             repo: repository.memory_usage(),
@@ -1124,8 +1000,6 @@ impl TezedgeContext {
     pub fn new(
         index: TezedgeIndex,
         parent_commit_ref: Option<ObjectReference>,
-        // parent_commit_hash: Option<HashId>,
-        // parent_commit_hash_offset: Option<u64>,
         tree: Option<Rc<WorkingTree>>,
     ) -> Self {
         let tree = if let Some(tree) = tree {
@@ -1138,7 +1012,6 @@ impl TezedgeContext {
         Self {
             index,
             parent_commit_ref,
-            // parent_commit_hash_offset,
             tree_id,
             tree_id_generator,
             tree,
@@ -1170,30 +1043,19 @@ impl TezedgeContext {
         message: String,
         date: i64,
     ) -> Result<ContextHash, ContextError> {
-        let now = std::time::Instant::now();
         self.index.synchronize_interned_strings_to_repository()?;
-        let sync = now.elapsed();
 
-        let now = std::time::Instant::now();
         let (commit_hash, serialize_stats) = {
             let mut repository = self.index.repository.write()?;
             let date: u64 = date.try_into()?;
 
             repository.commit(&self.tree, self.parent_commit_ref, author, message, date)?
         };
-        let commit = now.elapsed();
 
-        let now = std::time::Instant::now();
         send_statistics(BlockMemoryUsage {
             context: Box::new(self.get_memory_usage()?),
             serialize: serialize_stats,
         });
-        let send = now.elapsed();
-
-        // println!(
-        //     "COMMIT_IMPL SYNC={:?} COMMIT={:?} SEND={:?}",
-        //     sync, commit, send
-        // );
 
         Ok(commit_hash)
     }

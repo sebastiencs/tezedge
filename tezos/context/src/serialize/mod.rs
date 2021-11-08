@@ -1,29 +1,45 @@
-use std::{array::TryFromSliceError, num::TryFromIntError, str::Utf8Error, string::FromUtf8Error};
+use std::{
+    array::TryFromSliceError, num::TryFromIntError, str::Utf8Error, string::FromUtf8Error,
+    sync::Arc,
+};
 
 use modular_bitfield::prelude::*;
+use tezos_timing::SerializeStats;
 use thiserror::Error;
 
 use crate::{
+    kv_store::HashId,
     persistent::DBError,
     working_tree::{
         storage::{Blob, DirEntryIdError, Storage, StorageError},
+        string_interner::StringInterner,
         DirEntry, Object,
     },
+    ContextKeyValueStore,
 };
+
+use self::persistent::AbsoluteOffset;
 
 pub mod in_memory;
 pub mod persistent;
-
-const ID_DIRECTORY: u8 = 0;
-const ID_BLOB: u8 = 1;
-const ID_COMMIT: u8 = 2;
-const ID_INODE_POINTERS: u8 = 3;
-const ID_SHAPED_DIRECTORY: u8 = 4;
 
 const COMPACT_HASH_ID_BIT: u32 = 1 << 23;
 
 const FULL_31_BITS: u32 = 0x7FFFFFFF;
 const FULL_23_BITS: u32 = 0x7FFFFF;
+
+pub type SerializeObjectSignature = fn(
+    &Object,                       // object
+    HashId,                        // object_hash_id
+    &mut Vec<u8>,                  // output
+    &Storage,                      // storage
+    &StringInterner,               // strings
+    &mut SerializeStats,           // statistics
+    &mut Vec<(HashId, Arc<[u8]>)>, // batch
+    &mut Vec<HashId>,              // referenced_older_objects
+    &mut ContextKeyValueStore,     // repository
+    Option<AbsoluteOffset>,        // offset
+) -> Result<Option<AbsoluteOffset>, SerializationError>;
 
 #[derive(BitfieldSpecifier)]
 #[bits = 2]
@@ -48,6 +64,7 @@ pub enum ObjectTag {
 #[bitfield(bits = 8)]
 #[derive(Debug)]
 pub struct ObjectHeader {
+    #[allow(dead_code)] // `bitfield` generates unused method on this `tag`
     tag: ObjectTag,
     length: ObjectLength,
     is_persistent: bool,

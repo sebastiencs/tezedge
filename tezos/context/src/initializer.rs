@@ -10,7 +10,7 @@ use tezos_context_api::TezosContextTezEdgeStorageConfiguration;
 use thiserror::Error;
 
 use crate::kv_store::persistent::Persistent;
-use crate::{kv_store::in_memory::InMemory, kv_store::readonly_ipc::ReadonlyIpcBackend};
+use crate::kv_store::readonly_ipc::ReadonlyIpcBackend;
 use crate::{PatchContextFunction, TezedgeContext, TezedgeIndex};
 
 /// IPC communication errors

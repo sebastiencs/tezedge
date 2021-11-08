@@ -5,7 +5,7 @@ use std::{
     borrow::Cow,
     convert::TryFrom,
     fs::OpenOptions,
-    io::{self, Write},
+    io::{self, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex, PoisonError},
 };
@@ -17,20 +17,13 @@ use tezos_timing::{RepositoryMemoryUsage, SerializeStats};
 
 use crate::{
     kv_store::{readonly_ipc::ContextServiceError, HashId, HashIdError, VacantObjectHash},
-    serialize::{
-        persistent::{read_object_length, AbsoluteOffset},
-        DeserializationError, ObjectHeader, ObjectLength,
-    },
+    serialize::{persistent::AbsoluteOffset, DeserializationError},
     working_tree::{
-        // serializer::{
-        //     read_object_length, AbsoluteOffset, DeserializationError, ObjectHeader, ObjectLength,
-        // },
         shape::{DirectoryShapeError, DirectoryShapeId, ShapeStrings},
         storage::{DirEntryId, Storage},
         string_interner::{StringId, StringInterner},
-        working_tree::{MerkleError, WorkingTree},
-        Object,
-        ObjectReference,
+        working_tree::WorkingTree,
+        Object, ObjectReference,
     },
     ContextError, ContextKeyValueStore, ObjectHash,
 };
@@ -207,7 +200,6 @@ pub enum FileType {
 }
 
 const PERSISTENT_BASE_PATH: &str = "db_persistent";
-const PERSISTENT_BASE_PATH_TEST: &str = "db_persistent/{}";
 
 impl FileType {
     fn get_path(&self) -> &Path {
@@ -227,14 +219,11 @@ impl FileType {
 pub struct File {
     file: std::fs::File,
     offset: u64,
-    file_type: FileType,
 }
 
 /// Absolute offset in the file
 #[derive(Debug)]
 pub struct FileOffset(pub u64);
-
-// static BASE_PATH_EXCLUSIVITY: Arc
 
 // #[cfg(test)]
 lazy_static::lazy_static! {
@@ -280,29 +269,25 @@ impl File {
             "FILE={:?}",
             PathBuf::from(base_path).join(file_type.get_path())
         );
-        // println!("BASE={:?}", base_path);
 
         std::fs::create_dir_all(&base_path).unwrap();
 
         use std::os::unix::fs::OpenOptionsExt;
 
-        let file = OpenOptions::new()
+        let mut file = OpenOptions::new()
             .read(true)
             .write(true)
             .truncate(false)
-            // .append(true)
+            .append(true)
             .create(true)
             .custom_flags(libc::O_NOATIME)
             .open(PathBuf::from(base_path).join(file_type.get_path()))
             .unwrap();
 
-        let offset = file.metadata().unwrap().len();
+        // We use seek, in cases metadatas were not synchronized
+        let offset = file.seek(SeekFrom::End(0)).unwrap();
 
-        Self {
-            file,
-            offset,
-            file_type,
-        }
+        Self { file, offset }
     }
 
     pub fn offset(&self) -> AbsoluteOffset {
@@ -314,20 +299,11 @@ impl File {
         // self.file.sync_all().unwrap();
     }
 
-    pub fn append(&mut self, bytes: impl AsRef<[u8]>) -> FileOffset {
-        use std::os::unix::prelude::FileExt;
-
+    pub fn append(&mut self, bytes: impl AsRef<[u8]>) {
         let bytes = bytes.as_ref();
 
-        let offset = self.offset;
-
-        // self.file.write_all_at(bytes, offset).unwrap();
-
         self.offset += bytes.len() as u64;
-
         self.file.write_all(bytes).unwrap();
-
-        FileOffset(offset)
     }
 
     pub fn read_at(&self, buffer: &mut Vec<u8>, offset: AbsoluteOffset) {
@@ -342,82 +318,18 @@ impl File {
         self.file.read_exact_at(buffer, offset.as_u64()).unwrap();
     }
 
-    pub fn read_a_few_bytes(&self, mut buffer: &mut [u8], offset: AbsoluteOffset) {
+    pub fn try_read<'a>(&self, mut buffer: &'a mut [u8], offset: AbsoluteOffset) -> &'a [u8] {
+        let buf_len = buffer.len();
+
         let eof = self.offset as usize;
-        let end = offset.as_u64() as usize + 10;
+        let end = offset.as_u64() as usize + buf_len;
 
         if eof < end {
-            buffer = &mut buffer[..10 - (end - eof)];
+            buffer = &mut buffer[..buf_len - (end - eof)];
         }
 
         self.read_exact_at(buffer, offset);
-    }
 
-    pub fn get_object_bytes<'a>(
-        &self,
-        object_ref: ObjectReference,
-        buffer: &'a mut Vec<u8>,
-    ) -> Result<&'a [u8], DBError> {
-        let offset = object_ref.offset();
-
-        if buffer.len() < 5 {
-            buffer.resize(5, 0);
-        }
-
-        // Read one byte to get the `ObjectHeader`
-        self.read_exact_at(&mut buffer[..1], offset);
-        let object_header: ObjectHeader = ObjectHeader::from_bytes([buffer[0]]);
-
-        let header = match object_header.get_length() {
-            ObjectLength::OneByte => &mut buffer[..2],
-            ObjectLength::TwoBytes => &mut buffer[..3],
-            ObjectLength::FourBytes => &mut buffer[..5],
-        };
-
-        // Read (1 + (1, 2 or 4)) bytes to get the object length.
-        self.read_exact_at(header, offset);
-        let (_, length) = read_object_length(header, &object_header);
-
-        if length > buffer.len() {
-            buffer.resize(length, 0);
-        }
-
-        self.read_exact_at(&mut buffer[..length], offset);
-
-        Ok(&buffer[..length])
+        buffer
     }
 }
-
-// struct FileSystem {
-//     data_file: File,
-//     shape_file: File,
-//     commit_index_file: File,
-//     strings_file: File,
-// }
-
-// impl FileSystem {
-//     fn new() -> FileSystem {
-//         let data_file = File::new(FileType::Data);
-//         let shape_file = File::new(FileType::ShapeDirectories);
-//         let commit_index_file = File::new(FileType::CommitIndex);
-//         let strings_file = File::new(FileType::Strings);
-
-//         Self {
-//             data_file,
-//             shape_file,
-//             commit_index_file,
-//             strings_file,
-//         }
-//     }
-// }
-
-// impl FileType {
-//     fn get_path(&self) -> &Path {
-//         match self {
-//             FileType::ShapeDirectories => Path::new("shape_directories.db"),
-//             FileType::CommitIndex => Path::new("commit_index.db"),
-//             FileType::Data => Path::new("data.db"),
-//             FileType::Strings => Path::new("strings.db"),
-//         }
-//     }
-// }

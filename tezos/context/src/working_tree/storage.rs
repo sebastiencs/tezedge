@@ -566,7 +566,7 @@ type IsNewKey = bool;
 impl Storage {
     pub fn new() -> Self {
         Self {
-            directories: Vec::with_capacity(16384),
+            directories: Vec::with_capacity(16_384),
             temp_dir: Vec::with_capacity(128),
             blobs: Vec::with_capacity(2048),
             // strings: Default::default(),

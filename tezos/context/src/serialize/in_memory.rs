@@ -31,62 +31,8 @@ use crate::working_tree::{
 
 use super::{
     persistent::AbsoluteOffset, DeserializationError, SerializationError, COMPACT_HASH_ID_BIT,
-    FULL_23_BITS, FULL_31_BITS, ID_COMMIT, ID_DIRECTORY,
+    FULL_23_BITS, FULL_31_BITS,
 };
-
-// const ID_DIRECTORY: u8 = 0;
-// const ID_BLOB: u8 = 1;
-// const ID_COMMIT: u8 = 2;
-// const ID_INODE_POINTERS: u8 = 3;
-// const ID_SHAPED_DIRECTORY: u8 = 4;
-
-// const COMPACT_HASH_ID_BIT: u32 = 1 << 23;
-
-// const FULL_31_BITS: u32 = 0x7FFFFFFF;
-// const FULL_23_BITS: u32 = 0x7FFFFF;
-
-// #[derive(Debug, Error)]
-// pub enum SerializationError {
-//     #[error("IOError {error}")]
-//     IOError {
-//         #[from]
-//         error: std::io::Error,
-//     },
-//     #[error("Directory not found")]
-//     DirNotFound,
-//     #[error("Directory entry not found")]
-//     DirEntryNotFound,
-//     #[error("Blob not found")]
-//     BlobNotFound,
-//     #[error("Conversion from int failed: {error}")]
-//     TryFromIntError {
-//         #[from]
-//         error: TryFromIntError,
-//     },
-//     #[error("StorageIdError: {error}")]
-//     StorageIdError {
-//         #[from]
-//         error: StorageError,
-//     },
-//     #[error("HashId too big")]
-//     HashIdTooBig,
-//     #[error("Missing HashId")]
-//     MissingHashId,
-//     #[error("DBError: {error}")]
-//     DBError {
-//         #[from]
-//         error: DBError,
-//     },
-// }
-
-// fn get_inline_blob<'a>(storage: &'a Storage, dir_entry: &DirEntry) -> Option<Blob<'a>> {
-//     if let Some(Object::Blob(blob_id)) = dir_entry.get_object() {
-//         if blob_id.is_inline() {
-//             return storage.get_blob(blob_id).ok();
-//         }
-//     }
-//     None
-// }
 
 #[bitfield(bits = 8)]
 #[derive(Clone, Debug, Eq, PartialEq, Copy)]
@@ -241,7 +187,7 @@ pub fn serialize_object(
     batch: &mut Vec<(HashId, Arc<[u8]>)>,
     referenced_older_objects: &mut Vec<HashId>,
     repository: &mut ContextKeyValueStore,
-    object_offset: Option<AbsoluteOffset>,
+    _object_offset: Option<AbsoluteOffset>,
 ) -> Result<Option<AbsoluteOffset>, SerializationError> {
     output.clear();
 
@@ -1247,7 +1193,7 @@ mod tests {
 
             let hash_id = HashId::new((index + 1) as u32).unwrap();
 
-            repo.write_batch(vec![(hash_id, Arc::new([ID_DIRECTORY]))])
+            repo.write_batch(vec![(hash_id, Arc::new(ObjectHeader::new().into_bytes()))])
                 .unwrap();
 
             pointers[index] = Some(PointerToInode::new(Some(hash_id), inode_value_id));

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use static_assertions::const_assert;
 use tezos_timing::StringsMemoryUsage;
 
-use crate::{persistent::File, serialize::persistent::AbsoluteOffset, Map};
+use crate::{persistent::File, Map};
 
 pub(crate) const STRING_INTERN_THRESHOLD: usize = 30;
 
@@ -381,12 +381,6 @@ impl StringInterner {
             big_strings_offsets: Vec::with_capacity(1000),
             strings: Vec::with_capacity(1000),
         };
-
-        // println!(
-        //     "TO_SER {:?} ALL={:?}",
-        //     self.all_strings_to_serialize.len(),
-        //     self.all_strings.len()
-        // );
 
         for id in &self.all_strings_to_serialize {
             let (start, end) = id.get_start_end();

@@ -1,37 +1,33 @@
 use std::{
     borrow::Cow,
-    cell::{Cell, RefCell},
-    collections::{hash_map::DefaultHasher, VecDeque},
+    collections::hash_map::DefaultHasher,
     convert::{TryFrom, TryInto},
     hash::Hasher,
     io::Write,
-    sync::Arc,
 };
+
+#[cfg(test)]
+use std::sync::Arc;
 
 use crypto::hash::ContextHash;
 use tezos_timing::{RepositoryMemoryUsage, SerializeStats};
 
 use crate::{
-    gc::{worker::PRESERVE_CYCLE_COUNT, GarbageCollectionError, GarbageCollector},
+    gc::{GarbageCollectionError, GarbageCollector},
     persistent::{
-        get_commit_hash, get_persistent_base_path, DBError, File, FileOffset, FileType, Flushable,
+        get_commit_hash, get_persistent_base_path, DBError, File, FileType, Flushable,
         KeyValueStoreBackend, Persistable,
     },
     serialize::{
         persistent::{self, deserialize_hash_id, read_object_length, AbsoluteOffset},
-        ObjectHeader, ObjectLength,
+        ObjectHeader,
     },
     working_tree::{
-        // serializer::{
-        //     deserialize_object, read_object_length, serialize_object, AbsoluteOffset, ObjectHeader,
-        //     ObjectLength,
-        // },
         shape::{DirectoryShapeId, DirectoryShapes, ShapeStrings},
         storage::{DirEntryId, Storage},
         string_interner::{StringId, StringInterner},
-        working_tree::{MerkleError, PostCommitData, WorkingTree},
-        Object,
-        ObjectReference,
+        working_tree::{PostCommitData, WorkingTree},
+        Object, ObjectReference,
     },
     Map, ObjectHash,
 };
@@ -66,7 +62,7 @@ impl GarbageCollector for Persistent {
 
     fn block_applied(
         &mut self,
-        referenced_older_objects: Vec<HashId>,
+        _referenced_older_objects: Vec<HashId>,
     ) -> Result<(), GarbageCollectionError> {
         // self.block_applied(referenced_older_objects);
         Ok(())
@@ -172,25 +168,12 @@ impl Persistent {
         let data_file = File::new(&base_path, FileType::Data);
         let mut shape_file = File::new(&base_path, FileType::ShapeDirectories);
         let mut shape_index_file = File::new(&base_path, FileType::ShapeDirectoriesIndex);
-        let mut commit_index_file = File::new(&base_path, FileType::CommitIndex);
+        let commit_index_file = File::new(&base_path, FileType::CommitIndex);
         let mut strings_file = File::new(&base_path, FileType::Strings);
         let mut big_strings_file = File::new(&base_path, FileType::BigStrings);
         let mut big_strings_offsets_file = File::new(&base_path, FileType::BigStringsOffsets);
 
-        /*
-        TODO:
-
-        fill Persistent::{shape,string_interner,context_hashes, hashes}
-        Persistent::hashes::list_first_index need to be set to number of hashes in the file hashes.db
-        */
-
-        //let hashes = Hashes::try_new(&base_path);
         let hashes_file = File::new(&base_path, FileType::Hashes);
-
-        //let mut context_hashes_cycles = VecDeque::with_capacity(PRESERVE_CYCLE_COUNT);
-        //for _ in 0..PRESERVE_CYCLE_COUNT {
-        //    context_hashes_cycles.push_back(Default::default())
-        //}
 
         let shapes = DirectoryShapes::deserialize(&mut shape_file, &mut shape_index_file);
         let string_interner = StringInterner::deserialize(
@@ -198,7 +181,7 @@ impl Persistent {
             &mut big_strings_file,
             &mut big_strings_offsets_file,
         );
-        let (hashes, context_hashes) = deserialize_hashes(hashes_file, &mut commit_index_file);
+        let (hashes, context_hashes) = deserialize_hashes(hashes_file, &commit_index_file);
 
         Ok(Self {
             data_file,
@@ -209,20 +192,42 @@ impl Persistent {
             hashes,
             big_strings_file,
             big_strings_offsets_file,
-            // hashes_file,
-            // hashes_file_index: 0,
             shapes,
             string_interner,
-            // hashes: Default::default(),
             context_hashes,
-            // data: Vec::with_capacity(100_000),
         })
     }
 
-    #[cfg(test)]
-    pub(crate) fn put_object_hash(&mut self, entry_hash: ObjectHash) -> HashId {
-        let vacant = self.get_vacant_object_hash().unwrap();
-        vacant.write_with(|entry| *entry = entry_hash)
+    pub fn get_object_bytes<'a>(
+        &self,
+        object_ref: ObjectReference,
+        buffer: &'a mut Vec<u8>,
+    ) -> Result<&'a [u8], DBError> {
+        let offset = object_ref.offset();
+
+        if buffer.len() < 4096 {
+            buffer.resize(4096, 0);
+        }
+
+        let buffer_length = buffer.len();
+
+        // We attempt to read 4096 bytes, if it's not enough we will read more later
+        let buffer_slice = self.data_file.try_read(&mut buffer[..4096], offset);
+
+        let object_header: ObjectHeader = ObjectHeader::from_bytes([buffer_slice[0]]);
+        let (_, object_length) = read_object_length(buffer_slice, &object_header);
+
+        if buffer_slice.len() < object_length {
+            if buffer_length < object_length {
+                buffer.resize(object_length, 0);
+            }
+
+            // Read the rest of the object
+            self.data_file
+                .read_exact_at(&mut buffer[4096..object_length], offset.add(4096));
+        }
+
+        Ok(&buffer[..object_length])
     }
 
     fn get_hash_id_from_offset<'a>(&self, object_ref: ObjectReference) -> Result<HashId, DBError> {
@@ -230,18 +235,12 @@ impl Persistent {
 
         let mut buffer: [u8; 10] = Default::default();
 
-        self.data_file.read_a_few_bytes(&mut buffer, offset);
+        self.data_file.try_read(&mut buffer, offset);
 
-        // Read one byte to get the `ObjectHeader`
         let object_header: ObjectHeader = ObjectHeader::from_bytes([buffer[0]]);
+        let (header_nbytes, _) = read_object_length(&buffer, &object_header);
 
-        let header_length: usize = match object_header.get_length() {
-            ObjectLength::OneByte => 2,
-            ObjectLength::TwoBytes => 3,
-            ObjectLength::FourBytes => 5,
-        };
-
-        let hash_id = deserialize_hash_id(&buffer[header_length..])?.0.unwrap();
+        let hash_id = deserialize_hash_id(&buffer[header_nbytes..])?.0.unwrap();
 
         Ok(hash_id)
     }
@@ -262,24 +261,12 @@ impl Persistent {
 
         self.hashes.commit();
 
-        // let now = std::time::Instant::now();
         self.data_file.sync();
-        // println!("FSYNC DATA={:?} BYTES={:?}", now.elapsed(), data.len());
-        // let now = std::time::Instant::now();
         self.strings_file.sync();
-        // println!("FSYNC STRINGS={:?} BYTES={:?}", now.elapsed(), strings.strings.len());
-        // let now = std::time::Instant::now();
         self.big_strings_file.sync();
-        // println!("FSYNC BIG_STRINGS={:?} BYTES={:?}", now.elapsed(), strings.big_strings.len());
-        // let now = std::time::Instant::now();
         self.big_strings_offsets_file.sync();
-        // println!("FSYNC BIG_STRINGS_OFFSETS={:?} BYTES={:?}", now.elapsed(), strings.big_strings_offsets.len());
-        // let now = std::time::Instant::now();
         self.hashes.hashes_file.sync();
-        // println!("FSYNC HASHES={:?} BYTES={:?}", now.elapsed(), self.hashes.bytes.len());
-        // let now = std::time::Instant::now();
         self.commit_index_file.sync();
-        // println!("FSYNC INDEX={:?}", now.elapsed());
 
         Ok(())
     }
@@ -287,7 +274,7 @@ impl Persistent {
 
 fn deserialize_hashes(
     hashes_file: File,
-    commit_index_file: &mut File,
+    commit_index_file: &File,
 ) -> (
     Hashes,
     std::collections::HashMap<u64, ObjectReference, crate::NoHash>,
@@ -448,8 +435,7 @@ impl KeyValueStoreBackend for Persistent {
         object_ref: ObjectReference,
         buffer: &'a mut Vec<u8>,
     ) -> Result<&'a [u8], DBError> {
-        self.data_file
-            .get_object_bytes(object_ref, buffer)
+        self.get_object_bytes(object_ref, buffer)
             .map_err(Into::into)
     }
 
@@ -462,8 +448,6 @@ impl KeyValueStoreBackend for Persistent {
         date: u64,
     ) -> Result<(ContextHash, Box<SerializeStats>), DBError> {
         let offset = self.data_file.offset();
-
-        let now = std::time::Instant::now();
 
         let PostCommitData {
             commit_ref,
@@ -482,40 +466,19 @@ impl KeyValueStoreBackend for Persistent {
             )
             .unwrap();
 
-        let prepare = now.elapsed();
-        let now = std::time::Instant::now();
-
         let commit_hash = get_commit_hash(commit_ref, self).map_err(Box::new)?;
 
-        let get_commit = now.elapsed();
-
-        let now = std::time::Instant::now();
         self.commit_to_disk(&output)?;
-        let to_disk = now.elapsed();
-
-        let now = std::time::Instant::now();
         self.put_context_hash(commit_ref)?;
-        let put = now.elapsed();
-
-        // println!(
-        //     "PERSISTENT::COMMIT PREPARE={:?} GET_COMMIT={:?} TO_DISK={:?} PUT={:?}",
-        //     prepare, get_commit, to_disk, put
-        // );
 
         Ok((commit_hash, serialize_stats))
     }
 
     fn get_hash_id(&self, object_ref: ObjectReference) -> Result<HashId, DBError> {
-        let now = std::time::Instant::now();
-
-        let hash_id = match object_ref.hash_id_opt() {
-            Some(hash_id) => hash_id,
-            None => self.get_hash_id_from_offset(object_ref)?,
-        };
-
-        // println!("GET_HASH_ID_FROM_OFFSET={:?}", now.elapsed());
-
-        Ok(hash_id)
+        match object_ref.hash_id_opt() {
+            Some(hash_id) => Ok(hash_id),
+            None => self.get_hash_id_from_offset(object_ref),
+        }
     }
 
     #[cfg(test)]

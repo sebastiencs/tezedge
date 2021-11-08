@@ -12,6 +12,9 @@ use std::{
     thread::JoinHandle,
 };
 
+#[cfg(test)]
+use crate::serialize::persistent::AbsoluteOffset;
+
 use crossbeam_channel::Sender;
 use crypto::hash::ContextHash;
 use tezos_timing::{RepositoryMemoryUsage, SerializeStats};
@@ -23,7 +26,6 @@ use crate::{
     },
     hash::ObjectHash,
     persistent::{DBError, Flushable, KeyValueStoreBackend, Persistable},
-    serialize::persistent::AbsoluteOffset,
     working_tree::{
         shape::{DirectoryShapeId, DirectoryShapes, ShapeStrings},
         storage::{DirEntryId, Storage},
@@ -450,12 +452,6 @@ impl InMemory {
         };
 
         Ok(())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn put_object_hash(&mut self, entry_hash: ObjectHash) -> HashId {
-        let vacant = self.get_vacant_entry_hash().unwrap();
-        vacant.write_with(|entry| *entry = entry_hash)
     }
 }
 

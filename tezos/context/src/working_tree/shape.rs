@@ -150,7 +150,7 @@ impl DirectoryShapes {
     pub fn make_shape(
         &mut self,
         dir: &[(StringId, DirEntryId)],
-        storage: &Storage,
+        _storage: &Storage,
     ) -> Result<Option<DirectoryShapeId>, DirectoryShapeError> {
         self.temp.clear();
 
