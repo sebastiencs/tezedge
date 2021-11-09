@@ -454,8 +454,8 @@ mod tests {
 
         assert_eq!(a, b);
         assert!(!a.is_big());
-        assert_eq!(interner.get_str(a), Some("a"));
-        assert_eq!(interner.get_str(a), interner.get_str(b));
+        assert_eq!(interner.get_str(a).unwrap(), "a");
+        assert_eq!(interner.get_str(a).unwrap(), interner.get_str(b).unwrap());
 
         let long_str = "a".repeat(STRING_INTERN_THRESHOLD);
 
