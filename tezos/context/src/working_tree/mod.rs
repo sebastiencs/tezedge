@@ -24,7 +24,6 @@ use self::{
 };
 use super::serialize::persistent::AbsoluteOffset;
 
-//pub mod serializer;
 pub mod shape;
 pub mod storage;
 pub mod string_interner;
@@ -168,8 +167,6 @@ impl DirEntry {
 
     pub fn get_offset(&self) -> Option<AbsoluteOffset> {
         let inner = self.inner.get();
-
-        // assert!(self.is_commited());
 
         if inner.file_offset_available() {
             Some(inner.file_offset().into())

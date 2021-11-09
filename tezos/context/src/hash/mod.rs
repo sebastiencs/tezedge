@@ -134,7 +134,7 @@ fn hash_long_inode(
             // | \len(name)  |     name     |  kind  |  hash  |
 
             for (name, dir_entry_id) in dir {
-                let name = strings.get(*name).ok_or(StorageError::StringNotFound)?;
+                let name = strings.get_str(*name)?;
 
                 leb128::write::unsigned(&mut hasher, name.len() as u64)?;
                 hasher.update(name.as_bytes());
@@ -251,7 +251,7 @@ fn hash_short_inode(
         hasher.update(encode_irmin_dir_entry_kind(&v.dir_entry_kind()));
         // Key length is written in LEB128 encoding
 
-        let k = strings.get(*k).ok_or(StorageError::StringNotFound)?;
+        let k = strings.get_str(*k)?;
         leb128::write::unsigned(&mut hasher, k.len() as u64)?;
         hasher.update(k.as_bytes());
         hasher.update(&(OBJECT_HASH_LEN as u64).to_be_bytes());
@@ -416,9 +416,6 @@ mod tests {
     }
 
     fn hash_of_commit(repo: &mut ContextKeyValueStore) {
-        // let mut repo = Persistent::try_new().expect("failed to create context");
-        // let mut repo = InMemory::try_new().expect("failed to create context");
-
         // Calculates hash of commit
         // uses BLAKE2 binary 256 length hash function
         // hash is calculated as:
@@ -441,8 +438,6 @@ mod tests {
         let dummy_commit = Commit {
             parent_commit_ref: None,
             root_ref: ObjectReference::new(Some(hash_id), Some(0.into())),
-            // root_hash: hash_id,
-            // root_hash_offset: 0,
             time: 0,
             author: "Tezedge".to_string(),
             message: "persist changes".to_string(),
@@ -538,8 +533,6 @@ mod tests {
         // where:
         // - CHILD NODE - <NODE TYPE><length of string (1 byte)><string/path bytes><length of hash (8bytes)><hash bytes>
         // - NODE TYPE - blob dir_entry(0xff00000000000000) or internal dir_entry (0x0000000000000000)
-        // let mut repo = Persistent::try_new().expect("failed to create context");
-        // let mut repo = InMemory::try_new().expect("failed to create context");
         let expected_dir_hash = "d49a53323107f2ae40b01eaa4e9bec4d02801daf60bab82dc2529e40d40fa917";
         let dummy_dir = DirectoryId::empty();
 
@@ -660,9 +653,6 @@ mod tests {
         let mut json_file = open_hashes_json_gz(json_gz_file_name);
         let mut bytes = Vec::new();
 
-        // let mut repo = Persistent::try_new().expect("failed to create context");
-
-        // let mut repo = InMemory::try_new().expect("failed to create context");
         let mut storage = Storage::new();
         let mut strings = StringInterner::default();
         let mut output = Vec::new();
@@ -705,12 +695,7 @@ mod tests {
                 };
 
                 let dir_entry = DirEntry::new_commited(dir_entry_kind, Some(hash_id), Some(object));
-                // .with_offset(0.into());
-
                 dir_entry.set_commited(false);
-
-                // let dir_entry = DirEntry::new_commited(dir_entry_kind, Some(hash_id), None)
-                //     .with_offset(0.into());
 
                 names.insert(binding.name.clone());
 
@@ -802,7 +787,6 @@ mod tests {
                             &mut batch,
                             &mut older_objects,
                             repo,
-                            // 0,
                             offset,
                         )
                         .unwrap();
@@ -816,7 +800,6 @@ mod tests {
                     .unwrap();
 
                 let offset = repo.synchronize_data(&batch, &output).unwrap();
-                // let offset = repo.get_current_offset().unwrap();
 
                 let mut batch = Default::default();
                 output.clear();
@@ -831,7 +814,6 @@ mod tests {
                     &mut batch,
                     &mut older_objects,
                     repo,
-                    // 0,
                     offset,
                 )
                 .unwrap();

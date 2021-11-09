@@ -1,6 +1,6 @@
 use std::{
-    array::TryFromSliceError, num::TryFromIntError, str::Utf8Error, string::FromUtf8Error,
-    sync::Arc,
+    array::TryFromSliceError, convert::TryInto, io::Write, num::TryFromIntError, str::Utf8Error,
+    string::FromUtf8Error, sync::Arc,
 };
 
 use modular_bitfield::prelude::*;
@@ -186,4 +186,52 @@ fn get_inline_blob<'a>(storage: &'a Storage, dir_entry: &DirEntry) -> Option<Blo
         }
     }
     None
+}
+
+pub fn deserialize_hash_id(data: &[u8]) -> Result<(Option<HashId>, usize), DeserializationError> {
+    use DeserializationError::*;
+
+    let byte_hash_id = data.get(0).copied().ok_or(UnexpectedEOF)?;
+
+    if byte_hash_id & 1 << 7 != 0 {
+        // The HashId is in 3 bytes
+        let hash_id = data.get(0..3).ok_or(UnexpectedEOF)?;
+
+        let hash_id: u32 = (hash_id[0] as u32) << 16 | (hash_id[1] as u32) << 8 | hash_id[2] as u32;
+
+        // Clear `COMPACT_HASH_ID_BIT`
+        let hash_id = hash_id & (COMPACT_HASH_ID_BIT - 1);
+        let hash_id = HashId::new(hash_id);
+
+        Ok((hash_id, 3))
+    } else {
+        // The HashId is in 4 bytes
+        let hash_id = data.get(0..4).ok_or(UnexpectedEOF)?;
+        let hash_id = u32::from_be_bytes(hash_id.try_into()?);
+        let hash_id = HashId::new(hash_id);
+
+        Ok((hash_id, 4))
+    }
+}
+
+pub fn serialize_hash_id(hash_id: u32, output: &mut Vec<u8>) -> Result<usize, SerializationError> {
+    if hash_id & FULL_23_BITS == hash_id {
+        // The HashId fits in 23 bits
+
+        // Set `COMPACT_HASH_ID_BIT` so the deserializer knows the `HashId` is in 3 bytes
+        let hash_id: u32 = hash_id | COMPACT_HASH_ID_BIT;
+        let hash_id: [u8; 4] = hash_id.to_be_bytes();
+
+        output.write_all(&hash_id[1..])?;
+        Ok(3)
+    } else if hash_id & FULL_31_BITS == hash_id {
+        // HashId fits in 31 bits
+
+        output.write_all(&hash_id.to_be_bytes())?;
+        Ok(4)
+    } else {
+        // The HashId must not be 32 bits because we use the
+        // MSB to determine if the HashId is compact or not
+        Err(SerializationError::HashIdTooBig)
+    }
 }

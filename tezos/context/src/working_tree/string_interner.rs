@@ -12,6 +12,8 @@ use tezos_timing::StringsMemoryUsage;
 
 use crate::{persistent::File, serialize::DeserializationError, Map};
 
+use super::storage::StorageError;
+
 pub(crate) const STRING_INTERN_THRESHOLD: usize = 30;
 
 const FULL_31_BITS: usize = 0x7FFFFFFF;
@@ -186,10 +188,7 @@ impl BigStrings {
         self.to_serialize_index = self.offsets.len();
     }
 
-    fn deserialize(
-        big_strings_file: &mut File,
-        _big_strings_offsets_file: &mut File,
-    ) -> Result<Self, DeserializationError> {
+    fn deserialize(big_strings_file: &mut File) -> Result<Self, DeserializationError> {
         // TODO: maybe start with higher capacity values knowing the file sizes
 
         let mut result = Self::default();
@@ -303,7 +302,7 @@ impl StringInterner {
         self.big_strings.extend_from(&other.big_strings);
     }
 
-    pub fn get_string_id(&mut self, s: &str) -> StringId {
+    pub fn make_string_id(&mut self, s: &str) -> StringId {
         if s.len() >= STRING_INTERN_THRESHOLD {
             let index = self.big_strings.push_str(s);
 
@@ -334,18 +333,23 @@ impl StringInterner {
         self.string_to_offset.insert(hashed, string_id);
         self.all_strings_to_serialize.push(string_id);
 
-        debug_assert_eq!(s, self.get(string_id).unwrap());
+        debug_assert_eq!(s, self.get_str(string_id).unwrap());
 
         string_id
     }
 
-    pub fn get(&self, string_id: StringId) -> Option<&str> {
+    pub fn get_str(&self, string_id: StringId) -> Result<&str, StorageError> {
         if string_id.is_big() {
-            return self.big_strings.get_str(string_id.get_big_index());
+            return self
+                .big_strings
+                .get_str(string_id.get_big_index())
+                .ok_or(StorageError::StringNotFound);
         }
 
         let (start, end) = string_id.get_start_end();
-        self.all_strings.get(start..end)
+        self.all_strings
+            .get(start..end)
+            .ok_or(StorageError::StringNotFound)
     }
 
     pub fn clear(&mut self) {
@@ -399,7 +403,6 @@ impl StringInterner {
     pub fn deserialize(
         strings_file: &mut File,
         big_strings_file: &mut File,
-        big_strings_offsets_file: &mut File,
     ) -> Result<Self, DeserializationError> {
         // TODO: maybe start with higher capacity values knowing the file sizes
         let mut result = Self::default();
@@ -424,7 +427,7 @@ impl StringInterner {
             offset += length as u64;
 
             let s = std::str::from_utf8(&string_bytes[..length])?;
-            let _string_id = result.get_string_id(s);
+            let _string_id = result.make_string_id(s);
 
             // Need to keep this clear, everything being added has been serialized already
             result.all_strings_to_serialize.clear();
@@ -432,7 +435,7 @@ impl StringInterner {
 
         // Deserialize big strings
 
-        result.big_strings = BigStrings::deserialize(big_strings_file, big_strings_offsets_file)?;
+        result.big_strings = BigStrings::deserialize(big_strings_file)?;
 
         Ok(result)
     }
@@ -446,22 +449,22 @@ mod tests {
     fn test_string_interner() {
         let mut interner = StringInterner::default();
 
-        let a = interner.get_string_id("a");
-        let b = interner.get_string_id("a");
+        let a = interner.make_string_id("a");
+        let b = interner.make_string_id("a");
 
         assert_eq!(a, b);
         assert!(!a.is_big());
-        assert_eq!(interner.get(a), Some("a"));
-        assert_eq!(interner.get(a), interner.get(b));
+        assert_eq!(interner.get_str(a), Some("a"));
+        assert_eq!(interner.get_str(a), interner.get_str(b));
 
         let long_str = "a".repeat(STRING_INTERN_THRESHOLD);
 
-        let a = interner.get_string_id(&long_str);
-        let b = interner.get_string_id(&long_str);
+        let a = interner.make_string_id(&long_str);
+        let b = interner.make_string_id(&long_str);
         assert_eq!(a, b);
         assert!(a.is_big());
-        assert_eq!(interner.get(a).unwrap(), long_str);
-        assert_eq!(interner.get(b).unwrap(), long_str);
+        assert_eq!(interner.get_str(a).unwrap(), long_str);
+        assert_eq!(interner.get_str(b).unwrap(), long_str);
 
         // Make sure that StringInterner::extend_from works
 
@@ -475,7 +478,7 @@ mod tests {
         );
 
         let long_str = "b".repeat(STRING_INTERN_THRESHOLD);
-        let _ = interner.get_string_id(&long_str);
+        let _ = interner.make_string_id(&long_str);
 
         // We added a big string to `interner`, it should be copied to `other_interner`.
         other_interner.extend_from(&interner);

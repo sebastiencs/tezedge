@@ -12,10 +12,10 @@ use tezos_timing::SerializeStats;
 
 use crate::{
     kv_store::HashId,
-    serialize::{get_inline_blob, ObjectHeader, ObjectTag},
+    serialize::{deserialize_hash_id, get_inline_blob, ObjectHeader, ObjectTag},
     working_tree::{
         shape::ShapeStrings,
-        storage::{DirectoryId, Inode, PointerToInode, StorageError},
+        storage::{DirectoryId, Inode, PointerToInode},
         string_interner::StringInterner,
         Commit, DirEntryKind, ObjectReference,
     },
@@ -30,8 +30,7 @@ use crate::working_tree::{
 };
 
 use super::{
-    persistent::AbsoluteOffset, DeserializationError, SerializationError, COMPACT_HASH_ID_BIT,
-    FULL_23_BITS, FULL_31_BITS,
+    persistent::AbsoluteOffset, serialize_hash_id, DeserializationError, SerializationError,
 };
 
 #[bitfield(bits = 8)]
@@ -106,7 +105,7 @@ fn serialize_directory(
     let mut nblobs_inlined: usize = 0;
     let mut blobs_length: usize = 0;
 
-    if let Some(shape_id) = repository.make_shape(dir, storage)? {
+    if let Some(shape_id) = repository.make_shape(dir)? {
         return serialize_shaped_directory(shape_id, dir, output, storage, stats);
     };
 
@@ -117,7 +116,7 @@ fn serialize_directory(
     output.write_all(&header)?;
 
     for (key_id, dir_entry_id) in dir {
-        let key = strings.get(*key_id).ok_or(StorageError::StringNotFound)?;
+        let key = strings.get_str(*key_id)?;
 
         let dir_entry = storage.get_dir_entry(*dir_entry_id)?;
 
@@ -224,7 +223,6 @@ pub fn serialize_object(
                 .into_bytes();
             output.write_all(&header)?;
 
-            // output.write_all(&[ID_BLOB])?;
             output.write_all(blob.as_ref())?;
 
             stats.add_blob(blob.len());
@@ -237,7 +235,6 @@ pub fn serialize_object(
                 .with_is_persistent(false)
                 .into_bytes();
             output.write_all(&header)?;
-            // output.write_all(&[ID_COMMIT])?;
 
             let parent_hash_id = commit
                 .parent_commit_ref
@@ -266,28 +263,6 @@ pub fn serialize_object(
     stats.total_bytes += output.len();
 
     Ok(None)
-}
-
-fn serialize_hash_id(hash_id: u32, output: &mut Vec<u8>) -> Result<usize, SerializationError> {
-    if hash_id & FULL_23_BITS == hash_id {
-        // The HashId fits in 23 bits
-
-        // Set `COMPACT_HASH_ID_BIT` so the deserializer knows the `HashId` is in 3 bytes
-        let hash_id: u32 = hash_id | COMPACT_HASH_ID_BIT;
-        let hash_id: [u8; 4] = hash_id.to_be_bytes();
-
-        output.write_all(&hash_id[1..])?;
-        Ok(3)
-    } else if hash_id & FULL_31_BITS == hash_id {
-        // HashId fits in 31 bits
-
-        output.write_all(&hash_id.to_be_bytes())?;
-        Ok(4)
-    } else {
-        // The HashId must not be 32 bits because we use the
-        // MSB to determine if the HashId is compact or not
-        Err(SerializationError::HashIdTooBig)
-    }
 }
 
 /// Describes which pointers are set and at what index.
@@ -409,7 +384,6 @@ fn serialize_inode(
                 .into_bytes();
             output.write_all(&header)?;
 
-            // output.write_all(&[ID_INODE_POINTERS])?;
             output.write_all(&depth.to_ne_bytes())?;
             output.write_all(&nchildren.to_ne_bytes())?;
 
@@ -470,80 +444,6 @@ fn serialize_inode(
     Ok(())
 }
 
-// #[derive(Debug, Error)]
-// pub enum DeserializationError {
-//     #[error("Unexpected end of file")]
-//     UnexpectedEOF,
-//     #[error("Conversion from slice to an array failed")]
-//     TryFromSliceError {
-//         #[from]
-//         error: TryFromSliceError,
-//     },
-//     #[error("Bytes are not valid utf-8: {error}")]
-//     Utf8Error {
-//         #[from]
-//         error: Utf8Error,
-//     },
-//     #[error("UnknownID")]
-//     UnknownID,
-//     #[error("Vector is not valid utf-8: {error}")]
-//     FromUtf8Error {
-//         #[from]
-//         error: FromUtf8Error,
-//     },
-//     #[error("Root hash is missing")]
-//     MissingRootHash,
-//     #[error("Hash is missing")]
-//     MissingHash,
-//     #[error("DirEntryIdError: {error}")]
-//     DirEntryIdError {
-//         #[from]
-//         error: DirEntryIdError,
-//     },
-//     #[error("StorageIdError: {error:?}")]
-//     StorageIdError {
-//         #[from]
-//         error: StorageError,
-//     },
-//     #[error("Inode not found in repository")]
-//     InodeNotFoundInRepository,
-//     #[error("Inode empty in repository")]
-//     InodeEmptyInRepository,
-//     #[error("DBError: {error:?}")]
-//     DBError {
-//         #[from]
-//         error: Box<DBError>,
-//     },
-//     #[error("Cannot find next shape")]
-//     CannotFindNextShape,
-// }
-
-fn deserialize_hash_id(data: &[u8]) -> Result<(Option<HashId>, usize), DeserializationError> {
-    use DeserializationError::*;
-
-    let byte_hash_id = data.get(0).copied().ok_or(UnexpectedEOF)?;
-
-    if byte_hash_id & 1 << 7 != 0 {
-        // The HashId is in 3 bytes
-        let hash_id = data.get(0..3).ok_or(UnexpectedEOF)?;
-
-        let hash_id: u32 = (hash_id[0] as u32) << 16 | (hash_id[1] as u32) << 8 | hash_id[2] as u32;
-
-        // Clear `COMPACT_HASH_ID_BIT`
-        let hash_id = hash_id & (COMPACT_HASH_ID_BIT - 1);
-        let hash_id = HashId::new(hash_id);
-
-        Ok((hash_id, 3))
-    } else {
-        // The HashId is in 4 bytes
-        let hash_id = data.get(0..4).ok_or(UnexpectedEOF)?;
-        let hash_id = u32::from_be_bytes(hash_id.try_into()?);
-        let hash_id = HashId::new(hash_id);
-
-        Ok((hash_id, 4))
-    }
-}
-
 fn deserialize_shaped_directory(
     data: &[u8],
     storage: &mut Storage,
@@ -567,7 +467,7 @@ fn deserialize_shaped_directory(
             // Store the `String` in the `StringInterner`.
             let string_ids: Vec<StringId> = strings_slice
                 .iter()
-                .map(|s| strings.get_string_id(s))
+                .map(|s| strings.make_string_id(s))
                 .collect();
             Cow::Owned(string_ids)
         }
@@ -644,7 +544,7 @@ fn deserialize_directory(
                     let key_bytes = data.get(pos..pos + len).ok_or(UnexpectedEOF)?;
                     let key_str = std::str::from_utf8(key_bytes)?;
                     pos += len;
-                    strings.get_string_id(key_str)
+                    strings.make_string_id(key_str)
                 }
                 _ => {
                     // The key length is in 2 bytes, followed by the key itself
@@ -657,7 +557,7 @@ fn deserialize_directory(
                         .ok_or(UnexpectedEOF)?;
                     let key_str = std::str::from_utf8(key_bytes)?;
                     pos += 2 + key_length;
-                    strings.get_string_id(key_str)
+                    strings.make_string_id(key_str)
                 }
             };
 
@@ -753,10 +653,7 @@ pub fn deserialize_object(
 
             Ok(Object::Commit(Box::new(Commit {
                 parent_commit_ref: parent_commit_hash.map(|p| ObjectReference::new(Some(p), None)),
-                //parent_commit_ref: ObjectReference::new(parent_commit_hash, None),
-                // parent_commit_hash,
                 root_ref: ObjectReference::new(Some(root_hash.ok_or(MissingRootHash)?), None),
-                // root_hash: root_hash.ok_or(MissingRootHash)?,
                 time,
                 author: String::from_utf8(author)?,
                 message: String::from_utf8(message)?,
@@ -805,7 +702,6 @@ fn deserialize_inode_pointers(
 
         pos += nbytes;
 
-        // TODO: Move this outside the loop
         let mut output = Vec::with_capacity(1000);
 
         let object_ref = ObjectReference::new(Some(hash_id.ok_or(MissingHash)?), None);
@@ -813,14 +709,6 @@ fn deserialize_inode_pointers(
             .get_object_bytes(object_ref, &mut output)
             .unwrap();
         let inode_id = deserialize_inode(data, storage, strings, repository).unwrap();
-
-        // let inode_id = repository
-        //     .get_value(hash_id.ok_or(MissingHash)?)
-        //     .map_err(|_| InodeNotFoundInRepository)
-        //     .and_then(|data| {
-        //         let data = data.ok_or(InodeEmptyInRepository)?;
-        //         deserialize_inode(data.as_ref(), storage, repository)
-        //     })?;
 
         pointers[index as usize] = Some(PointerToInode::new_commited(
             Some(hash_id.ok_or(MissingHash)?),
@@ -1152,9 +1040,7 @@ mod tests {
 
         let commit = Commit {
             parent_commit_ref: Some(ObjectReference::new(HashId::new(9876), None)),
-            // parent_commit_hash: HashId::new(9876),
             root_ref: ObjectReference::new(HashId::new(12345), None),
-            // root_hash: HashId::new(12345).unwrap(),
             time: 12345,
             author: "123".to_string(),
             message: "abc".to_string(),

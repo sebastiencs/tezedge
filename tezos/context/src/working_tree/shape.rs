@@ -16,10 +16,7 @@ use modular_bitfield::prelude::*;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use super::{
-    storage::{DirEntryId, Storage},
-    string_interner::StringId,
-};
+use super::{storage::DirEntryId, string_interner::StringId};
 
 #[derive(Debug, Error)]
 pub enum DirectoryShapeError {
@@ -81,7 +78,6 @@ pub struct ShapeSliceId {
 pub struct DirectoryShapes {
     /// Map `DirectoryShapeHash` to its `DirectoryShapeId` and strings.
     hash_to_strings: BTreeMap<DirectoryShapeHash, (DirectoryShapeId, ShapeSliceId)>,
-    //hash_to_strings: BTreeMap<DirectoryShapeHash, (DirectoryShapeId, Box<[StringId]>)>,
     shapes: Vec<StringId>,
 
     to_serialize: Vec<ShapeSliceId>,
@@ -150,36 +146,16 @@ impl DirectoryShapes {
     pub fn make_shape(
         &mut self,
         dir: &[(StringId, DirEntryId)],
-        _storage: &Storage,
     ) -> Result<Option<DirectoryShapeId>, DirectoryShapeError> {
         self.temp.clear();
 
         let mut hasher = DefaultHasher::new();
         hasher.write_usize(dir.len());
 
-        // let mut is_2bytes_only = true;
-        // let mut is_big_only = true;
-
         for (key_id, _) in dir {
-            // let key = storage
-            //     .get_str(*key_id)
-            //     .map_err(|_| DirectoryShapeError::CannotFindKey)?;
-
-            // if !key_id.is_big() {
-            //     is_big_only = false;
-            // }
-
-            // if !(key.len() == 2) {
-            //     is_2bytes_only = false;
-            // }
-
             hasher.write_u32(key_id.as_u32());
             self.temp.push(*key_id);
         }
-
-        // if is_big_only || is_2bytes_only {
-        //     return Ok(None);
-        // }
 
         let shape_hash = DirectoryShapeHash(hasher.finish());
 
@@ -197,7 +173,6 @@ impl DirectoryShapes {
 
                 let shape_id = self.id_to_hash.push(shape_hash)?;
                 entry.insert((shape_id, slice_id));
-                //                entry.insert((shape_id, Box::from(self.temp.as_slice())));
                 Ok(Some(shape_id))
             }
         }

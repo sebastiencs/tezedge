@@ -13,7 +13,7 @@ use tezos_timing::SerializeStats;
 
 use crate::{
     kv_store::HashId,
-    serialize::{get_inline_blob, ObjectTag, COMPACT_HASH_ID_BIT},
+    serialize::{deserialize_hash_id, get_inline_blob, serialize_hash_id, ObjectTag},
     working_tree::{
         shape::ShapeStrings,
         storage::{DirectoryId, Inode, PointerToInode},
@@ -30,10 +30,7 @@ use crate::working_tree::{
     DirEntry, Object,
 };
 
-use super::{
-    DeserializationError, ObjectHeader, ObjectLength, SerializationError, FULL_23_BITS,
-    FULL_31_BITS,
-};
+use super::{DeserializationError, ObjectHeader, ObjectLength, SerializationError};
 
 #[bitfield(bits = 8)]
 #[derive(Clone, Debug, Eq, PartialEq, Copy)]
@@ -295,7 +292,7 @@ fn serialize_directory_or_shape(
     stats: &mut SerializeStats,
     strings: &StringInterner,
 ) -> Result<(), SerializationError> {
-    if let Some(shape_id) = repository.make_shape(dir, storage)? {
+    if let Some(shape_id) = repository.make_shape(dir)? {
         serialize_shaped_directory(
             shape_id,
             dir,
@@ -345,7 +342,7 @@ fn serialize_directory(
     serialize_hash_id(object_hash_id.as_u32(), output)?;
 
     for (key_id, dir_entry_id) in dir {
-        let key = strings.get(*key_id).unwrap();
+        let key = strings.get_str(*key_id).unwrap();
         let dir_entry = storage.get_dir_entry(*dir_entry_id)?;
 
         let kind = dir_entry.dir_entry_kind();
@@ -550,28 +547,6 @@ pub fn serialize_object(
     stats.total_bytes += output.len();
 
     Ok(Some(offset))
-}
-
-fn serialize_hash_id(hash_id: u32, output: &mut Vec<u8>) -> Result<usize, SerializationError> {
-    if hash_id & FULL_23_BITS == hash_id {
-        // The HashId fits in 23 bits
-
-        // Set `COMPACT_HASH_ID_BIT` so the deserializer knows the `HashId` is in 3 bytes
-        let hash_id: u32 = hash_id | COMPACT_HASH_ID_BIT;
-        let hash_id: [u8; 4] = hash_id.to_be_bytes();
-
-        output.write_all(&hash_id[1..])?;
-        Ok(3)
-    } else if hash_id & FULL_31_BITS == hash_id {
-        // HashId fits in 31 bits
-
-        output.write_all(&hash_id.to_be_bytes())?;
-        Ok(4)
-    } else {
-        // The HashId must not be 32 bits because we use the
-        // MSB to determine if the HashId is compact or not
-        Err(SerializationError::HashIdTooBig)
-    }
 }
 
 /// Describes which pointers are set and at what index.
@@ -827,32 +802,6 @@ fn serialize_inode(
     Ok(offset)
 }
 
-pub fn deserialize_hash_id(data: &[u8]) -> Result<(Option<HashId>, usize), DeserializationError> {
-    use DeserializationError::*;
-
-    let byte_hash_id = data.get(0).copied().ok_or(UnexpectedEOF)?;
-
-    if byte_hash_id & 1 << 7 != 0 {
-        // The HashId is in 3 bytes
-        let hash_id = data.get(0..3).ok_or(UnexpectedEOF)?;
-
-        let hash_id: u32 = (hash_id[0] as u32) << 16 | (hash_id[1] as u32) << 8 | hash_id[2] as u32;
-
-        // Clear `COMPACT_HASH_ID_BIT`
-        let hash_id = hash_id & (COMPACT_HASH_ID_BIT - 1);
-        let hash_id = HashId::new(hash_id);
-
-        Ok((hash_id, 3))
-    } else {
-        // The HashId is in 4 bytes
-        let hash_id = data.get(0..4).ok_or(UnexpectedEOF)?;
-        let hash_id = u32::from_be_bytes(hash_id.try_into()?);
-        let hash_id = HashId::new(hash_id);
-
-        Ok((hash_id, 4))
-    }
-}
-
 fn deserialize_offset(
     data: &[u8],
     offset_length: OffsetLength,
@@ -914,7 +863,7 @@ fn deserialize_shaped_directory(
             // Store the `String` in the `StringInterner`.
             let string_ids: Vec<StringId> = slice_strings
                 .iter()
-                .map(|s| strings.get_string_id(s))
+                .map(|s| strings.make_string_id(s))
                 .collect();
             Cow::Owned(string_ids)
         }
@@ -995,7 +944,7 @@ fn deserialize_directory(
                     let key_bytes = data.get(pos..pos + len).ok_or(UnexpectedEOF)?;
                     let key_str = std::str::from_utf8(key_bytes)?;
                     pos += len;
-                    strings.get_string_id(key_str)
+                    strings.make_string_id(key_str)
                 }
                 _ => {
                     // The key length is in 2 bytes, followed by the key itself
@@ -1008,7 +957,7 @@ fn deserialize_directory(
                         .ok_or(UnexpectedEOF)?;
                     let key_str = std::str::from_utf8(key_bytes)?;
                     pos += 2 + key_length;
-                    strings.get_string_id(key_str)
+                    strings.make_string_id(key_str)
                 }
             };
 

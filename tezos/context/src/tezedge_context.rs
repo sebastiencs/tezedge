@@ -21,7 +21,7 @@ use crate::{
     persistent::{get_commit_hash, DBError},
     timings::send_statistics,
     working_tree::{
-        storage::{BlobId, DirEntryId, DirectoryId, Storage, StorageError},
+        storage::{BlobId, DirEntryId, DirectoryId, Storage},
         string_interner::StringInterner,
         working_tree::{MerkleError, PostCommitData},
         Commit, Object, ObjectReference,
@@ -329,7 +329,7 @@ impl TezedgeIndex {
         for (key, child_dir_entry) in prefixed_dir.iter() {
             let object = self.dir_entry_object(*child_dir_entry, storage, strings)?;
 
-            let key = strings.get(*key).ok_or(StorageError::StringNotFound)?;
+            let key = strings.get_str(*key)?;
 
             // construct full path as Tree key is only one chunk of it
             let fullpath = self.key_to_string(prefix) + delimiter + key;
@@ -371,7 +371,7 @@ impl TezedgeIndex {
                 let dir = storage.dir_to_vec_unsorted(*dir_id)?;
 
                 for (key, child_dir_entry) in dir.iter() {
-                    let key = strings.get(*key).ok_or(StorageError::StringNotFound)?;
+                    let key = strings.get_str(*key)?;
                     let fullpath = path.to_owned() + "/" + key;
                     let key_str = key.to_string();
 
@@ -556,7 +556,7 @@ impl TezedgeIndex {
         for (key, child_dir_entry) in prefixed_dir.iter() {
             let object = self.dir_entry_object(*child_dir_entry, storage, strings)?;
 
-            let key = strings.get(*key).ok_or(StorageError::StringNotFound)?;
+            let key = strings.get_str(*key)?;
             // construct full path as Tree key is only one chunk of it
             let fullpath = self.key_to_string(prefix) + delimiter + key;
 
@@ -600,7 +600,7 @@ impl TezedgeIndex {
 
                 dir.iter()
                     .map(|(key, child_dir_entry_id)| {
-                        let key = strings.get(*key).ok_or(StorageError::StringNotFound)?;
+                        let key = strings.get_str(*key)?;
                         let fullpath = path.to_owned() + "/" + key;
 
                         match self.dir_entry_object(*child_dir_entry_id, storage, strings) {
@@ -837,8 +837,6 @@ pub struct TezedgeContext {
     /// Index used for fetching and saving objects from/to the repository.
     pub index: TezedgeIndex,
     pub parent_commit_ref: Option<ObjectReference>,
-    // pub parent_commit_hash: Option<HashId>,
-    // pub parent_commit_hash_offset: Option<u64>,
     // NOTE: tree ids are not being used right now, but were used before to
     // identify specific versions of the tree in the context actions replayer.
     pub tree_id: TreeId,

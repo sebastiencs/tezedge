@@ -120,7 +120,6 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
     fn make_shape(
         &mut self,
         _dir: &[(StringId, DirEntryId)],
-        _storage: &Storage,
     ) -> Result<Option<DirectoryShapeId>, DBError> {
         // Readonly protocol runner doesn't make shapes.
         Ok(None)

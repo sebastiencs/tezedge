@@ -482,7 +482,6 @@ pub enum Inode {
 }
 
 assert_eq_size!([u8; 560], Inode);
-//assert_eq_size!([u8; 304], Inode);
 
 /// A range inside `Storage::temp_dir`
 type TempDirRange = Range<usize>;
@@ -569,7 +568,6 @@ impl Storage {
             directories: Vec::with_capacity(16_384),
             temp_dir: Vec::with_capacity(128),
             blobs: Vec::with_capacity(2048),
-            // strings: Default::default(),
             nodes: IndexMap::with_capacity(4096),
             inodes: Vec::with_capacity(256),
             data: Vec::with_capacity(100_000),
@@ -584,13 +582,11 @@ impl Storage {
         let temp_dir_cap = self.temp_dir.capacity();
         let inodes_cap = self.inodes.capacity();
         let strings = Default::default();
-        // let strings = self.strings.memory_usage();
         let total_bytes = (nodes_cap * size_of::<DirEntry>())
             .saturating_add(directories_cap * size_of::<(StringId, DirEntryId)>())
             .saturating_add(temp_dir_cap * size_of::<(StringId, DirEntryId)>())
             .saturating_add(blobs_cap)
             .saturating_add(inodes_cap * size_of::<Inode>());
-        // .saturating_add(strings.total_bytes);
 
         StorageMemoryUsage {
             nodes_len: self.nodes.len(),
@@ -606,23 +602,6 @@ impl Storage {
             total_bytes,
         }
     }
-
-    // pub fn get_string_id(&mut self, s: &str) -> StringId {
-    //     self.strings.get_string_id(s)
-    // }
-
-    // pub fn get_str(&self, string_id: StringId) -> Result<&str, StorageError> {
-    //     self.strings
-    //         .get(string_id)
-    //         .ok_or(StorageError::StringNotFound)
-    // }
-
-    // pub fn string_to_owned(&self, slice: &[StringId]) -> Result<Vec<String>, StorageError> {
-    //     slice
-    //         .iter()
-    //         .map(|s| self.get_str(*s).map_err(Into::into).map(|s| s.to_string()))
-    //         .collect()
-    // }
 
     pub fn add_blob_by_ref(&mut self, blob: &[u8]) -> Result<BlobId, StorageError> {
         if BLOB_INLINED_RANGE.contains(&blob.len()) {
@@ -690,7 +669,7 @@ impl Storage {
         Some(
             dir.iter()
                 .flat_map(|t| {
-                    let key = strings.get(t.0)?;
+                    let key = strings.get_str(t.0).ok()?;
                     let dir_entry = self.nodes.get(t.1).ok()??;
                     Some((key.to_string(), dir_entry.clone()))
                 })
@@ -719,7 +698,7 @@ impl Storage {
         let mut error = None;
 
         let result = dir.binary_search_by(|value| {
-            match strings.get(value.0).ok_or(StorageError::StringNotFound) {
+            match strings.get_str(value.0) {
                 Ok(value) => value.cmp(key),
                 Err(e) => {
                     // Take the error and stop the search
@@ -825,7 +804,7 @@ impl Storage {
         let start = self.directories.len();
 
         for (key_id, dir_entry_id) in &self.temp_dir[dir_range] {
-            let key_str = strings.get(*key_id).ok_or(StorageError::StringNotFound)?;
+            let key_str = strings.get_str(*key_id)?;
             let dir = &self.directories[start..];
 
             match self.binary_search_in_dir(dir, key_str, strings)? {
@@ -879,7 +858,7 @@ impl Storage {
                 let range = self.with_temp_dir_range(|this| {
                     for i in dir_range.clone() {
                         let (key_id, dir_entry_id) = this.temp_dir[i];
-                        let key = strings.get(key_id).ok_or(StorageError::StringNotFound)?;
+                        let key = strings.get_str(key_id)?;
                         if index_of_key(depth, key) as u8 == index {
                             this.temp_dir.push((key_id, dir_entry_id));
                         }
@@ -1133,7 +1112,7 @@ impl Storage {
             let mut error = None;
 
             dir.sort_unstable_by(|a, b| {
-                let a = match strings.get(a.0).ok_or(StorageError::StringNotFound) {
+                let a = match strings.get_str(a.0) {
                     Ok(a) => a,
                     Err(e) => {
                         error = Some(e);
@@ -1141,7 +1120,7 @@ impl Storage {
                     }
                 };
 
-                let b = match strings.get(b.0).ok_or(StorageError::StringNotFound) {
+                let b = match strings.get_str(b.0) {
                     Ok(b) => b,
                     Err(e) => {
                         error = Some(e);
@@ -1180,7 +1159,7 @@ impl Storage {
         dir_entry: DirEntry,
         strings: &mut StringInterner,
     ) -> Result<DirectoryId, StorageError> {
-        let key_id = strings.get_string_id(key_str);
+        let key_id = strings.make_string_id(key_str);
 
         // Are we inserting in an Inode ?
         if let Some(inode_id) = dir_id.get_inode_id() {
@@ -1459,7 +1438,6 @@ impl Storage {
         self.inodes = Vec::new();
         self.data = Vec::new();
         self.offsets_to_hash_id = HashMap::default();
-        // self.strings = StringInterner::default();
     }
 }
 

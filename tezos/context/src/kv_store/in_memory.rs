@@ -230,9 +230,8 @@ impl KeyValueStoreBackend for InMemory {
     fn make_shape(
         &mut self,
         dir: &[(StringId, DirEntryId)],
-        storage: &Storage,
     ) -> Result<Option<DirectoryShapeId>, DBError> {
-        self.shapes.make_shape(dir, storage).map_err(Into::into)
+        self.shapes.make_shape(dir).map_err(Into::into)
     }
 
     fn synchronize_strings_from(&mut self, string_interner: &StringInterner) {
@@ -244,7 +243,7 @@ impl KeyValueStoreBackend for InMemory {
     }
 
     fn get_str(&self, string_id: StringId) -> Option<&str> {
-        self.string_interner.get(string_id)
+        self.string_interner.get_str(string_id).ok()
     }
 
     fn get_object(

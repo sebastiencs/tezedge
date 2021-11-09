@@ -186,7 +186,7 @@ impl TreeWalkerLevel {
 
                 storage
                     .dir_iterate_unsorted(*dir_id, |&(key_id, dir_entry_id)| {
-                        let key = match strings.get(key_id).ok_or(StorageError::StringNotFound) {
+                        let key = match strings.get_str(key_id) {
                             Ok(key) => key.to_string(),
                             Err(e) => {
                                 // TODO: Handle this error in a better way
@@ -634,10 +634,7 @@ impl WorkingTree {
                 Object::Commit(_) => continue,
             };
 
-            let key = strings
-                .get(*key)
-                .ok_or(StorageError::StringNotFound)?
-                .to_string();
+            let key = strings.get_str(*key)?.to_string();
             children.push((key, value));
         }
 
@@ -1088,126 +1085,10 @@ impl WorkingTree {
         data.add_serialized_object(object_hash_id, &object, storage, strings)
     }
 
-    // /// Serializes working tree and builds vector of objects to be persisted to DB, recursively.
-    // ///
-    // /// This doesn't traverse objects that were already commited.
-    // fn serialize_objects_recursively(
-    //     &self,
-    //     object: &Object,
-    //     object_hash: HashId,
-    //     root: Option<DirectoryId>,
-    //     data: &mut SerializingData,
-    //     storage: &Storage,
-    // ) -> Result<(), MerkleError> {
-    //     match object {
-    //         Object::Blob(_blob_id) => {}
-    //         Object::Directory(dir_id) => {
-    //             storage.dir_iterate_unsorted(*dir_id, |&(_, dir_entry_id)| {
-    //                 let child_dir_entry = storage.get_dir_entry(dir_entry_id)?;
-
-    //                 let object_hash =
-    //                     match child_dir_entry.object_hash_id(data.repository, storage)? {
-    //                         Some(hash_id) => hash_id,
-    //                         None => return Ok(()), // Object is an inlined blob, we don't serialize them.
-    //                     };
-
-    //                 if child_dir_entry.is_commited() {
-    //                     data.add_older_object(child_dir_entry, storage)?;
-    //                     return Ok(());
-    //                 }
-    //                 child_dir_entry.set_commited(true);
-
-    //                 match child_dir_entry.get_object().as_ref() {
-    //                     None => Ok(()),
-    //                     Some(object) => self.serialize_objects_recursively(
-    //                         object,
-    //                         object_hash,
-    //                         None,
-    //                         data,
-    //                         storage,
-    //                     ),
-    //                 }
-    //             })?;
-    //         }
-    //         Object::Commit(commit) => {
-    //             let object = match root {
-    //                 Some(root) => Object::Directory(root),
-    //                 None => self.fetch_object_from_repo(commit.root_ref, data.repository)?,
-    //             };
-    //             self.serialize_objects_recursively(
-    //                 &object,
-    //                 commit.root_ref.hash_id(),
-    //                 None,
-    //                 data,
-    //                 storage,
-    //             )?;
-    //         }
-    //     }
-
-    //     // Add object to batch
-    //     data.add_serialized_object(object_hash, object, storage, strings)
-    //         .map(|_| ())
-    // }
-
-    // /// Serializes working tree and builds vector of objects to be persisted to DB, recursively.
-    // ///
-    // /// This doesn't traverse objects that were already commited.
-    // fn serialize_objects_recursively(
-    //     &self,
-    //     object: &Object,
-    //     object_hash: HashId,
-    //     root: Option<DirectoryId>,
-    //     data: &mut SerializingData,
-    //     storage: &Storage,
-    // ) -> Result<(), MerkleError> {
-    //     match object {
-    //         Object::Blob(_blob_id) => {},
-    //         Object::Directory(dir_id) => {
-    //             storage.dir_iterate_unsorted(*dir_id, |&(_, dir_entry_id)| {
-    //                 let child_dir_entry = storage.get_dir_entry(dir_entry_id)?;
-
-    //                 let object_hash = match child_dir_entry.object_hash_id(data.store, storage)? {
-    //                     Some(hash_id) => hash_id,
-    //                     None => return Ok(()), // Object is an inlined blob, we don't serialize them.
-    //                 };
-
-    //                 if child_dir_entry.is_commited() {
-    //                     data.add_older_object(child_dir_entry, storage)?;
-    //                     return Ok(());
-    //                 }
-    //                 child_dir_entry.set_commited(true);
-
-    //                 match child_dir_entry.get_object().as_ref() {
-    //                     None => Ok(()),
-    //                     Some(object) => self.serialize_objects_recursively(
-    //                         object,
-    //                         object_hash,
-    //                         None,
-    //                         data,
-    //                         storage,
-    //                     ),
-    //                 }
-    //             })?;
-    //         }
-    //         Object::Commit(commit) => {
-    //             let object = match root {
-    //                 Some(root) => Object::Directory(root),
-    //                 None => self.fetch_object_from_repo(commit.root_hash, data.store)?,
-    //             };
-    //             self.serialize_objects_recursively(&object, commit.root_hash, None, data, storage)?;
-    //         }
-    //     }
-
-    //     // Add object to batch
-    //     data.add_serialized_object(object_hash, object, storage)
-    // }
-
     /// Fetches object of this `hash_id` from the repository.
     fn fetch_object_from_repo(
         &self,
         object_ref: ObjectReference,
-        // offset: u64,
-        //        hash_id: HashId,
         repository: &ContextKeyValueStore,
     ) -> Result<Object, MerkleError> {
         let mut storage = self.index.storage.borrow_mut();

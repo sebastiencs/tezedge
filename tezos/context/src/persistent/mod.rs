@@ -75,7 +75,6 @@ pub trait KeyValueStoreBackend {
     fn make_shape(
         &mut self,
         dir: &[(StringId, DirEntryId)],
-        storage: &Storage,
     ) -> Result<Option<DirectoryShapeId>, DBError>;
     /// Returns the string associated to this `string_id`.
     ///
@@ -202,7 +201,6 @@ pub enum FileType {
     Data,
     Strings,
     BigStrings,
-    BigStringsOffsets,
     Hashes,
 }
 
@@ -218,7 +216,6 @@ impl FileType {
             FileType::Strings => Path::new("strings.db"),
             FileType::Hashes => Path::new("hashes.db"),
             FileType::BigStrings => Path::new("big_strings.db"),
-            FileType::BigStringsOffsets => Path::new("big_strings_offsets.db"),
         }
     }
 }
@@ -321,7 +318,7 @@ impl File {
         self.file.read_exact_at(buffer, offset.as_u64())
     }
 
-    pub fn try_read<'a>(
+    pub fn read_at_most<'a>(
         &self,
         mut buffer: &'a mut [u8],
         offset: AbsoluteOffset,

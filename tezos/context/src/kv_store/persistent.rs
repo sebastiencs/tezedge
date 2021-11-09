@@ -20,7 +20,8 @@ use crate::{
         KeyValueStoreBackend, Persistable,
     },
     serialize::{
-        persistent::{self, deserialize_hash_id, read_object_length, AbsoluteOffset},
+        deserialize_hash_id,
+        persistent::{self, read_object_length, AbsoluteOffset},
         DeserializationError, ObjectHeader,
     },
     working_tree::{
@@ -42,22 +43,16 @@ pub struct Persistent {
     commit_index_file: File,
     strings_file: File,
     big_strings_file: File,
-    big_strings_offsets_file: File,
 
     hashes: Hashes,
-    // hashes_file: File,
-
-    // hashes_file_index: usize,
     shapes: DirectoryShapes,
     string_interner: StringInterner,
 
-    // hashes: Hashes,
     pub context_hashes: Map<u64, ObjectReference>,
 }
 
 impl GarbageCollector for Persistent {
     fn new_cycle_started(&mut self) -> Result<(), GarbageCollectionError> {
-        // self.new_cycle_started();
         Ok(())
     }
 
@@ -65,7 +60,6 @@ impl GarbageCollector for Persistent {
         &mut self,
         _referenced_older_objects: Vec<HashId>,
     ) -> Result<(), GarbageCollectionError> {
-        // self.block_applied(referenced_older_objects);
         Ok(())
     }
 }
@@ -83,30 +77,31 @@ impl Persistable for Persistent {
 }
 
 struct Hashes {
-    list: Vec<ObjectHash>,
-    list_first_index: usize,
+    in_memory: Vec<ObjectHash>,
+    in_memory_first_index: usize,
     hashes_file: File,
-
-    bytes: Vec<u8>,
+    /// Vector used to copy hashes from `Self::in_memory` and being able to
+    /// write all hashes into the file in a single `File::append` call
+    in_memory_bytes: Vec<u8>,
 }
 
 impl Hashes {
     fn try_new(hashes_file: File) -> Self {
-        let list_first_index =
+        let in_memory_first_index =
             (hashes_file.offset().as_u64() as usize) / crate::hash::OBJECT_HASH_LEN;
 
         Self {
-            list: Vec::with_capacity(1000),
+            in_memory: Vec::with_capacity(1000),
             hashes_file,
-            list_first_index,
-            bytes: Vec::with_capacity(1000),
+            in_memory_first_index,
+            in_memory_bytes: Vec::with_capacity(1000),
         }
     }
 
     fn get_hash(&self, hash_id: HashId) -> Result<Cow<ObjectHash>, DBError> {
         let hash_id_index: usize = hash_id.try_into()?;
 
-        let is_in_file = hash_id_index < self.list_first_index;
+        let is_in_file = hash_id_index < self.in_memory_first_index;
 
         if is_in_file {
             let offset = hash_id_index * std::mem::size_of::<ObjectHash>();
@@ -118,9 +113,9 @@ impl Hashes {
 
             Ok(Cow::Owned(hash))
         } else {
-            let index = hash_id_index - self.list_first_index;
+            let index = hash_id_index - self.in_memory_first_index;
 
-            match self.list.get(index) {
+            match self.in_memory.get(index) {
                 Some(hash) => Ok(Cow::Borrowed(hash)),
                 None => Err(DBError::HashNotFound {
                     object_ref: hash_id.into(),
@@ -130,35 +125,36 @@ impl Hashes {
     }
 
     fn get_vacant_object_hash(&mut self) -> Result<VacantObjectHash, DBError> {
-        let list_length = self.list.len();
-        let index = self.list_first_index + list_length;
-        self.list.push(Default::default());
+        let in_memory_length = self.in_memory.len();
+        let hash_id_index = self.in_memory_first_index + in_memory_length;
+
+        self.in_memory.push(Default::default());
 
         Ok(VacantObjectHash {
-            entry: Some(&mut self.list[list_length]),
-            hash_id: HashId::try_from(index)?,
+            entry: Some(&mut self.in_memory[in_memory_length]),
+            hash_id: HashId::try_from(hash_id_index)?,
         })
     }
 
     fn contains(&self, hash_id: HashId) -> Result<bool, DBError> {
         let hash_id: usize = hash_id.try_into()?;
 
-        Ok(hash_id < self.list_first_index + self.list.len())
+        Ok(hash_id < self.in_memory_first_index + self.in_memory.len())
     }
 
     fn commit(&mut self) -> Result<(), std::io::Error> {
-        if self.list.is_empty() {
+        if self.in_memory.is_empty() {
             return Ok(());
         }
 
-        self.bytes.clear();
-        for h in &self.list {
-            self.bytes.extend_from_slice(h);
+        self.in_memory_bytes.clear();
+        for hash in &self.in_memory {
+            self.in_memory_bytes.extend_from_slice(hash);
         }
-        self.list_first_index += self.list.len();
+        self.in_memory_first_index += self.in_memory.len();
 
-        self.hashes_file.append(&self.bytes)?;
-        self.list.clear();
+        self.hashes_file.append(&self.in_memory_bytes)?;
+        self.in_memory.clear();
 
         Ok(())
     }
@@ -174,16 +170,12 @@ impl Persistent {
         let commit_index_file = File::try_new(&base_path, FileType::CommitIndex)?;
         let mut strings_file = File::try_new(&base_path, FileType::Strings)?;
         let mut big_strings_file = File::try_new(&base_path, FileType::BigStrings)?;
-        let mut big_strings_offsets_file = File::try_new(&base_path, FileType::BigStringsOffsets)?;
 
         let hashes_file = File::try_new(&base_path, FileType::Hashes)?;
 
         let shapes = DirectoryShapes::deserialize(&mut shape_file, &mut shape_index_file)?;
-        let string_interner = StringInterner::deserialize(
-            &mut strings_file,
-            &mut big_strings_file,
-            &mut big_strings_offsets_file,
-        )?;
+        let string_interner =
+            StringInterner::deserialize(&mut strings_file, &mut big_strings_file)?;
         let (hashes, context_hashes) = deserialize_hashes(hashes_file, &commit_index_file)?;
 
         Ok(Self {
@@ -194,7 +186,6 @@ impl Persistent {
             strings_file,
             hashes,
             big_strings_file,
-            big_strings_offsets_file,
             shapes,
             string_interner,
             context_hashes,
@@ -215,7 +206,7 @@ impl Persistent {
         let buffer_length = buffer.len();
 
         // We attempt to read 4096 bytes, if it's not enough we will read more later
-        let buffer_slice = self.data_file.try_read(&mut buffer[..4096], offset)?;
+        let buffer_slice = self.data_file.read_at_most(&mut buffer[..4096], offset)?;
 
         let object_header: ObjectHeader = ObjectHeader::from_bytes([buffer_slice[0]]);
         let (_, object_length) = read_object_length(buffer_slice, &object_header)?;
@@ -238,16 +229,14 @@ impl Persistent {
 
         let mut buffer: [u8; 10] = Default::default();
 
-        self.data_file.try_read(&mut buffer, offset)?;
+        self.data_file.read_at_most(&mut buffer, offset)?;
 
         let object_header: ObjectHeader = ObjectHeader::from_bytes([buffer[0]]);
         let (header_nbytes, _) = read_object_length(&buffer, &object_header)?;
 
-        let hash_id = deserialize_hash_id(&buffer[header_nbytes..])?
-            .0
-            .ok_or(DeserializationError::MissingHash)?;
+        let (hash_id, _) = deserialize_hash_id(&buffer[header_nbytes..])?;
 
-        Ok(hash_id)
+        Ok(hash_id.ok_or(DeserializationError::MissingHash)?)
     }
 
     fn commit_to_disk(&mut self, data: &[u8]) -> Result<(), std::io::Error> {
@@ -267,7 +256,6 @@ impl Persistent {
         self.data_file.sync()?;
         self.strings_file.sync()?;
         self.big_strings_file.sync()?;
-        self.big_strings_offsets_file.sync()?;
         self.hashes.hashes_file.sync()?;
         self.commit_index_file.sync()?;
 
@@ -373,7 +361,6 @@ impl KeyValueStoreBackend for Persistent {
             None => self.get_hash_id(object_ref)?,
         };
 
-        // let hash_id = self.get_hash_id(object_ref)?;
         self.hashes.get_hash(hash_id)
     }
 
@@ -395,13 +382,12 @@ impl KeyValueStoreBackend for Persistent {
     fn make_shape(
         &mut self,
         dir: &[(StringId, DirEntryId)],
-        storage: &Storage,
     ) -> Result<Option<DirectoryShapeId>, DBError> {
-        self.shapes.make_shape(dir, storage).map_err(Into::into)
+        self.shapes.make_shape(dir).map_err(Into::into)
     }
 
     fn get_str(&self, string_id: StringId) -> Option<&str> {
-        self.string_interner.get(string_id)
+        self.string_interner.get_str(string_id).ok()
     }
 
     fn synchronize_strings_from(&mut self, string_interner: &StringInterner) {
