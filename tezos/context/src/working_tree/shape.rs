@@ -11,7 +11,7 @@ use std::{
     hash::Hasher,
 };
 
-use crate::{kv_store::index_map::IndexMap, persistent::File};
+use crate::{kv_store::index_map::IndexMap, persistent::File, serialize::DeserializationError};
 use modular_bitfield::prelude::*;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -210,7 +210,7 @@ impl DirectoryShapes {
             let start: usize = slice_id.start() as usize;
             let end: usize = start + slice_id.length() as usize;
 
-            let shape = self.shapes.get(start..end).unwrap();
+            let shape = &self.shapes[start..end];
 
             for string_id in shape {
                 let string_id: u32 = string_id.as_u32();
@@ -227,7 +227,10 @@ impl DirectoryShapes {
     }
 
     // TODO: should return Result<Self, Error> instead, deserialization can fail.
-    pub fn deserialize(shapes_file: &mut File, shapes_index_file: &mut File) -> Self {
+    pub fn deserialize(
+        shapes_file: &mut File,
+        shapes_index_file: &mut File,
+    ) -> Result<Self, DeserializationError> {
         let mut result = Self::default();
         let mut string_id_bytes = [0u8; 4];
 
@@ -235,7 +238,7 @@ impl DirectoryShapes {
         let shape_file_end = shapes_file.offset().as_u64();
 
         while offset < shape_file_end {
-            shapes_file.read_exact_at(&mut string_id_bytes, offset.into());
+            shapes_file.read_exact_at(&mut string_id_bytes, offset.into())?;
             let string_id = StringId::deserialize(string_id_bytes);
 
             offset += string_id_bytes.len() as u64;
@@ -248,7 +251,7 @@ impl DirectoryShapes {
         let mut shape_slice_id_bytes = [0u8; 8];
 
         while offset < shape_index_file_end {
-            shapes_index_file.read_exact_at(&mut shape_slice_id_bytes, offset.into());
+            shapes_index_file.read_exact_at(&mut shape_slice_id_bytes, offset.into())?;
 
             offset += shape_slice_id_bytes.len() as u64;
 
@@ -268,12 +271,12 @@ impl DirectoryShapes {
             }
             let shape_hash = DirectoryShapeHash(hasher.finish());
 
-            let shape_id = result.id_to_hash.push(shape_hash).unwrap();
+            let shape_id = result.id_to_hash.push(shape_hash)?;
             result
                 .hash_to_strings
                 .insert(shape_hash, (shape_id, slice_id));
         }
 
-        result
+        Ok(result)
     }
 }

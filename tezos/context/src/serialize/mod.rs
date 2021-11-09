@@ -11,6 +11,7 @@ use crate::{
     kv_store::HashId,
     persistent::DBError,
     working_tree::{
+        shape::DirectoryShapeError,
         storage::{Blob, DirEntryIdError, Storage, StorageError},
         string_interner::StringInterner,
         DirEntry, Object,
@@ -143,6 +144,8 @@ pub enum DeserializationError {
     MissingRootHash,
     #[error("Hash is missing")]
     MissingHash,
+    #[error("Offset is missing")]
+    MissingOffset,
     #[error("DirEntryIdError: {error}")]
     DirEntryIdError {
         #[from]
@@ -164,6 +167,16 @@ pub enum DeserializationError {
     },
     #[error("Cannot find next shape")]
     CannotFindNextShape,
+    #[error("Directory shape error: {error:?}")]
+    DirectoryShapeError {
+        #[from]
+        error: DirectoryShapeError,
+    },
+    #[error("IOError: {error:?}")]
+    IOError {
+        #[from]
+        error: std::io::Error,
+    },
 }
 
 fn get_inline_blob<'a>(storage: &'a Storage, dir_entry: &DirEntry) -> Option<Blob<'a>> {

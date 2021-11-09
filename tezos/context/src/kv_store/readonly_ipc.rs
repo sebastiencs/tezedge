@@ -93,19 +93,6 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
                 .map(Cow::Borrowed)
                 .ok_or_else(|| DBError::HashNotFound { object_ref })
         } else {
-            // let hash_id_index: usize = hash_id.try_into().unwrap();
-
-            // let offset = hash_id_index * std::mem::size_of::<ObjectHash>();
-
-            // let mut hash: ObjectHash = Default::default();
-
-            // let base_path = get_persistent_base_path();
-            // let hashes_file = File::new(&base_path, FileType::Hashes);
-
-            // hashes_file.read_exact_at(&mut hash, (offset as u64).into());
-
-            // Ok(Some(Cow::Owned(hash)))
-
             self.client
                 .get_hash(object_ref)
                 .map_err(|reason| DBError::IpcAccessError { reason })
@@ -184,7 +171,10 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
             .hash_id_opt()
             .and_then(|h| h.get_readonly_id().ok()?)
         {
-            let bytes = self.hashes.get_value(hash_id)?.unwrap();
+            let bytes = self
+                .hashes
+                .get_value(hash_id)?
+                .ok_or(DBError::HashNotFound { object_ref })?;
             buffer.clear();
             buffer.extend_from_slice(bytes);
             return Ok(buffer);
@@ -209,7 +199,7 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
             ..
         } = working_tree
             .prepare_commit(date, author, message, parent_commit_ref, self, None, None)
-            .unwrap();
+            .map_err(Box::new)?;
 
         let commit_hash = get_commit_hash(commit_ref, self).map_err(Box::new)?;
 
@@ -727,13 +717,23 @@ impl IpcContextServer {
                             "Context index unavailable".to_owned(),
                         )))?,
                         Some(index) => {
-                            let repo = index.repository.read().unwrap();
+                            let res = index
+                                .repository
+                                .read()
+                                .map_err(|_| ContextError::GetObjectBytesError {
+                                    reason: "Fail to get repo".to_string(),
+                                })
+                                .and_then(|repo| {
+                                    let mut buffer = Vec::with_capacity(1000);
+                                    repo.get_object_bytes(object_ref, &mut buffer)
+                                        .map(Into::into)
+                                        .map_err(|e| ContextError::GetObjectBytesError {
+                                            reason: format!("{:?}", e),
+                                        })
+                                })
+                                .map_err(|err| format!("Context error: {:?}", err));
 
-                            let mut buffer = Vec::with_capacity(1000);
-                            repo.get_object_bytes(object_ref, &mut buffer).unwrap();
-
-                            io.tx
-                                .send(&ContextResponse::GetObjectBytesResponse(Ok(buffer)))?;
+                            io.tx.send(&ContextResponse::GetObjectBytesResponse(res))?;
                         }
                     }
                 }
@@ -742,12 +742,22 @@ impl IpcContextServer {
                         "Context index unavailable".to_owned(),
                     )))?,
                     Some(index) => {
-                        let repo = index.repository.read().unwrap();
+                        let res = index
+                            .repository
+                            .read()
+                            .map_err(|_| ContextError::GetHashIdError {
+                                reason: "Fail to get repo".to_string(),
+                            })
+                            .and_then(|repo| {
+                                repo.get_hash_id(object_ref).map_err(|e| {
+                                    ContextError::GetHashIdError {
+                                        reason: format!("{:?}", e),
+                                    }
+                                })
+                            })
+                            .map_err(|err| format!("Context error: {:?}", err));
 
-                        let hash_id = repo.get_hash_id(object_ref).unwrap();
-
-                        io.tx
-                            .send(&ContextResponse::GetHashIdResponse(Ok(hash_id)))?;
+                        io.tx.send(&ContextResponse::GetHashIdResponse(res))?;
                     }
                 },
             }

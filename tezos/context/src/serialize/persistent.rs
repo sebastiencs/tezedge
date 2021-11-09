@@ -153,26 +153,28 @@ fn serialize_offset(
     output: &mut Vec<u8>,
     relative_offset: RelativeOffset,
     offset_length: OffsetLength,
-) {
+) -> Result<(), SerializationError> {
     let relative_offset = relative_offset.as_u64();
 
     match offset_length {
         OffsetLength::RelativeOneByte => {
             let offset: u8 = relative_offset as u8;
-            output.write_all(&offset.to_le_bytes()).unwrap();
+            output.write_all(&offset.to_le_bytes())?;
         }
         OffsetLength::RelativeTwoBytes => {
             let offset: u16 = relative_offset as u16;
-            output.write_all(&offset.to_le_bytes()).unwrap();
+            output.write_all(&offset.to_le_bytes())?;
         }
         OffsetLength::RelativeFourBytes => {
             let offset: u32 = relative_offset as u32;
-            output.write_all(&offset.to_le_bytes()).unwrap();
+            output.write_all(&offset.to_le_bytes())?;
         }
         OffsetLength::RelativeEightBytes => {
-            output.write_all(&relative_offset.to_le_bytes()).unwrap();
+            output.write_all(&relative_offset.to_le_bytes())?;
         }
     }
+
+    Ok(())
 }
 
 fn serialize_shaped_directory(
@@ -225,7 +227,7 @@ fn serialize_shaped_directory(
 
             output.write_all(&byte[..])?;
 
-            serialize_offset(output, relative_offset, offset_length);
+            serialize_offset(output, relative_offset, offset_length)?;
         }
     }
 
@@ -397,7 +399,7 @@ fn serialize_directory(
             let relative_offset = relative_offset.ok_or(MissingOffset)?;
             let offset_length = offset_length.ok_or(MissingOffset)?;
 
-            serialize_offset(output, relative_offset, offset_length);
+            serialize_offset(output, relative_offset, offset_length)?;
         }
     }
 
@@ -428,7 +430,7 @@ pub fn serialize_object(
 ) -> Result<Option<AbsoluteOffset>, SerializationError> {
     let start = output.len();
 
-    let offset = offset.unwrap();
+    let offset = offset.ok_or(SerializationError::MissingOffset)?;
     let mut offset: AbsoluteOffset = offset.add(start as u64);
 
     match object {
@@ -508,13 +510,13 @@ pub fn serialize_object(
 
             if let Some(parent) = commit.parent_commit_ref {
                 serialize_hash_id(parent.hash_id().as_u32(), output)?;
-                serialize_offset(output, parent_relative_offset, parent_offset_length);
+                serialize_offset(output, parent_relative_offset, parent_offset_length)?;
             };
 
             let root_hash_id = commit.root_ref.hash_id().as_u32();
             serialize_hash_id(root_hash_id, output)?;
 
-            serialize_offset(output, root_relative_offset, root_offset_length);
+            serialize_offset(output, root_relative_offset, root_offset_length)?;
 
             output.write_all(&commit.time.to_le_bytes())?;
 
@@ -795,7 +797,7 @@ fn serialize_inode(
                 let (relative_offset, offset_length) =
                     get_relative_offset(offset, pointer.offset());
 
-                serialize_offset(output, relative_offset, offset_length);
+                serialize_offset(output, relative_offset, offset_length)?;
             }
 
             write_object_header(output, start, ObjectTag::InodePointers);
@@ -855,33 +857,35 @@ fn deserialize_offset(
     data: &[u8],
     offset_length: OffsetLength,
     object_offset: AbsoluteOffset,
-) -> (AbsoluteOffset, usize) {
+) -> Result<(AbsoluteOffset, usize), DeserializationError> {
+    use DeserializationError::*;
+
     let object_offset = object_offset.as_u64();
 
     match offset_length {
         OffsetLength::RelativeOneByte => {
-            let byte = data.get(0).unwrap();
+            let byte = data.get(0).ok_or(UnexpectedEOF)?;
             let relative_offset: u8 = u8::from_le_bytes([*byte]);
             let absolute_offset: u64 = object_offset - relative_offset as u64;
-            (absolute_offset.into(), 1)
+            Ok((absolute_offset.into(), 1))
         }
         OffsetLength::RelativeTwoBytes => {
-            let bytes = data.get(..2).unwrap();
-            let relative_offset: u16 = u16::from_le_bytes(bytes.try_into().unwrap());
+            let bytes = data.get(..2).ok_or(UnexpectedEOF)?;
+            let relative_offset: u16 = u16::from_le_bytes(bytes.try_into()?);
             let absolute_offset: u64 = object_offset - relative_offset as u64;
-            (absolute_offset.into(), 2)
+            Ok((absolute_offset.into(), 2))
         }
         OffsetLength::RelativeFourBytes => {
-            let bytes = data.get(..4).unwrap();
-            let relative_offset: u32 = u32::from_le_bytes(bytes.try_into().unwrap());
+            let bytes = data.get(..4).ok_or(UnexpectedEOF)?;
+            let relative_offset: u32 = u32::from_le_bytes(bytes.try_into()?);
             let absolute_offset: u64 = object_offset - relative_offset as u64;
-            (absolute_offset.into(), 4)
+            Ok((absolute_offset.into(), 4))
         }
         OffsetLength::RelativeEightBytes => {
-            let bytes = data.get(..8).unwrap();
-            let relative_offset: u64 = u64::from_le_bytes(bytes.try_into().unwrap());
+            let bytes = data.get(..8).ok_or(UnexpectedEOF)?;
+            let relative_offset: u64 = u64::from_le_bytes(bytes.try_into()?);
             let absolute_offset: u64 = object_offset - relative_offset;
-            (absolute_offset.into(), 8)
+            Ok((absolute_offset.into(), 8))
         }
     }
 }
@@ -946,7 +950,7 @@ fn deserialize_shaped_directory(
                 DirEntry::new_commited(kind, None, Some(Object::Blob(blob_id)))
             } else {
                 let (absolute_offset, nbytes) =
-                    deserialize_offset(&data[pos..], offset_length, object_offset);
+                    deserialize_offset(&data[pos..], offset_length, object_offset)?;
 
                 pos += nbytes;
 
@@ -1026,7 +1030,7 @@ fn deserialize_directory(
             } else {
                 let bytes = data.get(pos..).ok_or(UnexpectedEOF)?;
                 let (absolute_offset, nbytes) =
-                    deserialize_offset(bytes, offset_length, object_offset);
+                    deserialize_offset(bytes, offset_length, object_offset)?;
 
                 pos += nbytes;
 
@@ -1046,21 +1050,26 @@ fn deserialize_directory(
     Ok(dir_id)
 }
 
-pub fn read_object_length(data: &[u8], header: &ObjectHeader) -> (usize, usize) {
+pub fn read_object_length(
+    data: &[u8],
+    header: &ObjectHeader,
+) -> Result<(usize, usize), DeserializationError> {
+    use DeserializationError::*;
+
     match header.length() {
         ObjectLength::OneByte => {
-            let length = data[1] as usize;
-            (1 + 1, length)
+            let length = data.get(1).copied().ok_or(UnexpectedEOF)? as usize;
+            Ok((1 + 1, length))
         }
         ObjectLength::TwoBytes => {
-            let length = &data[1..3];
-            let length = u16::from_le_bytes(length.try_into().unwrap()) as usize;
-            (1 + 2, length)
+            let length = data.get(1..3).ok_or(UnexpectedEOF)?;
+            let length = u16::from_le_bytes(length.try_into()?) as usize;
+            Ok((1 + 2, length))
         }
         ObjectLength::FourBytes => {
-            let length = &data[1..5];
-            let length = u32::from_le_bytes(length.try_into().unwrap()) as usize;
-            (1 + 4, length)
+            let length = data.get(1..5).ok_or(UnexpectedEOF)?;
+            let length = u32::from_le_bytes(length.try_into()?) as usize;
+            Ok((1 + 4, length))
         }
     }
 }
@@ -1079,7 +1088,7 @@ pub fn deserialize_object(
     let header = bytes.get(0).copied().ok_or(UnexpectedEOF)?;
     let header: ObjectHeader = ObjectHeader::from_bytes([header]);
 
-    let (header_nbytes, object_length) = read_object_length(bytes, &header);
+    let (header_nbytes, object_length) = read_object_length(bytes, &header)?;
 
     let bytes = bytes
         .get(header_nbytes..object_length)
@@ -1089,7 +1098,7 @@ pub fn deserialize_object(
 
     storage
         .offsets_to_hash_id
-        .insert(object_offset, object_hash_id.unwrap());
+        .insert(object_offset, object_hash_id.ok_or(MissingOffset)?);
 
     let bytes = bytes.get(nbytes..).ok_or(UnexpectedEOF)?;
     let mut pos = 0;
@@ -1127,7 +1136,7 @@ pub fn deserialize_object(
 
                 let data = bytes.get(pos..).ok_or(UnexpectedEOF)?;
                 let (parent_absolute_offset, nbytes) =
-                    deserialize_offset(data, header.parent_offset_length(), object_offset);
+                    deserialize_offset(data, header.parent_offset_length(), object_offset)?;
 
                 pos += nbytes;
 
@@ -1146,7 +1155,7 @@ pub fn deserialize_object(
 
             let data = bytes.get(pos..).ok_or(UnexpectedEOF)?;
             let (root_absolute_offset, nbytes) =
-                deserialize_offset(data, header.root_offset_length(), object_offset);
+                deserialize_offset(data, header.root_offset_length(), object_offset)?;
 
             let root_ref = ObjectReference::new(
                 Some(root_hash.ok_or(MissingRootHash)?),
@@ -1234,7 +1243,7 @@ fn deserialize_inode_pointers(
     for (index, pointer_index) in indexes_iter.enumerate() {
         let offset_length = offsets_header.get(index);
         let (absolute_offset, nbytes) =
-            deserialize_offset(&data[pos..], offset_length, object_offset);
+            deserialize_offset(&data[pos..], offset_length, object_offset)?;
 
         pos += nbytes;
 
@@ -1244,10 +1253,9 @@ fn deserialize_inode_pointers(
         let object_ref = ObjectReference::new(None, Some(absolute_offset));
         let data = repository
             .get_object_bytes(object_ref, &mut output)
-            .unwrap();
+            .map_err(Box::new)?;
 
-        let inode_id =
-            deserialize_inode(data, absolute_offset, storage, repository, strings).unwrap();
+        let inode_id = deserialize_inode(data, absolute_offset, storage, repository, strings)?;
 
         pointers[pointer_index as usize] = Some(PointerToInode::new_commited(
             None,
@@ -1276,7 +1284,7 @@ pub fn deserialize_inode(
     let header = data.get(0).copied().ok_or(UnexpectedEOF)?;
     let header: ObjectHeader = ObjectHeader::from_bytes([header]);
 
-    let (header_nbytes, _) = read_object_length(data, &header);
+    let (header_nbytes, _) = read_object_length(data, &header)?;
     let data = data.get(header_nbytes..).ok_or(UnexpectedEOF)?;
 
     let (_, nbytes) = deserialize_hash_id(data)?;

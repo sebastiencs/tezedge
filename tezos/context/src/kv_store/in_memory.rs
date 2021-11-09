@@ -294,7 +294,7 @@ impl KeyValueStoreBackend for InMemory {
                 Some(in_memory::serialize_object),
                 None,
             )
-            .unwrap();
+            .map_err(Box::new)?;
 
         self.write_batch(batch)?;
         self.put_context_hash(commit_ref)?;

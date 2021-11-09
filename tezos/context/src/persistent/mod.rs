@@ -22,7 +22,7 @@ use crate::{
         shape::{DirectoryShapeError, DirectoryShapeId, ShapeStrings},
         storage::{DirEntryId, Storage},
         string_interner::{StringId, StringInterner},
-        working_tree::WorkingTree,
+        working_tree::{MerkleError, WorkingTree},
         Object, ObjectReference,
     },
     ContextError, ContextKeyValueStore, ObjectHash,
@@ -162,6 +162,13 @@ pub enum DBError {
     },
     #[error("Hash not found: {object_ref:?}")]
     HashNotFound { object_ref: ObjectReference },
+    #[error("Commit error: {err:?}")]
+    CommitError {
+        #[from]
+        err: Box<MerkleError>,
+    },
+    #[error("Commit to disk error: {err:?}")]
+    CommitToDiskError { err: io::Error },
 }
 
 impl From<HashIdError> for DBError {
@@ -264,7 +271,7 @@ pub fn get_persistent_base_path() -> String {
 }
 
 impl File {
-    pub fn new(base_path: &str, file_type: FileType) -> Self {
+    pub fn try_new(base_path: &str, file_type: FileType) -> Result<Self, io::Error> {
         println!(
             "FILE={:?}",
             PathBuf::from(base_path).join(file_type.get_path())
@@ -281,44 +288,44 @@ impl File {
             .append(true)
             .create(true)
             .custom_flags(libc::O_NOATIME)
-            .open(PathBuf::from(base_path).join(file_type.get_path()))
-            .unwrap();
+            .open(PathBuf::from(base_path).join(file_type.get_path()))?;
 
         // We use seek, in cases metadatas were not synchronized
-        let offset = file.seek(SeekFrom::End(0)).unwrap();
+        let offset = file.seek(SeekFrom::End(0))?;
 
-        Self { file, offset }
+        Ok(Self { file, offset })
     }
 
     pub fn offset(&self) -> AbsoluteOffset {
         self.offset.into()
     }
 
-    pub fn sync(&mut self) {
-        self.file.sync_data().unwrap();
-        // self.file.sync_all().unwrap();
+    pub fn sync(&mut self) -> Result<(), io::Error> {
+        self.file.sync_data()
     }
 
-    pub fn append(&mut self, bytes: impl AsRef<[u8]>) {
+    pub fn append(&mut self, bytes: impl AsRef<[u8]>) -> Result<(), io::Error> {
         let bytes = bytes.as_ref();
 
         self.offset += bytes.len() as u64;
-        self.file.write_all(bytes).unwrap();
+        self.file.write_all(bytes)
     }
 
-    pub fn read_at(&self, buffer: &mut Vec<u8>, offset: AbsoluteOffset) {
+    pub fn read_exact_at(
+        &self,
+        buffer: &mut [u8],
+        offset: AbsoluteOffset,
+    ) -> Result<(), io::Error> {
         use std::os::unix::prelude::FileExt;
 
-        self.file.read_at(buffer, offset.as_u64()).unwrap();
+        self.file.read_exact_at(buffer, offset.as_u64())
     }
 
-    pub fn read_exact_at(&self, buffer: &mut [u8], offset: AbsoluteOffset) {
-        use std::os::unix::prelude::FileExt;
-
-        self.file.read_exact_at(buffer, offset.as_u64()).unwrap();
-    }
-
-    pub fn try_read<'a>(&self, mut buffer: &'a mut [u8], offset: AbsoluteOffset) -> &'a [u8] {
+    pub fn try_read<'a>(
+        &self,
+        mut buffer: &'a mut [u8],
+        offset: AbsoluteOffset,
+    ) -> Result<&'a [u8], io::Error> {
         let buf_len = buffer.len();
 
         let eof = self.offset as usize;
@@ -328,8 +335,8 @@ impl File {
             buffer = &mut buffer[..buf_len - (end - eof)];
         }
 
-        self.read_exact_at(buffer, offset);
+        self.read_exact_at(buffer, offset)?;
 
-        buffer
+        Ok(buffer)
     }
 }

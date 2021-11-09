@@ -110,11 +110,13 @@ impl ObjectReference {
     }
 
     pub fn offset(&self) -> AbsoluteOffset {
-        self.offset.unwrap()
+        self.offset
+            .expect("ObjectReference::offset called outside of the persistent context")
     }
 
     pub fn hash_id(&self) -> HashId {
-        self.hash_id.unwrap()
+        self.hash_id
+            .expect("ObjectReference::hash_id called outside of the in-memory context")
     }
 
     pub fn hash_id_opt(&self) -> Option<HashId> {
@@ -216,6 +218,8 @@ impl DirEntry {
     }
 
     pub fn fetch_hash_id(&self, repository: &ContextKeyValueStore, storage: &Storage) {
+        // TODO: Do this only for modified objects
+
         if self.hash_id().is_some() {
             return;
         }
@@ -254,13 +258,6 @@ impl DirEntry {
         match self.hash_id() {
             Some(hash_id) => Ok(Some(hash_id)),
             None => {
-                // let is_inline = match self.get_object() {
-                //     Some(Object::Blob(blob_id)) => blob_id.is_inline(),
-                //     _ => false,
-                // };
-
-                // println!("IS_INLINE={:?} DIR_ENTRY={:?}", is_inline, self);
-
                 match self.get_object() {
                     Some(Object::Blob(blob_id)) if blob_id.is_inline() => return Ok(None),
                     _ => {}
@@ -271,45 +268,20 @@ impl DirEntry {
                     .as_ref()
                     .and_then(|off| storage.offsets_to_hash_id.get(off))
                 {
-                    // println!("Cache for HashId");
                     Some(*hash_id)
                 } else if self.get_object().is_none() {
-                    // println!("Read file for HashId");
-                    Some(store.get_hash_id(self.get_reference()).unwrap())
+                    Some(store.get_hash_id(self.get_reference())?)
                 } else {
-                    // println!("Compute hash");
                     hash_object(
                         self.get_object()
                             .as_ref()
-                            .ok_or(HashingError::MissingObject)
-                            .unwrap(),
+                            .ok_or(HashingError::MissingObject)?,
                         store,
                         storage,
                         strings,
                     )?
                 };
 
-                // let hash_id = if self.get_object().is_none() {
-                //     Some(store.get_hash_id(self.get_reference()).unwrap())
-                // } else {
-                //     hash_object(
-                //         self.get_object()
-                //             .as_ref()
-                //             .ok_or(HashingError::MissingObject)
-                //             .unwrap(),
-                //         store,
-                //         storage,
-                //         strings,
-                //     )?
-                // };
-
-                // let hash_id = hash_object(
-                //     self.get_object()
-                //         .as_ref()
-                //         .ok_or(HashingError::MissingObject).unwrap(),
-                //     store,
-                //     storage,
-                // )?;
                 if let Some(hash_id) = hash_id {
                     let mut inner = self.inner.get();
                     inner.set_object_hash_id(hash_id.as_u32());

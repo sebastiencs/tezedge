@@ -11,6 +11,7 @@ use thiserror::Error;
 
 use crate::kv_store::persistent::Persistent;
 use crate::kv_store::readonly_ipc::ReadonlyIpcBackend;
+use crate::serialize::DeserializationError;
 use crate::{PatchContextFunction, TezedgeContext, TezedgeIndex};
 
 /// IPC communication errors
@@ -22,6 +23,11 @@ pub enum IndexInitializationError {
     IpcSocketPathMissing,
     #[error("Unexpected IO error occurred, {reason}")]
     IoError { reason: std::io::Error },
+    #[error("Deserialization error occured, {reason}")]
+    DeserializationError {
+        #[from]
+        reason: DeserializationError,
+    },
 }
 
 impl From<IpcError> for IndexInitializationError {

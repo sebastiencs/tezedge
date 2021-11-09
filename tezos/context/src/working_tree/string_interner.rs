@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use static_assertions::const_assert;
 use tezos_timing::StringsMemoryUsage;
 
-use crate::{persistent::File, Map};
+use crate::{persistent::File, serialize::DeserializationError, Map};
 
 pub(crate) const STRING_INTERN_THRESHOLD: usize = 30;
 
@@ -71,11 +71,6 @@ pub struct SerializeStrings {
     /// Example:
     /// ['a', 'b', 'c', 'd', 'e,]
     pub big_strings: Vec<u8>,
-    /// Contains offsets (u32 as 4 u8) into `big_strings`:
-    ///
-    /// Example:
-    /// [0, 3, 3, 5] // Points to ['a, 'b', 'c'] and ['d', 'e']
-    pub big_strings_offsets: Vec<u8>,
     /// Contains all strings below STRING_INTERN_THRESHOLD
     ///
     /// Format is [length, [string], length, [string], ..]
@@ -178,54 +173,53 @@ impl BigStrings {
         let start = self.to_serialize_index;
 
         for (start, end) in &self.offsets[start..] {
-            let string = self.strings.get(*start as usize..*end as usize).unwrap();
+            let start = *start as usize;
+            let end = *end as usize;
+            let string = &self.strings[start..end];
 
-            let length: u32 = string.len().try_into().unwrap(); // TODO: Handle overflow
+            let length: u32 = string.len() as u32;
 
             output.big_strings.extend_from_slice(&length.to_le_bytes());
             output.big_strings.extend_from_slice(string.as_bytes());
-
-            output
-                .big_strings_offsets
-                .extend_from_slice(&start.to_le_bytes());
-            output
-                .big_strings_offsets
-                .extend_from_slice(&end.to_le_bytes());
         }
 
         self.to_serialize_index = self.offsets.len();
     }
 
-    fn deserialize(big_strings_file: &mut File, _big_strings_offsets_file: &mut File) -> Self {
+    fn deserialize(
+        big_strings_file: &mut File,
+        _big_strings_offsets_file: &mut File,
+    ) -> Result<Self, DeserializationError> {
         // TODO: maybe start with higher capacity values knowing the file sizes
+
         let mut result = Self::default();
 
         let mut offset = 0u64;
         let end = big_strings_file.offset().as_u64();
 
         let mut length_bytes = [0u8; 4];
-        let mut string_bytes = [0u8; 256]; //  30 should be enough here
+        let mut string_bytes = [0u8; 256];
 
         // big_strings_file is a sequence of
         // [u32 length le bytes | ... <length> bytes string]
         // big_strings_offsets_file is a sequence of:
         // [u32 start le bytes | u32 end le bytes]
         // but using `result.push_str` with the string seems to be enough to also update the offsets?
+
         while offset < end {
-            big_strings_file.read_exact_at(&mut length_bytes, offset.into());
+            big_strings_file.read_exact_at(&mut length_bytes, offset.into())?;
 
             let length = u32::from_le_bytes(length_bytes) as usize;
             offset += length_bytes.len() as u64;
 
-            big_strings_file.read_exact_at(&mut string_bytes[0..length], offset.into());
+            big_strings_file.read_exact_at(&mut string_bytes[0..length], offset.into())?;
             offset += length as u64;
 
-            let _index = result.push_str(std::str::from_utf8(&string_bytes[..length]).unwrap());
-
-            // offset += length as u64;
+            let s = std::str::from_utf8(&string_bytes[..length])?;
+            result.push_str(s);
         }
 
-        result
+        Ok(result)
     }
 }
 
@@ -378,7 +372,6 @@ impl StringInterner {
     pub fn serialize(&mut self) -> SerializeStrings {
         let mut output = SerializeStrings {
             big_strings: Vec::with_capacity(1000),
-            big_strings_offsets: Vec::with_capacity(1000),
             strings: Vec::with_capacity(1000),
         };
 
@@ -407,7 +400,7 @@ impl StringInterner {
         strings_file: &mut File,
         big_strings_file: &mut File,
         big_strings_offsets_file: &mut File,
-    ) -> Self {
+    ) -> Result<Self, DeserializationError> {
         // TODO: maybe start with higher capacity values knowing the file sizes
         let mut result = Self::default();
 
@@ -422,18 +415,16 @@ impl StringInterner {
         let mut string_bytes = [0u8; 256]; //  30 should be enough here
 
         while offset < end {
-            strings_file.read_exact_at(&mut length_byte, offset.into());
+            strings_file.read_exact_at(&mut length_byte, offset.into())?;
             offset += length_byte.len() as u64;
 
             let length = u8::from_le_bytes(length_byte) as usize;
-            strings_file.read_exact_at(&mut string_bytes[..length], offset.into());
+            strings_file.read_exact_at(&mut string_bytes[..length], offset.into())?;
 
             offset += length as u64;
 
-            let _string_id =
-                result.get_string_id(std::str::from_utf8(&string_bytes[..length]).unwrap());
-
-            // offset += length as u64;
+            let s = std::str::from_utf8(&string_bytes[..length])?;
+            let _string_id = result.get_string_id(s);
 
             // Need to keep this clear, everything being added has been serialized already
             result.all_strings_to_serialize.clear();
@@ -441,9 +432,9 @@ impl StringInterner {
 
         // Deserialize big strings
 
-        result.big_strings = BigStrings::deserialize(big_strings_file, big_strings_offsets_file);
+        result.big_strings = BigStrings::deserialize(big_strings_file, big_strings_offsets_file)?;
 
-        result
+        Ok(result)
     }
 }
 
