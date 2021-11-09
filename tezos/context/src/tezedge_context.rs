@@ -62,7 +62,7 @@ impl std::ops::Deref for TezedgeIndexSynchronized<'_> {
     type Target = TezedgeIndex;
 
     fn deref(&self) -> &Self::Target {
-        &self.index
+        self.index
     }
 }
 
@@ -81,7 +81,7 @@ impl std::ops::Deref for TezedgeContextWithDeallocation<'_> {
     type Target = TezedgeContext;
 
     fn deref(&self) -> &Self::Target {
-        &self.ctx
+        self.ctx
     }
 }
 
@@ -166,9 +166,7 @@ impl TezedgeIndex {
         strings: &mut StringInterner,
     ) -> Result<Object, MerkleError> {
         match self.fetch_object(object_ref, storage, strings)? {
-            None => Err(MerkleError::ObjectNotFound {
-                object_ref: object_ref,
-            }),
+            None => Err(MerkleError::ObjectNotFound { object_ref }),
             Some(object) => Ok(object),
         }
     }
@@ -204,9 +202,7 @@ impl TezedgeIndex {
         strings: &mut StringInterner,
     ) -> Result<Commit, MerkleError> {
         match self.fetch_commit(object_ref, storage, strings)? {
-            None => Err(MerkleError::ObjectNotFound {
-                object_ref: object_ref,
-            }),
+            None => Err(MerkleError::ObjectNotFound { object_ref }),
             Some(object) => Ok(object),
         }
     }
@@ -245,9 +241,7 @@ impl TezedgeIndex {
         strings: &mut StringInterner,
     ) -> Result<DirectoryId, MerkleError> {
         match self.fetch_directory(object_ref, storage, strings)? {
-            None => Err(MerkleError::ObjectNotFound {
-                object_ref: object_ref,
-            }),
+            None => Err(MerkleError::ObjectNotFound { object_ref }),
             Some(object) => Ok(object),
         }
     }

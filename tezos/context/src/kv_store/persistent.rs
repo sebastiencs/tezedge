@@ -233,7 +233,7 @@ impl Persistent {
         Ok(&buffer[..object_length])
     }
 
-    fn get_hash_id_from_offset<'a>(&self, object_ref: ObjectReference) -> Result<HashId, DBError> {
+    fn get_hash_id_from_offset(&self, object_ref: ObjectReference) -> Result<HashId, DBError> {
         let offset = object_ref.offset();
 
         let mut buffer: [u8; 10] = Default::default();

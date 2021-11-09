@@ -203,7 +203,7 @@ fn serialize_shaped_directory(
 
         let kind = dir_entry.dir_entry_kind();
 
-        let blob_inline = get_inline_blob(storage, &dir_entry);
+        let blob_inline = get_inline_blob(storage, dir_entry);
         let blob_inline_length = blob_inline.as_ref().map(|b| b.len()).unwrap_or(0);
 
         if let Some(blob_inline) = blob_inline {
@@ -350,7 +350,7 @@ fn serialize_directory(
 
         let kind = dir_entry.dir_entry_kind();
 
-        let blob_inline = get_inline_blob(storage, &dir_entry);
+        let blob_inline = get_inline_blob(storage, dir_entry);
         let blob_inline_length = blob_inline.as_ref().map(|b| b.len()).unwrap_or(0);
 
         let (relative_offset, offset_length) = match dir_entry
@@ -601,7 +601,7 @@ impl PointersHeader {
         self.bitfield & 1 << index != 0
     }
 
-    fn to_bytes(&self) -> [u8; 4] {
+    fn to_bytes(self) -> [u8; 4] {
         self.bitfield.to_le_bytes()
     }
 
@@ -721,7 +721,7 @@ impl PointersOffsetsHeader {
         bitfield
     }
 
-    fn to_bytes(&self) -> [u8; 8] {
+    fn to_bytes(self) -> [u8; 8] {
         self.bitfield.to_le_bytes()
     }
 
@@ -1190,7 +1190,7 @@ pub fn deserialize_object(
             let author = bytes.get(pos..pos + author_length).ok_or(UnexpectedEOF)?;
             let author = author.to_vec();
 
-            pos = pos + author_length;
+            pos += author_length;
 
             let message = bytes.get(pos..).ok_or(UnexpectedEOF)?;
             let message = message.to_vec();

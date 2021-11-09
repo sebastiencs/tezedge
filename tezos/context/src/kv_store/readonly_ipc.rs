@@ -91,7 +91,7 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
             self.hashes
                 .get_hash(hash_id)?
                 .map(Cow::Borrowed)
-                .ok_or_else(|| DBError::HashNotFound { object_ref })
+                .ok_or(DBError::HashNotFound { object_ref })
         } else {
             self.client
                 .get_hash(object_ref)
@@ -650,7 +650,7 @@ impl IpcContextServer {
                                         .map(|s| {
                                             repo.get_str(*s)
                                                 .ok_or_else(|| ContextError::GetShapeError {
-                                                    reason: format!("String not found"),
+                                                    reason: "String not found".to_string(),
                                                 })
                                                 .map(|s| s.to_string())
                                         })

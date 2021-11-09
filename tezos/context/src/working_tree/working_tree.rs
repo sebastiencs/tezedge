@@ -876,7 +876,7 @@ impl WorkingTree {
         storage: &mut Storage,
         strings: &mut StringInterner,
     ) -> Result<Object, MerkleError> {
-        self.compute_new_root_with_change(&key, Some(dir_entry), storage, strings)
+        self.compute_new_root_with_change(key, Some(dir_entry), storage, strings)
     }
 
     /// Delete an item from the staging area.
@@ -894,7 +894,7 @@ impl WorkingTree {
         }
         let mut storage = self.index.storage.borrow_mut();
         let mut strings = self.index.string_interner.borrow_mut();
-        self.compute_new_root_with_change(&key, None, &mut storage, &mut strings)
+        self.compute_new_root_with_change(key, None, &mut storage, &mut strings)
     }
 
     /// Get a new directory with `new_dir_entry` put under given `key`.

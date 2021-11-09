@@ -285,7 +285,7 @@ pub(crate) fn hash_directory(
 ) -> Result<HashId, HashingError> {
     if let Some(inode_id) = dir_id.get_inode_id() {
         let inode = storage.get_inode(inode_id)?;
-        hash_long_inode(&inode, store, storage, strings)
+        hash_long_inode(inode, store, storage, strings)
     } else {
         hash_short_inode(dir_id, store, storage, strings)
     }
