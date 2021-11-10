@@ -269,17 +269,11 @@ fn create_random_path() -> String {
     path
 }
 
-pub fn get_persistent_base_path() -> String {
-    match std::env::var("PERSISTENT_PATH").ok() {
-        Some(path) => path,
-        None => create_random_path(),
+pub fn get_persistent_base_path(db_path: Option<&str>) -> String {
+    match db_path {
+        Some(db_path) if !db_path.is_empty() => db_path.to_string(),
+        _ => create_random_path(),
     }
-
-    // #[cfg(not(test))]
-    // return PERSISTENT_BASE_PATH.to_string();
-
-    // #[cfg(test)]
-    // return create_random_path();
 }
 
 impl File {

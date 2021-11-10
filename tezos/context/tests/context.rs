@@ -16,7 +16,7 @@ use tezos_messages::p2p::encoding::prelude::BlockHeaderBuilder;
 #[test]
 pub fn test_context_set_get_commit_persistent() -> Result<(), anyhow::Error> {
     context_set_get_commit(
-        ContextKvStoreConfiguration::OnDisk,
+        ContextKvStoreConfiguration::OnDisk("".to_string()),
         "__context:test_context_set_get_commit_persistent",
     )
 }
@@ -84,7 +84,7 @@ pub fn context_set_get_commit(
 #[test]
 pub fn test_context_delete_and_remove_persistent() -> Result<(), anyhow::Error> {
     context_delete_and_remove(
-        ContextKvStoreConfiguration::OnDisk,
+        ContextKvStoreConfiguration::OnDisk("".to_string()),
         "__context:test_context_delete_and_remove_persistent",
     )
 }
@@ -264,7 +264,7 @@ fn ctx_copy(
 #[test]
 pub fn test_context_copy_persistent() -> Result<(), anyhow::Error> {
     context_copy(
-        ContextKvStoreConfiguration::OnDisk,
+        ContextKvStoreConfiguration::OnDisk("".to_string()),
         "__context:test_context_copy_persistent",
     )
 }

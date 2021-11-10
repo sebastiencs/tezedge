@@ -14,6 +14,7 @@ pub const INMEM: &str = "inmem";
 #[derive(PartialEq, Eq, Hash, Debug, Clone, EnumIter)]
 pub enum SupportedContextKeyValueStore {
     InMem,
+    OnDisk,
 }
 
 impl SupportedContextKeyValueStore {
@@ -28,6 +29,7 @@ impl SupportedContextKeyValueStore {
     fn supported_values(&self) -> Vec<&'static str> {
         match self {
             SupportedContextKeyValueStore::InMem => vec!["inmem"],
+            SupportedContextKeyValueStore::OnDisk => vec!["ondisk"],
         }
     }
 }
@@ -64,7 +66,7 @@ pub struct TezosContextIrminStorageConfiguration {
 pub enum ContextKvStoreConfiguration {
     ReadOnlyIpc,
     InMem,
-    OnDisk,
+    OnDisk(String),
 }
 
 // Must be in sync with ffi_config.ml

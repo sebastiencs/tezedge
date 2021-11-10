@@ -405,7 +405,7 @@ mod tests {
 
     #[test]
     fn test_hash_of_commit_persistent() {
-        let mut repo = Persistent::try_new().expect("failed to create persistent context");
+        let mut repo = Persistent::try_new(None).expect("failed to create persistent context");
         hash_of_commit(&mut repo);
     }
 
@@ -515,7 +515,7 @@ mod tests {
 
     #[test]
     fn test_hash_of_small_dir_persistent() {
-        let mut repo = Persistent::try_new().expect("failed to create persistent context");
+        let mut repo = Persistent::try_new(None).expect("failed to create persistent context");
         hash_of_small_dir(&mut repo);
     }
 
@@ -623,13 +623,13 @@ mod tests {
 
     #[test]
     fn test_dir_entry_hashes_persistent() {
-        let mut repo = Persistent::try_new().expect("failed to create persistent context");
+        let mut repo = Persistent::try_new(None).expect("failed to create persistent context");
         test_type_hashes("nodes.json.gz", &mut repo, persistent::serialize_object);
     }
 
     #[test]
     fn test_inode_hashes_persistent() {
-        let mut repo = Persistent::try_new().expect("failed to create persistent context");
+        let mut repo = Persistent::try_new(None).expect("failed to create persistent context");
         test_type_hashes("inodes.json.gz", &mut repo, persistent::serialize_object);
     }
 

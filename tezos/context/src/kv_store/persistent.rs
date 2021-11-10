@@ -205,8 +205,8 @@ impl Hashes {
 }
 
 impl Persistent {
-    pub fn try_new() -> Result<Persistent, IndexInitializationError> {
-        let base_path = get_persistent_base_path();
+    pub fn try_new(db_path: Option<&str>) -> Result<Persistent, IndexInitializationError> {
+        let base_path = get_persistent_base_path(db_path);
 
         let data_file = File::try_new(&base_path, FileType::Data)?;
         let mut shape_file = File::try_new(&base_path, FileType::ShapeDirectories)?;
