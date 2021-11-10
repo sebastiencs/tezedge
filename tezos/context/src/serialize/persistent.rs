@@ -13,7 +13,9 @@ use tezos_timing::SerializeStats;
 
 use crate::{
     kv_store::HashId,
-    serialize::{deserialize_hash_id, get_inline_blob, serialize_hash_id, ObjectTag},
+    serialize::{
+        deserialize_hash_id, get_inline_blob, serialize_hash_id, ObjectTag, PointersHeader,
+    },
     working_tree::{
         shape::ShapeStrings,
         storage::{DirectoryId, Inode, PointerToInode},
@@ -420,7 +422,7 @@ pub fn serialize_object(
     storage: &Storage,
     strings: &StringInterner,
     stats: &mut SerializeStats,
-    batch: &mut Vec<(HashId, Arc<[u8]>)>, // TODO: Unused this
+    _batch: &mut Vec<(HashId, Arc<[u8]>)>,
     _referenced_older_objects: &mut Vec<HashId>,
     repository: &mut ContextKeyValueStore,
     offset: Option<AbsoluteOffset>,
@@ -439,7 +441,6 @@ pub fn serialize_object(
                     object_hash_id,
                     storage,
                     stats,
-                    batch,
                     repository,
                     offset,
                     strings,
@@ -539,104 +540,12 @@ pub fn serialize_object(
             output.write_all(commit.message.as_bytes())?;
 
             write_object_header(output, start, ObjectTag::Commit);
-
-            batch.push((object_hash_id, Arc::from(&output[start..])));
         }
     };
 
     stats.total_bytes += output.len();
 
     Ok(Some(offset))
-}
-
-/// Describes which pointers are set and at what index.
-///
-/// `Inode::Pointers` is an array of 32 pointers.
-/// Each pointer is either set (`Some`) or not set (`None`).
-///
-/// Example:
-/// Let's say that there are 2 pointers sets in the array, at the index
-/// 1 and 7.
-/// This would be represented in this bitfield as:
-/// `0b01000001_00000000_00000000`
-///
-#[derive(Copy, Clone, Default, Debug)]
-struct PointersHeader {
-    bitfield: u32,
-}
-
-impl PointersHeader {
-    /// Set bit at index in the bitfield
-    fn set(&mut self, index: usize) {
-        self.bitfield |= 1 << index;
-    }
-
-    /// Get bit at index in the bitfield
-    fn get(&self, index: usize) -> bool {
-        self.bitfield & 1 << index != 0
-    }
-
-    fn to_bytes(self) -> [u8; 4] {
-        self.bitfield.to_le_bytes()
-    }
-
-    /// Iterates on all the bit sets in the bitfield.
-    ///
-    /// The iterator returns the index of the bit.
-    fn iter(&self) -> PointersDescriptorIterator {
-        PointersDescriptorIterator {
-            bitfield: *self,
-            current: 0,
-        }
-    }
-
-    fn from_bytes(bytes: [u8; 4]) -> Self {
-        Self {
-            bitfield: u32::from_le_bytes(bytes),
-        }
-    }
-
-    /// Count number of bit set in the bitfield.
-    fn count(&self) -> u8 {
-        self.bitfield.count_ones() as u8
-    }
-}
-
-impl From<&[Option<PointerToInode>; 32]> for PointersHeader {
-    fn from(pointers: &[Option<PointerToInode>; 32]) -> Self {
-        let mut bitfield = Self::default();
-
-        for (index, pointer) in pointers.iter().enumerate() {
-            if pointer.is_some() {
-                bitfield.set(index);
-            }
-        }
-
-        bitfield
-    }
-}
-
-/// Iterates on all the bit sets in the bitfield.
-///
-/// The iterator returns the index of the bit.
-struct PointersDescriptorIterator {
-    bitfield: PointersHeader,
-    current: usize,
-}
-
-impl Iterator for PointersDescriptorIterator {
-    type Item = usize;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        for index in self.current..32 {
-            if self.bitfield.get(index) {
-                self.current = index + 1;
-                return Some(index);
-            }
-        }
-
-        None
-    }
 }
 
 #[derive(Default, Debug)]
@@ -713,7 +622,6 @@ fn serialize_inode(
     object_hash_id: HashId,
     storage: &Storage,
     stats: &mut SerializeStats,
-    batch: &mut Vec<(HashId, Arc<[u8]>)>,
     repository: &mut ContextKeyValueStore,
     off: AbsoluteOffset,
     strings: &StringInterner,
@@ -745,7 +653,7 @@ fn serialize_inode(
 
                 let inode_id = pointer.inode_id();
                 let offset = serialize_inode(
-                    inode_id, output, hash_id, storage, stats, batch, repository, off, strings,
+                    inode_id, output, hash_id, storage, stats, repository, off, strings,
                 )?;
 
                 pointer.set_offset(offset);
@@ -776,8 +684,6 @@ fn serialize_inode(
             }
 
             write_object_header(output, start, ObjectTag::InodePointers);
-
-            batch.push((object_hash_id, Arc::from(&output[start..])));
         }
         Inode::Directory(dir_id) => {
             // We don't check if it's a new inode because the parent
@@ -794,8 +700,6 @@ fn serialize_inode(
                 stats,
                 strings,
             )?;
-
-            batch.push((object_hash_id, Arc::from(&output[start..])));
         }
     };
 
@@ -1189,6 +1093,8 @@ fn deserialize_inode_pointers(
 
     let mut pointers: [Option<PointerToInode>; 32] = Default::default();
 
+    let mut object_bytes = Vec::with_capacity(1000);
+
     for (index, pointer_index) in indexes_iter.enumerate() {
         let offset_length = offsets_header.get(index);
         let (absolute_offset, nbytes) =
@@ -1196,15 +1102,14 @@ fn deserialize_inode_pointers(
 
         pos += nbytes;
 
-        // TODO: Move this outside the loop
-        let mut output = Vec::with_capacity(1000);
-
         let object_ref = ObjectReference::new(None, Some(absolute_offset));
         let data = repository
-            .get_object_bytes(object_ref, &mut output)
+            .get_object_bytes(object_ref, &mut object_bytes)
             .map_err(Box::new)?;
 
         let inode_id = deserialize_inode(data, absolute_offset, storage, repository, strings)?;
+
+        object_bytes.clear();
 
         pointers[pointer_index as usize] = Some(PointerToInode::new_commited(
             None,
@@ -1580,7 +1485,6 @@ mod tests {
                 hash_id,
                 &storage,
                 &mut stats,
-                &mut batch,
                 &mut repo,
                 offset.unwrap(),
                 &strings,
@@ -1606,16 +1510,13 @@ mod tests {
         let inode_id = storage.add_inode(inode).unwrap();
 
         let hash_id = HashId::new(123).unwrap();
-        batch.clear();
         let offset = serialize_inode(
             inode_id,
             &mut bytes,
             hash_id,
             &storage,
             &mut stats,
-            &mut batch,
             &mut repo,
-            //            5,
             offset.unwrap(),
             &strings,
         )
@@ -1623,14 +1524,13 @@ mod tests {
 
         repo.synchronize_data(&[], &bytes).unwrap();
 
-        let new_inode_id = deserialize_inode(
-            &batch.last().unwrap().1,
-            offset,
-            &mut storage,
-            &repo,
-            &mut strings,
-        )
-        .unwrap();
+        let mut buffer = Vec::with_capacity(1000);
+        let inode_bytes = repo
+            .get_object_bytes(ObjectReference::new(None, Some(offset)), &mut buffer)
+            .unwrap();
+
+        let new_inode_id =
+            deserialize_inode(&inode_bytes, offset, &mut storage, &repo, &mut strings).unwrap();
         let new_inode = storage.get_inode(new_inode_id).unwrap();
 
         if let Inode::Pointers {
@@ -1690,25 +1590,19 @@ mod tests {
         let inode = Inode::Directory(dir_id);
         let inode_id = storage.add_inode(inode).unwrap();
 
-        batch.clear();
         let offset = serialize_inode(
-            inode_id, &mut bytes, hash_id, &storage, &mut stats, &mut batch, &mut repo, offset,
-            &strings,
+            inode_id, &mut bytes, hash_id, &storage, &mut stats, &mut repo, offset, &strings,
         )
         .unwrap();
 
         repo.synchronize_data(&[], &bytes).unwrap();
+        let mut buffer = Vec::with_capacity(1000);
+        let inode_bytes = repo
+            .get_object_bytes(ObjectReference::new(None, Some(offset)), &mut buffer)
+            .unwrap();
 
-        assert_eq!(batch.len(), 1);
-
-        let new_inode_id = deserialize_inode(
-            &batch.last().unwrap().1,
-            offset,
-            &mut storage,
-            &repo,
-            &mut strings,
-        )
-        .unwrap();
+        let new_inode_id =
+            deserialize_inode(&inode_bytes, offset, &mut storage, &repo, &mut strings).unwrap();
         let new_inode = storage.get_inode(new_inode_id).unwrap();
 
         if let Inode::Directory(new_dir_id) = new_inode {

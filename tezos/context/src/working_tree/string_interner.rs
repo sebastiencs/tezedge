@@ -124,30 +124,10 @@ impl BigStrings {
         self.strings.get(start as usize..end as usize)
     }
 
-    fn clear(&mut self) {
-        // let cap = self.strings.capacity();
-
-        // if cap > 1_000_000 {
-        //     let new_cap = (cap / 2).max(1_000_000);
-        //     self.strings = String::with_capacity(new_cap);
-        // } else {
-        //     self.strings.clear();
-        // }
-
-        // self.offsets.clear();
-    }
-
     fn extend_from(&mut self, other: &Self) {
         if self == other {
             return;
         }
-
-        // self.strings.reserve(
-        //     other
-        //         .strings
-        //         .capacity()
-        //         .saturating_sub(self.strings.capacity()),
-        // );
 
         debug_assert!(self.strings.len() < other.strings.len());
         // Append the missing chunk into Self
@@ -159,16 +139,8 @@ impl BigStrings {
         // Append the missing chunk into Self
         let self_len = self.offsets.len();
 
-        // self.offsets.reserve(
-        //     other
-        //         .offsets
-        //         .capacity()
-        //         .saturating_sub(self.offsets.capacity()),
-        // );
         self.offsets.extend_from_slice(&other.offsets[self_len..]);
         debug_assert_eq!(self.offsets, other.offsets);
-
-        // self.hashes = other.hashes.clone();
     }
 
     fn serialize_big_strings(&mut self, output: &mut SerializeStrings) {
@@ -231,9 +203,8 @@ pub struct StringInterner {
     /// Concatenation of all strings < STRING_INTERN_THRESHOLD.
     /// This is never cleared/deallocated
     all_strings: String,
-
+    /// List of `StringId` that needs to be commited
     pub all_strings_to_serialize: Vec<StringId>,
-
     /// Concatenation of big strings. This is cleared/deallocated
     /// before every checkouts
     big_strings: BigStrings,
@@ -273,26 +244,10 @@ impl StringInterner {
         if self.all_strings.len() != other.all_strings.len() {
             debug_assert!(self.all_strings.len() < other.all_strings.len());
 
-            // self.all_strings.reserve(
-            //     other
-            //         .all_strings
-            //         .capacity()
-            //         .saturating_sub(self.all_strings.capacity()),
-            // );
-
             // Append the missing chunk into Self
             let self_len = self.all_strings.len();
             self.all_strings.push_str(&other.all_strings[self_len..]);
-            // self.string_to_offset.extend(&other.string_to_offset);
 
-            // self.string_to_offset = other.string_to_offset.clone();
-
-            // self.all_strings_to_serialize.reserve(
-            //     other
-            //         .all_strings_to_serialize
-            //         .capacity()
-            //         .saturating_sub(self.all_strings_to_serialize.capacity()),
-            // );
             self.all_strings_to_serialize
                 .extend_from_slice(&other.all_strings_to_serialize);
         }
@@ -350,10 +305,6 @@ impl StringInterner {
         self.all_strings
             .get(start..end)
             .ok_or(StorageError::StringNotFound)
-    }
-
-    pub fn clear(&mut self) {
-        self.big_strings.clear();
     }
 
     pub fn memory_usage(&self) -> StringsMemoryUsage {

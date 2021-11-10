@@ -511,9 +511,6 @@ pub struct Storage {
     /// Note that blobs < 8 bytes are not included in this vector `blobs`, such
     /// blob is directly inlined in the `BlobId`
     blobs: Vec<u8>,
-    /// Concatenation of all strings in the working tree.
-    /// The working tree has `StringId` which refers to a data inside `StringInterner`.
-    // pub strings: Option<&'a mut StringInterner>,
     /// Concatenation of all inodes.
     /// Note that the implementation of `Storage` attempt to hide as much as
     /// possible the existence of inodes to the working tree.
@@ -521,10 +518,9 @@ pub struct Storage {
     /// A `DirectoryId` might contains an `InodeId` but it's only the root
     /// of an Inode, any children of that root are not visible to the working tree.
     inodes: Vec<Inode>,
-
     /// Objects bytes are read from disk into this vector
     pub data: Vec<u8>,
-
+    /// Map of deserialized (from disk) offset to their `HashId`.
     pub offsets_to_hash_id: HashMap<AbsoluteOffset, HashId>,
 }
 
@@ -575,13 +571,13 @@ impl Storage {
         }
     }
 
-    pub fn memory_usage(&self) -> StorageMemoryUsage {
+    pub fn memory_usage(&self, strings: &StringInterner) -> StorageMemoryUsage {
         let nodes_cap = self.nodes.capacity();
         let directories_cap = self.directories.capacity();
         let blobs_cap = self.blobs.capacity();
         let temp_dir_cap = self.temp_dir.capacity();
         let inodes_cap = self.inodes.capacity();
-        let strings = Default::default();
+        let strings = strings.memory_usage();
         let total_bytes = (nodes_cap * size_of::<DirEntry>())
             .saturating_add(directories_cap * size_of::<(StringId, DirEntryId)>())
             .saturating_add(temp_dir_cap * size_of::<(StringId, DirEntryId)>())
@@ -1403,8 +1399,6 @@ impl Storage {
     }
 
     pub fn clear(&mut self) {
-        // self.strings.clear();
-
         if self.blobs.capacity() > 2048 {
             self.blobs = Vec::with_capacity(2048);
         } else {

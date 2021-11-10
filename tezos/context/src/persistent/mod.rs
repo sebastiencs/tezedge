@@ -6,6 +6,7 @@ use std::{
     convert::TryFrom,
     fs::OpenOptions,
     io::{self, Seek, SeekFrom, Write},
+    os::unix::prelude::OpenOptionsExt,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, PoisonError},
 };
@@ -78,26 +79,41 @@ pub trait KeyValueStoreBackend {
     ) -> Result<Option<DirectoryShapeId>, DBError>;
     /// Returns the string associated to this `string_id`.
     ///
-    /// The string interner must have been updated with the `update_strings` method.
+    /// The string interner must have been updated with the `synchronize_strings_from` method.
     fn get_str(&self, string_id: StringId) -> Option<&str>;
     /// Update the repository `StringInterner` to be in sync with `string_interner`.
     fn synchronize_strings_from(&mut self, string_interner: &StringInterner);
     /// Update `string_interner` to be in sync with the repository `StringInterner`.
-    fn synchronize_strings_into(&self, string_interner: &mut StringInterner);
-
+    ///
+    /// When the repository reload/restart, it loads all strings from files:
+    /// The `StringInterner` in `TezedgeIndex` is empty and it needs to be synchronized
+    /// with the one in the repository.
+    fn synchronize_strings_on_reload(&self, string_interner: &mut StringInterner);
+    /// Return the object associated to this `object_ref`.
     fn get_object(
         &self,
         object_ref: ObjectReference,
         storage: &mut Storage,
         strings: &mut StringInterner,
     ) -> Result<Object, DBError>;
-
+    /// Return the object bytes associated to this `object_ref`.
+    ///
+    /// The object bytes will be inserted at the beginning of `buffer`.
+    ///
+    /// Note that the parameter `buffer` is never resized to a smaller length:
+    /// If buffer::len is 100 and the object is 15 bytes, after calling this
+    /// method the buffer length will still remains 100.
+    /// This method returns a slice, which is the exact object bytes
+    /// (&buffer[0..15] in the example).
+    ///
+    /// It's never resized to avoid calling `Vec::resize(new_len, 0)`, which can be relatively
+    /// expensive.
     fn get_object_bytes<'a>(
         &self,
         object_ref: ObjectReference,
         buffer: &'a mut Vec<u8>,
     ) -> Result<&'a [u8], DBError>;
-
+    /// Commit the `working_tree` and returns its `ContextHash` and serialization statistics
     fn commit(
         &mut self,
         working_tree: &WorkingTree,
@@ -106,10 +122,9 @@ pub trait KeyValueStoreBackend {
         message: String,
         date: u64,
     ) -> Result<(ContextHash, Box<SerializeStats>), DBError>;
-
+    /// Return the `HashId` associated to this `object_ref`
     fn get_hash_id(&self, object_ref: ObjectReference) -> Result<HashId, DBError>;
-
-    /// [test-only]
+    /// Simulate a `commit`, by writing data to disk/memory, without computing hash
     #[cfg(test)]
     fn synchronize_data(
         &mut self,
@@ -269,14 +284,7 @@ pub fn get_persistent_base_path() -> String {
 
 impl File {
     pub fn try_new(base_path: &str, file_type: FileType) -> Result<Self, io::Error> {
-        println!(
-            "FILE={:?}",
-            PathBuf::from(base_path).join(file_type.get_path())
-        );
-
         std::fs::create_dir_all(&base_path).unwrap();
-
-        use std::os::unix::fs::OpenOptionsExt;
 
         let mut file = OpenOptions::new()
             .read(true)

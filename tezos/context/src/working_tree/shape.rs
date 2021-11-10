@@ -201,7 +201,6 @@ impl DirectoryShapes {
         output
     }
 
-    // TODO: should return Result<Self, Error> instead, deserialization can fail.
     pub fn deserialize(
         shapes_file: &mut File,
         shapes_index_file: &mut File,

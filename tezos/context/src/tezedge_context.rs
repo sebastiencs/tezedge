@@ -52,7 +52,7 @@ impl<'a> TezedgeIndexSynchronized<'a> {
         let repository = index.repository.write()?;
         let mut strings = index.string_interner.borrow_mut();
 
-        repository.synchronize_strings_into(&mut strings);
+        repository.synchronize_strings_on_reload(&mut strings);
 
         Ok(TezedgeIndexSynchronized { index })
     }
@@ -106,6 +106,10 @@ pub struct TezedgeIndex {
     /// This is where all directories/blobs/strings are allocated.
     /// The `WorkingTree` only has access to ids which refer to data inside `storage`.
     pub storage: Rc<RefCell<Storage>>,
+    /// Container of all the strings.
+    /// This is never deallocated.
+    /// The working tree and repository have `StringId` which refers to
+    /// a data inside `StringInterner`.
     pub string_interner: Rc<RefCell<StringInterner>>,
 }
 
@@ -636,7 +640,6 @@ impl TezedgeIndex {
         let mut repository = self.repository.write()?;
         repository.synchronize_strings_from(&strings);
 
-        // TODO: Don't do this hack
         strings.all_strings_to_serialize.clear();
 
         Ok(())
@@ -648,7 +651,7 @@ impl TezedgeIndex {
             let repository = self.repository.read()?;
             let mut strings = self.string_interner.borrow_mut();
 
-            repository.synchronize_strings_into(&mut strings);
+            repository.synchronize_strings_on_reload(&mut strings);
         }
 
         Ok(Self {
@@ -955,10 +958,11 @@ impl ShellContextApi for TezedgeContext {
     fn get_memory_usage(&self) -> Result<ContextMemoryUsage, ContextError> {
         let repository = self.index.repository.read()?;
         let storage = self.index.storage.borrow();
+        let strings = self.index.string_interner.borrow();
 
         let usage = ContextMemoryUsage {
             repo: repository.memory_usage(),
-            storage: storage.memory_usage(),
+            storage: storage.memory_usage(&strings),
         };
 
         Ok(usage)

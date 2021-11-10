@@ -797,16 +797,6 @@ impl WorkingTree {
         serialize_function: Option<SerializeObjectSignature>,
         offset: Option<AbsoluteOffset>,
     ) -> Result<PostCommitData, MerkleError> {
-        // {
-        //     let storage = self.index.storage.borrow();
-        //     self.fetch_hash_ids_recursively(
-        //         Object::Directory(self.get_root_directory()),
-        //         &storage,
-        //         store,
-        //     );
-        //     // println!("FETCH HASHIDS {:?}", now.elapsed());
-        // }
-
         let root_hash_id = self.get_root_directory_hash(repository)?;
         let root = self.get_root_directory();
 
@@ -830,7 +820,7 @@ impl WorkingTree {
         let storage = self.index.storage.borrow();
         let strings = self.index.string_interner.borrow();
 
-        let commit_offset = self.write_objects_recursively(
+        let commit_offset = self.serialize_objects_recursively(
             commit_object,
             commit_hash,
             Some(root),
@@ -988,34 +978,7 @@ impl WorkingTree {
         hash_directory(root, repository, &storage, &strings).map_err(MerkleError::from)
     }
 
-    fn fetch_hash_ids_recursively(
-        &self,
-        object: Object,
-        storage: &Storage,
-        repository: &ContextKeyValueStore,
-    ) {
-        match &object {
-            Object::Blob(_blob_id) => {}
-            Object::Commit(_) => {}
-            Object::Directory(dir_id) => {
-                storage
-                    .dir_iterate_unsorted(*dir_id, |&(_, dir_entry_id)| {
-                        let dir_entry = storage.get_dir_entry(dir_entry_id)?;
-
-                        dir_entry.fetch_hash_id(repository, storage);
-
-                        if let Some(object) = dir_entry.get_object() {
-                            self.fetch_hash_ids_recursively(object, storage, repository);
-                        };
-
-                        Ok(())
-                    })
-                    .unwrap();
-            }
-        }
-    }
-
-    fn write_objects_recursively(
+    fn serialize_objects_recursively(
         &self,
         mut object: Object,
         object_hash_id: HashId,
@@ -1044,7 +1007,7 @@ impl WorkingTree {
 
                     let offset = match dir_entry.get_object() {
                         None => return Ok(()),
-                        Some(object) => self.write_objects_recursively(
+                        Some(object) => self.serialize_objects_recursively(
                             object,
                             object_hash_id,
                             None,
@@ -1066,7 +1029,7 @@ impl WorkingTree {
                     Some(root) => Object::Directory(root),
                     None => self.fetch_object_from_repo(commit.root_ref, data.repository)?,
                 };
-                let root_offset = self.write_objects_recursively(
+                let root_offset = self.serialize_objects_recursively(
                     object,
                     commit.root_ref.hash_id(),
                     None,

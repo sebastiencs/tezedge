@@ -9,6 +9,7 @@ pub use tezos_context_api::ContextKvStoreConfiguration;
 use tezos_context_api::TezosContextTezEdgeStorageConfiguration;
 use thiserror::Error;
 
+use crate::kv_store::in_memory::InMemory;
 use crate::kv_store::persistent::Persistent;
 use crate::kv_store::readonly_ipc::ReadonlyIpcBackend;
 use crate::serialize::DeserializationError;
@@ -56,8 +57,7 @@ pub fn initialize_tezedge_index(
                     )),
                 }
             }
-            ContextKvStoreConfiguration::InMem => Arc::new(RwLock::new(Persistent::try_new()?)),
-            // ContextKvStoreConfiguration::InMem => Arc::new(RwLock::new(InMemory::try_new()?)),
+            ContextKvStoreConfiguration::InMem => Arc::new(RwLock::new(InMemory::try_new()?)),
             ContextKvStoreConfiguration::OnDisk => Arc::new(RwLock::new(Persistent::try_new()?)),
         },
         patch_context,

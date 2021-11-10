@@ -1,3 +1,6 @@
+// Copyright (c) SimpleStaking, Viable Systems and Tezedge Contributors
+// SPDX-License-Identifier: MIT
+
 use std::{
     borrow::Cow,
     collections::hash_map::DefaultHasher,
@@ -13,7 +16,8 @@ use crypto::hash::ContextHash;
 use tezos_timing::{RepositoryMemoryUsage, SerializeStats};
 
 use crate::{
-    gc::{GarbageCollectionError, GarbageCollector},
+    gc::NotGarbageCollected,
+    hash::OBJECT_HASH_LEN,
     initializer::IndexInitializationError,
     persistent::{
         get_commit_hash, get_persistent_base_path, DBError, File, FileType, Flushable,
@@ -36,12 +40,53 @@ use crate::{
 
 use super::{HashId, VacantObjectHash};
 
+const FIRST_READ_OBJECT_LENGTH: usize = 4096;
+
 pub struct Persistent {
+    /// Concatenation of all objects
+    ///
+    /// See `serialize::persistent`
     data_file: File,
+    /// Store shapes.
+    ///
+    /// File format:
+    /// Concatenation of `StringId` (u32):
+    /// [StringId(0), StringId(9), StringId(3), StringId(33), ..]
+    ///
     shape_file: File,
+    /// Store shapes indexes.
+    ///
+    /// File format:
+    /// Concatenation of `ShapeSliceId` (u64):
+    /// [ShapeSliceId { start: 0, end: 2 }, ShapeSliceId { start: 2, end: 10}, ..]
+    ///
+    /// In this example, and with the documentation of `shape_file`, the first
+    /// shape (start: 0, end: 2) would be composed of the StringId `0`, `9` and `3`
+    ///
     shape_index_file: File,
+    /// Store commit indexes.
+    ///
+    /// File format:
+    /// [[HashId (u32), offset (u64), context hash (32 bytes)], [..], ..]
+    ///
+    /// For each commit, we store its `HashId`, its offset in `data_file` and its
+    /// context hash
+    ///
     commit_index_file: File,
+    /// Store small strings.
+    ///
+    /// File format:
+    /// [[length (u8), string (nbytes)], [..], ..]
+    ///
+    /// The strings 'z' and 'abc' would be written as:
+    /// [1, 'z', 3, 'a', 'b', 'c']
+    ///
     strings_file: File,
+    /// Store bigs strings
+    ///
+    /// File format:
+    /// [[length (u32), string (nbytes)], [..], ..]
+    ///
     big_strings_file: File,
 
     hashes: Hashes,
@@ -51,18 +96,7 @@ pub struct Persistent {
     pub context_hashes: Map<u64, ObjectReference>,
 }
 
-impl GarbageCollector for Persistent {
-    fn new_cycle_started(&mut self) -> Result<(), GarbageCollectionError> {
-        Ok(())
-    }
-
-    fn block_applied(
-        &mut self,
-        _referenced_older_objects: Vec<HashId>,
-    ) -> Result<(), GarbageCollectionError> {
-        Ok(())
-    }
-}
+impl NotGarbageCollected for Persistent {}
 
 impl Flushable for Persistent {
     fn flush(&self) -> Result<(), anyhow::Error> {
@@ -72,13 +106,19 @@ impl Flushable for Persistent {
 
 impl Persistable for Persistent {
     fn is_persistent(&self) -> bool {
-        false
+        true
     }
 }
 
 struct Hashes {
+    /// List of hashes not yet commited
     in_memory: Vec<ObjectHash>,
+    /// The first hash in `in_memory` has the `HashId` of `HashId::new(in_memory_first_index)`
     in_memory_first_index: usize,
+    /// Concatenation of all hashes commited
+    ///
+    /// [ObjectHash (32 bytes), ObjectHash (32 bytes), ..]
+    ///
     hashes_file: File,
     /// Vector used to copy hashes from `Self::in_memory` and being able to
     /// write all hashes into the file in a single `File::append` call
@@ -87,8 +127,9 @@ struct Hashes {
 
 impl Hashes {
     fn try_new(hashes_file: File) -> Self {
-        let in_memory_first_index =
-            (hashes_file.offset().as_u64() as usize) / crate::hash::OBJECT_HASH_LEN;
+        debug_assert_eq!(hashes_file.offset().as_u64() as usize % OBJECT_HASH_LEN, 0);
+
+        let in_memory_first_index = (hashes_file.offset().as_u64() as usize) / OBJECT_HASH_LEN;
 
         Self {
             in_memory: Vec::with_capacity(1000),
@@ -101,6 +142,7 @@ impl Hashes {
     fn get_hash(&self, hash_id: HashId) -> Result<Cow<ObjectHash>, DBError> {
         let hash_id_index: usize = hash_id.try_into()?;
 
+        // Is the hash in memory or in the file ?
         let is_in_file = hash_id_index < self.in_memory_first_index;
 
         if is_in_file {
@@ -113,9 +155,9 @@ impl Hashes {
 
             Ok(Cow::Owned(hash))
         } else {
-            let index = hash_id_index - self.in_memory_first_index;
+            let in_memory_index = hash_id_index - self.in_memory_first_index;
 
-            match self.in_memory.get(index) {
+            match self.in_memory.get(in_memory_index) {
                 Some(hash) => Ok(Cow::Borrowed(hash)),
                 None => Err(DBError::HashNotFound {
                     object_ref: hash_id.into(),
@@ -147,13 +189,15 @@ impl Hashes {
             return Ok(());
         }
 
+        // Copy all hashes into the flat vector `Self::in_memory_bytes`
         self.in_memory_bytes.clear();
         for hash in &self.in_memory {
             self.in_memory_bytes.extend_from_slice(hash);
         }
-        self.in_memory_first_index += self.in_memory.len();
 
         self.hashes_file.append(&self.in_memory_bytes)?;
+
+        self.in_memory_first_index += self.in_memory.len();
         self.in_memory.clear();
 
         Ok(())
@@ -199,14 +243,17 @@ impl Persistent {
     ) -> Result<&'a [u8], DBError> {
         let offset = object_ref.offset();
 
-        if buffer.len() < 4096 {
-            buffer.resize(4096, 0);
+        if buffer.len() < FIRST_READ_OBJECT_LENGTH {
+            buffer.resize(FIRST_READ_OBJECT_LENGTH, 0);
         }
 
         let buffer_length = buffer.len();
 
-        // We attempt to read 4096 bytes, if it's not enough we will read more later
-        let buffer_slice = self.data_file.read_at_most(&mut buffer[..4096], offset)?;
+        // We attempt to read FIRST_READ_OBJECT_LENGTH bytes, if it's
+        // not enough we will read more later
+        let buffer_slice = self
+            .data_file
+            .read_at_most(&mut buffer[..FIRST_READ_OBJECT_LENGTH], offset)?;
 
         let object_header: ObjectHeader = ObjectHeader::from_bytes([buffer_slice[0]]);
         let (_, object_length) = read_object_length(buffer_slice, &object_header)?;
@@ -217,8 +264,10 @@ impl Persistent {
             }
 
             // Read the rest of the object
-            self.data_file
-                .read_exact_at(&mut buffer[4096..object_length], offset.add(4096))?;
+            self.data_file.read_exact_at(
+                &mut buffer[FIRST_READ_OBJECT_LENGTH..object_length],
+                offset.add(FIRST_READ_OBJECT_LENGTH as u64),
+            )?;
         }
 
         Ok(&buffer[..object_length])
@@ -227,6 +276,7 @@ impl Persistent {
     fn get_hash_id_from_offset(&self, object_ref: ObjectReference) -> Result<HashId, DBError> {
         let offset = object_ref.offset();
 
+        // We only need 10 bytes maximum to read the `HashId`
         let mut buffer: [u8; 10] = Default::default();
 
         self.data_file.read_at_most(&mut buffer, offset)?;
@@ -243,7 +293,6 @@ impl Persistent {
         self.data_file.append(data)?;
 
         let strings = self.string_interner.serialize();
-
         self.strings_file.append(&strings.strings)?;
         self.big_strings_file.append(&strings.big_strings)?;
 
@@ -317,6 +366,8 @@ fn serialize_context_hash(
     output.write_all(&offset.to_le_bytes())?;
     output.write_all(hash)?;
 
+    debug_assert_eq!(hash.len(), OBJECT_HASH_LEN);
+
     Ok(output)
 }
 
@@ -356,10 +407,7 @@ impl KeyValueStoreBackend for Persistent {
     }
 
     fn get_hash(&self, object_ref: ObjectReference) -> Result<Cow<ObjectHash>, DBError> {
-        let hash_id = match object_ref.hash_id_opt() {
-            Some(hash_id) => hash_id,
-            None => self.get_hash_id(object_ref)?,
-        };
+        let hash_id = self.get_hash_id(object_ref)?;
 
         self.hashes.get_hash(hash_id)
     }
@@ -394,7 +442,7 @@ impl KeyValueStoreBackend for Persistent {
         self.string_interner.extend_from(string_interner);
     }
 
-    fn synchronize_strings_into(&self, string_interner: &mut StringInterner) {
+    fn synchronize_strings_on_reload(&self, string_interner: &mut StringInterner) {
         string_interner.clone_after_reload(&self.string_interner);
     }
 
