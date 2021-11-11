@@ -506,10 +506,10 @@ impl KeyValueStoreBackend for Persistent {
 
         let commit_hash = get_commit_hash(commit_ref, self).map_err(Box::new)?;
 
+        self.put_context_hash(commit_ref)?;
+
         self.commit_to_disk(&output)
             .map_err(|err| DBError::CommitToDiskError { err })?;
-
-        self.put_context_hash(commit_ref)?;
 
         Ok((commit_hash, serialize_stats))
     }
