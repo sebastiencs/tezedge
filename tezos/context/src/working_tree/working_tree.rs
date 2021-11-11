@@ -403,6 +403,7 @@ struct SerializingData<'a> {
     stats: Box<SerializeStats>,
     offset: Option<AbsoluteOffset>,
     serialize_function: SerializeObjectSignature,
+    keep_older_objects: bool,
 }
 
 impl<'a> SerializingData<'a> {
@@ -410,6 +411,7 @@ impl<'a> SerializingData<'a> {
         repository: &'a mut ContextKeyValueStore,
         offset: Option<AbsoluteOffset>,
         serialize_function: SerializeObjectSignature,
+        keep_older_objects: bool,
     ) -> Self {
         Self {
             batch: Vec::with_capacity(2048),
@@ -419,6 +421,7 @@ impl<'a> SerializingData<'a> {
             stats: Default::default(),
             offset,
             serialize_function,
+            keep_older_objects,
         }
     }
 
@@ -450,6 +453,10 @@ impl<'a> SerializingData<'a> {
         storage: &Storage,
         strings: &StringInterner,
     ) -> Result<(), MerkleError> {
+        if !self.keep_older_objects {
+            return Ok(());
+        }
+
         let hash_id = dir_entry.object_hash_id(self.repository, storage, strings)?;
 
         if let Some(hash_id) = hash_id {
@@ -796,6 +803,7 @@ impl WorkingTree {
         repository: &mut ContextKeyValueStore,
         serialize_function: Option<SerializeObjectSignature>,
         offset: Option<AbsoluteOffset>,
+        keep_older_objects: bool,
     ) -> Result<PostCommitData, MerkleError> {
         let root_hash_id = self.get_root_directory_hash(repository)?;
         let root = self.get_root_directory();
@@ -815,7 +823,8 @@ impl WorkingTree {
             None => return Ok(PostCommitData::empty_with_commit(commit_hash)),
         };
 
-        let mut data = SerializingData::new(repository, offset, serialize_function);
+        let mut data =
+            SerializingData::new(repository, offset, serialize_function, keep_older_objects);
 
         let storage = self.index.storage.borrow();
         let strings = self.index.string_interner.borrow();
@@ -1000,7 +1009,7 @@ impl WorkingTree {
                         };
 
                     if dir_entry.is_commited() {
-                        data.add_older_object(dir_entry, storage, strings)?; // TODO: Don't run this line on persistent context
+                        data.add_older_object(dir_entry, storage, strings)?;
                         return Ok(());
                     }
                     dir_entry.set_commited(true);

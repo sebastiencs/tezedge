@@ -500,6 +500,7 @@ impl KeyValueStoreBackend for Persistent {
                 self,
                 Some(persistent::serialize_object),
                 Some(offset),
+                false,
             )
             .map_err(Box::new)?;
 

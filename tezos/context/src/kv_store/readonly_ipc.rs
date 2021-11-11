@@ -197,7 +197,16 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
             serialize_stats,
             ..
         } = working_tree
-            .prepare_commit(date, author, message, parent_commit_ref, self, None, None)
+            .prepare_commit(
+                date,
+                author,
+                message,
+                parent_commit_ref,
+                self,
+                None,
+                None,
+                false,
+            )
             .map_err(Box::new)?;
 
         let commit_hash = get_commit_hash(commit_ref, self).map_err(Box::new)?;

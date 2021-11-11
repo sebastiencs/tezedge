@@ -935,6 +935,7 @@ impl ShellContextApi for TezedgeContext {
             &mut *repository,
             None,
             None,
+            false,
         )?;
 
         get_commit_hash(commit_ref, &*repository)
