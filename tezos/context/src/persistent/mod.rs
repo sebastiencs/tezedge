@@ -244,14 +244,12 @@ pub struct File {
 #[derive(Debug)]
 pub struct FileOffset(pub u64);
 
-// #[cfg(test)]
 lazy_static::lazy_static! {
     static ref BASE_PATH_EXCLU: Arc<Mutex<()>> = {
         Arc::new(Mutex::new(()))
     };
 }
 
-// #[cfg(test)]
 fn create_random_path() -> String {
     use rand::Rng;
 
@@ -276,6 +274,16 @@ pub fn get_persistent_base_path(db_path: Option<&str>) -> String {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn get_custom_flags() -> i32 {
+    libc::O_NOATIME
+}
+
+#[cfg(not(target_os = "linux"))]
+fn get_custom_flags() -> i32 {
+    0
+}
+
 impl File {
     pub fn try_new(base_path: &str, file_type: FileType) -> Result<Self, io::Error> {
         std::fs::create_dir_all(&base_path).unwrap();
@@ -286,7 +294,7 @@ impl File {
             .truncate(false)
             .append(true)
             .create(true)
-            .custom_flags(libc::O_NOATIME)
+            .custom_flags(get_custom_flags())
             .open(PathBuf::from(base_path).join(file_type.get_path()))?;
 
         // We use seek, in cases metadatas were not synchronized
