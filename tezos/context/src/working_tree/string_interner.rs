@@ -190,6 +190,8 @@ impl BigStrings {
             result.push_str(s);
         }
 
+        result.to_serialize_index = result.offsets.len();
+
         Ok(result)
     }
 }
@@ -389,6 +391,14 @@ impl StringInterner {
         result.big_strings = BigStrings::deserialize(big_strings_file)?;
 
         Ok(result)
+    }
+
+    pub fn set_to_serialize_index(&mut self, index: usize) {
+        self.big_strings.to_serialize_index = index;
+    }
+
+    pub fn get_to_serialize_index(&self) -> usize {
+        self.big_strings.to_serialize_index
     }
 }
 

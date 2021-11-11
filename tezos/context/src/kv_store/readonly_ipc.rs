@@ -134,10 +134,6 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
         // Readonly protocol runner doesn't update strings.
     }
 
-    fn synchronize_strings_on_reload(&self, _string_interner: &mut StringInterner) {
-        // Readonly protocol runner doesn't update strings.
-    }
-
     fn get_object(
         &self,
         object_ref: ObjectReference,
@@ -224,6 +220,10 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
         self.client
             .get_hash_id(object_ref)
             .map_err(|reason| DBError::IpcAccessError { reason })
+    }
+
+    fn take_strings_on_reload(&mut self) -> Option<StringInterner> {
+        None
     }
 
     #[cfg(test)]

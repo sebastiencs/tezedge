@@ -83,12 +83,6 @@ pub trait KeyValueStoreBackend {
     fn get_str(&self, string_id: StringId) -> Option<&str>;
     /// Update the repository `StringInterner` to be in sync with `string_interner`.
     fn synchronize_strings_from(&mut self, string_interner: &StringInterner);
-    /// Update `string_interner` to be in sync with the repository `StringInterner`.
-    ///
-    /// When the repository reload/restart, it loads all strings from files:
-    /// The `StringInterner` in `TezedgeIndex` is empty and it needs to be synchronized
-    /// with the one in the repository.
-    fn synchronize_strings_on_reload(&self, string_interner: &mut StringInterner);
     /// Return the object associated to this `object_ref`.
     fn get_object(
         &self,
@@ -124,6 +118,11 @@ pub trait KeyValueStoreBackend {
     ) -> Result<(ContextHash, Box<SerializeStats>), DBError>;
     /// Return the `HashId` associated to this `object_ref`
     fn get_hash_id(&self, object_ref: ObjectReference) -> Result<HashId, DBError>;
+    /// On restart/reload, the repository contains all strings and their hashes (from the db file)
+    /// This method is used to give strings and hashes to the index.
+    ///
+    /// It should be called only once.
+    fn take_strings_on_reload(&mut self) -> Option<StringInterner>;
     /// Simulate a `commit`, by writing data to disk/memory, without computing hash
     #[cfg(test)]
     fn synchronize_data(

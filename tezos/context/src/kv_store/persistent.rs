@@ -442,10 +442,6 @@ impl KeyValueStoreBackend for Persistent {
         self.string_interner.extend_from(string_interner);
     }
 
-    fn synchronize_strings_on_reload(&self, string_interner: &mut StringInterner) {
-        string_interner.clone_after_reload(&self.string_interner);
-    }
-
     fn get_object(
         &self,
         object_ref: ObjectReference,
@@ -519,6 +515,19 @@ impl KeyValueStoreBackend for Persistent {
             Some(hash_id) => Ok(hash_id),
             None => self.get_hash_id_from_offset(object_ref),
         }
+    }
+
+    fn take_strings_on_reload(&mut self) -> Option<StringInterner> {
+        // On reload, `Self::string_interner` contains all strings and their hashes
+        let string_interner = std::mem::take(&mut self.string_interner);
+
+        // In the repository, we only want strings without their hashes
+        self.synchronize_strings_from(&string_interner);
+
+        self.string_interner
+            .set_to_serialize_index(string_interner.get_to_serialize_index());
+
+        Some(string_interner)
     }
 
     #[cfg(test)]

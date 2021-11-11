@@ -43,22 +43,11 @@ use crate::{
 // because it is not used on Rust, but we need a type to represent it.
 pub struct PatchContextFunction {}
 
-struct TezedgeIndexSynchronized<'a> {
+struct TezedgeIndexWithDeallocation<'a> {
     index: &'a TezedgeIndex,
 }
 
-impl<'a> TezedgeIndexSynchronized<'a> {
-    fn synchronized(index: &'a TezedgeIndex) -> Result<TezedgeIndexSynchronized<'a>, ContextError> {
-        let repository = index.repository.write()?;
-        let mut strings = index.string_interner.borrow_mut();
-
-        repository.synchronize_strings_on_reload(&mut strings);
-
-        Ok(TezedgeIndexSynchronized { index })
-    }
-}
-
-impl std::ops::Deref for TezedgeIndexSynchronized<'_> {
+impl std::ops::Deref for TezedgeIndexWithDeallocation<'_> {
     type Target = TezedgeIndex;
 
     fn deref(&self) -> &Self::Target {
@@ -66,7 +55,7 @@ impl std::ops::Deref for TezedgeIndexSynchronized<'_> {
     }
 }
 
-impl Drop for TezedgeIndexSynchronized<'_> {
+impl Drop for TezedgeIndexWithDeallocation<'_> {
     fn drop(&mut self) {
         let mut storage = self.storage.borrow_mut();
         storage.deallocate();
@@ -121,18 +110,21 @@ impl TezedgeIndex {
     pub fn new(
         repository: Arc<RwLock<ContextKeyValueStore>>,
         patch_context: Option<BoxRoot<PatchContextFunction>>,
+        string_interner: Option<StringInterner>,
     ) -> Self {
         let patch_context = Rc::new(patch_context);
         Self {
             patch_context,
             repository,
             storage: Default::default(),
-            string_interner: Default::default(),
+            string_interner: Rc::new(RefCell::new(
+                string_interner.unwrap_or_else(Default::default),
+            )),
         }
     }
 
-    fn synchronized(&self) -> Result<TezedgeIndexSynchronized, ContextError> {
-        TezedgeIndexSynchronized::synchronized(self)
+    fn synchronized(&self) -> TezedgeIndexWithDeallocation {
+        TezedgeIndexWithDeallocation { index: self }
     }
 
     /// Fetches object from the repository and deserialize it into `Self::storage`.
@@ -645,15 +637,8 @@ impl TezedgeIndex {
         Ok(())
     }
 
-    /// A clone of `Self` but with a clear storage with strings in sync to the `repository` strings.
+    /// A clone of `Self` but with a clear storage.
     fn with_clear_storage(&self) -> Result<Self, MerkleError> {
-        {
-            let repository = self.repository.read()?;
-            let mut strings = self.string_interner.borrow_mut();
-
-            repository.synchronize_strings_on_reload(&mut strings);
-        }
-
         Ok(Self {
             storage: Default::default(),
             patch_context: Rc::clone(&self.patch_context),
@@ -809,7 +794,7 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
         context_hash: &ContextHash,
         key: &ContextKey,
     ) -> Result<Option<ContextValue>, ContextError> {
-        let index = self.synchronized()?;
+        let index = self.synchronized();
         index.get_key_from_history_impl(context_hash, key)
     }
 
@@ -818,7 +803,7 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
         context_hash: &ContextHash,
         prefix: &ContextKey,
     ) -> Result<Option<Vec<(ContextKeyOwned, ContextValue)>>, ContextError> {
-        let index = self.synchronized()?;
+        let index = self.synchronized();
         index.get_key_values_by_prefix_impl(context_hash, prefix)
     }
 
@@ -828,7 +813,7 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
         prefix: &ContextKey,
         depth: Option<usize>,
     ) -> Result<StringTreeObject, ContextError> {
-        let index = self.synchronized()?;
+        let index = self.synchronized();
         index.get_context_tree_by_prefix_impl(context_hash, prefix, depth)
     }
 }

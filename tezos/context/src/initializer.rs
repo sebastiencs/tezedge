@@ -13,7 +13,7 @@ use crate::kv_store::in_memory::InMemory;
 use crate::kv_store::persistent::Persistent;
 use crate::kv_store::readonly_ipc::ReadonlyIpcBackend;
 use crate::serialize::DeserializationError;
-use crate::{PatchContextFunction, TezedgeContext, TezedgeIndex};
+use crate::{ContextKeyValueStore, PatchContextFunction, TezedgeContext, TezedgeIndex};
 
 /// IPC communication errors
 #[derive(Debug, Error)]
@@ -29,6 +29,8 @@ pub enum IndexInitializationError {
         #[from]
         reason: DeserializationError,
     },
+    #[error("Mutex/lock lock error! Reason: {reason}")]
+    LockError { reason: String },
 }
 
 impl From<IpcError> for IndexInitializationError {
@@ -47,22 +49,35 @@ pub fn initialize_tezedge_index(
     configuration: &TezosContextTezEdgeStorageConfiguration,
     patch_context: Option<BoxRoot<PatchContextFunction>>,
 ) -> Result<TezedgeIndex, IndexInitializationError> {
-    Ok(TezedgeIndex::new(
-        match configuration.backend {
-            ContextKvStoreConfiguration::ReadOnlyIpc => {
-                match configuration.ipc_socket_path.clone() {
-                    None => return Err(IndexInitializationError::IpcSocketPathMissing),
-                    Some(ipc_socket_path) => Arc::new(RwLock::new(
-                        ReadonlyIpcBackend::try_connect(ipc_socket_path)?,
-                    )),
-                }
-            }
-            ContextKvStoreConfiguration::InMem => Arc::new(RwLock::new(InMemory::try_new()?)),
-            ContextKvStoreConfiguration::OnDisk(ref db_path) => {
-                Arc::new(RwLock::new(Persistent::try_new(Some(db_path.as_str()))?))
-            }
+    let repository: Arc<RwLock<ContextKeyValueStore>> = match configuration.backend {
+        ContextKvStoreConfiguration::ReadOnlyIpc => match configuration.ipc_socket_path.clone() {
+            None => return Err(IndexInitializationError::IpcSocketPathMissing),
+            Some(ipc_socket_path) => Arc::new(RwLock::new(ReadonlyIpcBackend::try_connect(
+                ipc_socket_path,
+            )?)),
         },
+        ContextKvStoreConfiguration::InMem => Arc::new(RwLock::new(InMemory::try_new()?)),
+        ContextKvStoreConfiguration::OnDisk(ref db_path) => {
+            Arc::new(RwLock::new(Persistent::try_new(Some(db_path.as_str()))?))
+        }
+    };
+
+    // When the context is reloaded/restarted, the existings strings (found the the db file)
+    // are in the repository.
+    // We want `TezedgeIndex` to have its string interner updated with the one
+    // from the repository.
+    // This assumes that `initialize_tezedge_index` is called only once.
+    let string_interner = repository
+        .write()
+        .map_err(|e| IndexInitializationError::LockError {
+            reason: format!("{:?}", e),
+        })?
+        .take_strings_on_reload();
+
+    Ok(TezedgeIndex::new(
+        repository,
         patch_context,
+        string_interner,
     ))
 }
 

@@ -238,10 +238,6 @@ impl KeyValueStoreBackend for InMemory {
         self.string_interner.extend_from(string_interner);
     }
 
-    fn synchronize_strings_on_reload(&self, string_interner: &mut StringInterner) {
-        string_interner.clone_after_reload(&self.string_interner);
-    }
-
     fn get_str(&self, string_id: StringId) -> Option<&str> {
         self.string_interner.get_str(string_id).ok()
     }
@@ -306,6 +302,10 @@ impl KeyValueStoreBackend for InMemory {
 
     fn get_hash_id(&self, object_ref: ObjectReference) -> Result<HashId, DBError> {
         object_ref.hash_id_opt().ok_or(DBError::HashIdFailed)
+    }
+
+    fn take_strings_on_reload(&mut self) -> Option<StringInterner> {
+        None
     }
 
     #[cfg(test)]
