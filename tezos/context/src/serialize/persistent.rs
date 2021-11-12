@@ -13,9 +13,7 @@ use tezos_timing::SerializeStats;
 
 use crate::{
     kv_store::HashId,
-    serialize::{
-        deserialize_hash_id, get_inline_blob, serialize_hash_id, ObjectTag, PointersHeader,
-    },
+    serialize::{deserialize_hash_id, serialize_hash_id, ObjectTag, PointersHeader},
     working_tree::{
         shape::ShapeStrings,
         storage::{DirectoryId, Inode, PointerToInode},
@@ -202,7 +200,7 @@ fn serialize_shaped_directory(
 
         let kind = dir_entry.dir_entry_kind();
 
-        let blob_inline = get_inline_blob(storage, dir_entry);
+        let blob_inline = dir_entry.get_inlined_blob(storage);
         let blob_inline_length = blob_inline.as_ref().map(|b| b.len()).unwrap_or(0);
 
         if let Some(blob_inline) = blob_inline {
@@ -349,7 +347,7 @@ fn serialize_directory(
 
         let kind = dir_entry.dir_entry_kind();
 
-        let blob_inline = get_inline_blob(storage, dir_entry);
+        let blob_inline = dir_entry.get_inlined_blob(storage);
         let blob_inline_length = blob_inline.as_ref().map(|b| b.len()).unwrap_or(0);
 
         let (relative_offset, offset_length) = match dir_entry

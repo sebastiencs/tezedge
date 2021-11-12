@@ -15,9 +15,9 @@ use crate::{
     persistent::DBError,
     working_tree::{
         shape::DirectoryShapeError,
-        storage::{Blob, DirEntryIdError, PointerToInode, Storage, StorageError},
+        storage::{DirEntryIdError, PointerToInode, Storage, StorageError},
         string_interner::StringInterner,
-        DirEntry, Object,
+        Object,
     },
     ContextKeyValueStore,
 };
@@ -270,15 +270,6 @@ pub enum DeserializationError {
         #[from]
         error: std::io::Error,
     },
-}
-
-fn get_inline_blob<'a>(storage: &'a Storage, dir_entry: &DirEntry) -> Option<Blob<'a>> {
-    if let Some(Object::Blob(blob_id)) = dir_entry.get_object() {
-        if blob_id.is_inline() {
-            return storage.get_blob(blob_id).ok();
-        }
-    }
-    None
 }
 
 pub fn deserialize_hash_id(data: &[u8]) -> Result<(Option<HashId>, usize), DeserializationError> {

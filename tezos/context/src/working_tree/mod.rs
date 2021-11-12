@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use crate::hash::{hash_object, HashingError, ObjectHash};
 use crate::{kv_store::HashId, ContextKeyValueStore};
 
+use self::storage::Blob;
 use self::string_interner::StringInterner;
 use self::{
     storage::{BlobId, DirectoryId, Storage},
@@ -214,35 +215,6 @@ impl DirEntry {
         store.get_hash(self.get_reference()).map_err(Into::into)
     }
 
-    pub fn fetch_hash_id(&self, repository: &ContextKeyValueStore, storage: &Storage) {
-        // TODO: Do this only for modified objects
-
-        if self.hash_id().is_some() {
-            return;
-        }
-
-        match self.get_object() {
-            Some(Object::Blob(blob_id)) if blob_id.is_inline() => return,
-            _ => {}
-        }
-
-        let hash_id = if let Some(hash_id) = self
-            .get_offset()
-            .as_ref()
-            .and_then(|off| storage.offsets_to_hash_id.get(off))
-        {
-            *hash_id
-        } else if self.get_object().is_none() {
-            repository.get_hash_id(self.get_reference()).unwrap()
-        } else {
-            return;
-        };
-
-        let mut inner = self.inner.get();
-        inner.set_object_hash_id(hash_id.as_u32());
-        self.inner.set(inner);
-    }
-
     /// Returns the `HashId` of this dir_entry, it will compute the hash if necessary.
     ///
     /// If this dir_entry is an inlined blob, this will return `None`.
@@ -287,6 +259,13 @@ impl DirEntry {
                 Ok(hash_id)
             }
         }
+    }
+
+    pub fn get_inlined_blob<'a>(&self, storage: &'a Storage) -> Option<Blob<'a>> {
+        self.get_object().and_then(|object| match object {
+            Object::Blob(blob_id) if blob_id.is_inline() => storage.get_blob(blob_id).ok(),
+            _ => None,
+        })
     }
 
     /// Constructs a `DirEntry`s wrapping an object that is new, and has not been saved

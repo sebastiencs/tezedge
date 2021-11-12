@@ -123,7 +123,7 @@ impl TezedgeIndex {
         }
     }
 
-    fn synchronized(&self) -> TezedgeIndexWithDeallocation {
+    fn with_deallocation(&self) -> TezedgeIndexWithDeallocation {
         TezedgeIndexWithDeallocation { index: self }
     }
 
@@ -794,7 +794,7 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
         context_hash: &ContextHash,
         key: &ContextKey,
     ) -> Result<Option<ContextValue>, ContextError> {
-        let index = self.synchronized();
+        let index = self.with_deallocation();
         index.get_key_from_history_impl(context_hash, key)
     }
 
@@ -803,7 +803,7 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
         context_hash: &ContextHash,
         prefix: &ContextKey,
     ) -> Result<Option<Vec<(ContextKeyOwned, ContextValue)>>, ContextError> {
-        let index = self.synchronized();
+        let index = self.with_deallocation();
         index.get_key_values_by_prefix_impl(context_hash, prefix)
     }
 
@@ -813,7 +813,7 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
         prefix: &ContextKey,
         depth: Option<usize>,
     ) -> Result<StringTreeObject, ContextError> {
-        let index = self.synchronized();
+        let index = self.with_deallocation();
         index.get_context_tree_by_prefix_impl(context_hash, prefix, depth)
     }
 }

@@ -146,12 +146,7 @@ fn hash_long_inode(
                     DirEntryKind::Directory => hasher.update(&[0u8]),
                 };
 
-                let blob_inlined = dir_entry.get_object().and_then(|object| match object {
-                    Object::Blob(blob_id) if blob_id.is_inline() => storage.get_blob(blob_id).ok(),
-                    _ => None,
-                });
-
-                if let Some(blob) = blob_inlined {
+                if let Some(blob) = dir_entry.get_inlined_blob(storage) {
                     hasher.update(&hash_inlined_blob(blob)?);
                 } else {
                     hasher.update(dir_entry.object_hash(store, storage, strings)?.as_ref());
@@ -256,12 +251,7 @@ fn hash_short_inode(
         hasher.update(k.as_bytes());
         hasher.update(&(OBJECT_HASH_LEN as u64).to_be_bytes());
 
-        let blob_inlined = v.get_object().and_then(|object| match object {
-            Object::Blob(blob_id) if blob_id.is_inline() => storage.get_blob(blob_id).ok(),
-            _ => None,
-        });
-
-        if let Some(blob) = blob_inlined {
+        if let Some(blob) = v.get_inlined_blob(storage) {
             hasher.update(&hash_inlined_blob(blob)?);
         } else {
             hasher.update(v.object_hash(store, storage, strings)?.as_ref());
