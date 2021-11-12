@@ -218,7 +218,7 @@ impl DirEntry {
     /// Returns the `HashId` of this dir_entry, it will compute the hash if necessary.
     ///
     /// If this dir_entry is an inlined blob, this will return `None`.
-    pub fn object_hash_id(
+    pub fn object_hash_id_impl(
         &self,
         store: &mut ContextKeyValueStore,
         storage: &Storage,
@@ -250,15 +250,31 @@ impl DirEntry {
                         strings,
                     )?
                 };
-
-                if let Some(hash_id) = hash_id {
-                    let mut inner = self.inner.get();
-                    inner.set_object_hash_id(hash_id.as_u32());
-                    self.inner.set(inner);
-                };
                 Ok(hash_id)
             }
         }
+    }
+
+    /// Returns the `HashId` of this dir_entry, it will compute the hash if necessary.
+    ///
+    /// If this dir_entry is an inlined blob, this will return `None`.
+    pub fn object_hash_id(
+        &self,
+        store: &mut ContextKeyValueStore,
+        storage: &Storage,
+        strings: &StringInterner,
+    ) -> Result<Option<HashId>, HashingError> {
+        let hash_id = match self.object_hash_id_impl(store, storage, strings)? {
+            Some(hash_id) => hash_id,
+            None => return Ok(None),
+        };
+
+        let hash_id = store.validate_hash_id(hash_id)?;
+
+        let mut inner = self.inner.get();
+        inner.set_object_hash_id(hash_id.as_u32());
+        self.inner.set(inner);
+        Ok(Some(hash_id))
     }
 
     pub fn get_inlined_blob<'a>(&self, storage: &'a Storage) -> Option<Blob<'a>> {

@@ -123,6 +123,10 @@ pub trait KeyValueStoreBackend {
     ///
     /// It should be called only once.
     fn take_strings_on_reload(&mut self) -> Option<StringInterner>;
+    /// Make the HashId ready to be commited to disk
+    ///
+    /// This is used on the persistent context, to avoid commiting unused HashId
+    fn validate_hash_id(&mut self, hash_id: HashId) -> Result<HashId, DBError>;
     /// Simulate a `commit`, by writing data to disk/memory, without computing hash
     #[cfg(test)]
     fn synchronize_data(

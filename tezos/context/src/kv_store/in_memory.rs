@@ -308,6 +308,11 @@ impl KeyValueStoreBackend for InMemory {
         None
     }
 
+    fn validate_hash_id(&mut self, hash_id: HashId) -> Result<HashId, DBError> {
+        // Unused HashId are garbage collected
+        Ok(hash_id)
+    }
+
     #[cfg(test)]
     fn synchronize_data(
         &mut self,

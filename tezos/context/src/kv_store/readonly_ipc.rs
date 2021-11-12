@@ -61,7 +61,7 @@ impl NotGarbageCollected for ReadonlyIpcBackend {}
 
 impl KeyValueStoreBackend for ReadonlyIpcBackend {
     fn contains(&self, hash_id: HashId) -> Result<bool, DBError> {
-        if let Some(hash_id) = hash_id.get_readonly_id()? {
+        if let Some(hash_id) = hash_id.get_in_working_tree()? {
             self.hashes.contains(hash_id).map_err(Into::into)
         } else {
             self.client
@@ -87,7 +87,7 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
     fn get_hash(&self, object_ref: ObjectReference) -> Result<Cow<ObjectHash>, DBError> {
         let hash_id = object_ref.hash_id_opt();
 
-        if let Some(hash_id) = hash_id.and_then(|h| h.get_readonly_id().ok()?) {
+        if let Some(hash_id) = hash_id.and_then(|h| h.get_in_working_tree().ok()?) {
             self.hashes
                 .get_hash(hash_id)?
                 .map(Cow::Borrowed)
@@ -164,7 +164,7 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
     ) -> Result<&'a [u8], DBError> {
         if let Some(hash_id) = object_ref
             .hash_id_opt()
-            .and_then(|h| h.get_readonly_id().ok()?)
+            .and_then(|h| h.get_in_working_tree().ok()?)
         {
             let bytes = self
                 .hashes
@@ -224,6 +224,11 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
 
     fn take_strings_on_reload(&mut self) -> Option<StringInterner> {
         None
+    }
+
+    fn validate_hash_id(&mut self, hash_id: HashId) -> Result<HashId, DBError> {
+        // HashId in the read-only backend are never commited
+        Ok(hash_id)
     }
 
     #[cfg(test)]

@@ -38,7 +38,7 @@ use crate::{
     Map, ObjectHash,
 };
 
-use super::{HashId, VacantObjectHash};
+use super::{hashes::HashesContainer, HashId, VacantObjectHash};
 
 const FIRST_READ_OBJECT_LENGTH: usize = 4096;
 
@@ -112,9 +112,7 @@ impl Persistable for Persistent {
 
 struct Hashes {
     /// List of hashes not yet commited
-    in_memory: Vec<ObjectHash>,
-    /// The first hash in `in_memory` has the `HashId` of `HashId::new(in_memory_first_index)`
-    in_memory_first_index: usize,
+    in_memory: HashesContainer,
     /// Concatenation of all hashes commited
     ///
     /// [ObjectHash (32 bytes), ObjectHash (32 bytes), ..]
@@ -132,20 +130,21 @@ impl Hashes {
         let in_memory_first_index = (hashes_file.offset().as_u64() as usize) / OBJECT_HASH_LEN;
 
         Self {
-            in_memory: Vec::with_capacity(1000),
+            in_memory: HashesContainer::new(in_memory_first_index),
             hashes_file,
-            in_memory_first_index,
             in_memory_bytes: Vec::with_capacity(1000),
         }
     }
 
     fn get_hash(&self, hash_id: HashId) -> Result<Cow<ObjectHash>, DBError> {
-        let hash_id_index: usize = hash_id.try_into()?;
+        if let Some(hash) = self.in_memory.try_get_hash(hash_id)? {
+            // The hash is in memory
 
-        // Is the hash in memory or in the file ?
-        let is_in_file = hash_id_index < self.in_memory_first_index;
+            Ok(Cow::Borrowed(hash))
+        } else {
+            // The hash is in the file
 
-        if is_in_file {
+            let hash_id_index: usize = hash_id.try_into()?;
             let offset = hash_id_index * std::mem::size_of::<ObjectHash>();
 
             let mut hash: ObjectHash = Default::default();
@@ -154,51 +153,36 @@ impl Hashes {
                 .read_exact_at(&mut hash, (offset as u64).into())?;
 
             Ok(Cow::Owned(hash))
-        } else {
-            let in_memory_index = hash_id_index - self.in_memory_first_index;
-
-            match self.in_memory.get(in_memory_index) {
-                Some(hash) => Ok(Cow::Borrowed(hash)),
-                None => Err(DBError::HashNotFound {
-                    object_ref: hash_id.into(),
-                }),
-            }
         }
     }
 
     fn get_vacant_object_hash(&mut self) -> Result<VacantObjectHash, DBError> {
-        let in_memory_length = self.in_memory.len();
-        let hash_id_index = self.in_memory_first_index + in_memory_length;
-
-        self.in_memory.push(Default::default());
-
-        Ok(VacantObjectHash {
-            entry: Some(&mut self.in_memory[in_memory_length]),
-            hash_id: HashId::try_from(hash_id_index)?,
-        })
+        self.in_memory.get_vacant_object_hash()
     }
 
     fn contains(&self, hash_id: HashId) -> Result<bool, DBError> {
         let hash_id: usize = hash_id.try_into()?;
 
-        Ok(hash_id < self.in_memory_first_index + self.in_memory.len())
+        Ok(hash_id < self.in_memory.total_number_of_hashes())
     }
 
     fn commit(&mut self) -> Result<(), std::io::Error> {
-        if self.in_memory.is_empty() {
+        let in_memory = self.in_memory.get_commiting();
+
+        if in_memory.is_empty() {
+            self.in_memory.commited();
             return Ok(());
         }
 
         // Copy all hashes into the flat vector `Self::in_memory_bytes`
         self.in_memory_bytes.clear();
-        for hash in &self.in_memory {
+        for hash in in_memory {
             self.in_memory_bytes.extend_from_slice(hash);
         }
 
         self.hashes_file.append(&self.in_memory_bytes)?;
 
-        self.in_memory_first_index += self.in_memory.len();
-        self.in_memory.clear();
+        self.in_memory.commited();
 
         Ok(())
     }
@@ -482,6 +466,8 @@ impl KeyValueStoreBackend for Persistent {
     ) -> Result<(ContextHash, Box<SerializeStats>), DBError> {
         let offset = self.data_file.offset();
 
+        self.hashes.in_memory.set_is_commiting();
+
         let PostCommitData {
             commit_ref,
             serialize_stats,
@@ -528,6 +514,10 @@ impl KeyValueStoreBackend for Persistent {
             .set_to_serialize_index(string_interner.get_to_serialize_index());
 
         Some(string_interner)
+    }
+
+    fn validate_hash_id(&mut self, hash_id: HashId) -> Result<HashId, DBError> {
+        self.hashes.in_memory.validate_hash_id(hash_id)
     }
 
     #[cfg(test)]
