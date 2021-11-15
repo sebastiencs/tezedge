@@ -56,7 +56,8 @@ pub fn initialize_tezedge_index(
                 ipc_socket_path,
             )?)),
         },
-        ContextKvStoreConfiguration::InMem => Arc::new(RwLock::new(InMemory::try_new()?)),
+        ContextKvStoreConfiguration::InMem => Arc::new(RwLock::new(Persistent::try_new(None)?)),
+        // ContextKvStoreConfiguration::InMem => Arc::new(RwLock::new(InMemory::try_new()?)),
         ContextKvStoreConfiguration::OnDisk(ref db_path) => {
             Arc::new(RwLock::new(Persistent::try_new(Some(db_path.as_str()))?))
         }
