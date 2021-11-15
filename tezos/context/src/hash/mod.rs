@@ -649,6 +649,9 @@ mod tests {
         let mut older_objects = Vec::new();
         let mut stats = SerializeStats::default();
 
+        // Create HashId ready to be commited
+        repo.synchronize_data(&[], &[]);
+
         // NOTE: reading from a stream is very slow with serde, thats why
         // the whole file is being read here before parsing.
         // See: https://github.com/serde-rs/json/issues/160#issuecomment-253446892

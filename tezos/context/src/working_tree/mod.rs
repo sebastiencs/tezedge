@@ -269,7 +269,7 @@ impl DirEntry {
             None => return Ok(None),
         };
 
-        let hash_id = store.validate_hash_id(hash_id)?;
+        let hash_id = store.make_hash_id_ready_for_commit(hash_id)?;
 
         let mut inner = self.inner.get();
         inner.set_object_hash_id(hash_id.as_u32());

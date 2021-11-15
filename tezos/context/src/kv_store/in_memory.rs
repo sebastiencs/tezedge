@@ -308,7 +308,7 @@ impl KeyValueStoreBackend for InMemory {
         None
     }
 
-    fn validate_hash_id(&mut self, hash_id: HashId) -> Result<HashId, DBError> {
+    fn make_hash_id_ready_for_commit(&mut self, hash_id: HashId) -> Result<HashId, DBError> {
         // Unused HashId are garbage collected
         Ok(hash_id)
     }

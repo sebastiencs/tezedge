@@ -59,7 +59,7 @@ impl HashesContainer {
         }
     }
 
-    pub fn validate_hash_id(&mut self, hash_id: HashId) -> Result<HashId, DBError> {
+    pub fn make_hash_id_ready_for_commit(&mut self, hash_id: HashId) -> Result<HashId, DBError> {
         if !self.is_commiting {
             // We are not commiting, keep the same HashId
             return Ok(hash_id);

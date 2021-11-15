@@ -226,7 +226,7 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
         None
     }
 
-    fn validate_hash_id(&mut self, hash_id: HashId) -> Result<HashId, DBError> {
+    fn make_hash_id_ready_for_commit(&mut self, hash_id: HashId) -> Result<HashId, DBError> {
         // HashId in the read-only backend are never commited
         Ok(hash_id)
     }

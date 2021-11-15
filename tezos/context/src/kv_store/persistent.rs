@@ -2,11 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 use std::{
-    borrow::Cow,
-    collections::hash_map::DefaultHasher,
-    convert::{TryFrom, TryInto},
-    hash::Hasher,
-    io::Write,
+    borrow::Cow, collections::hash_map::DefaultHasher, convert::TryInto, hash::Hasher, io::Write,
 };
 
 #[cfg(test)]
@@ -516,8 +512,8 @@ impl KeyValueStoreBackend for Persistent {
         Some(string_interner)
     }
 
-    fn validate_hash_id(&mut self, hash_id: HashId) -> Result<HashId, DBError> {
-        self.hashes.in_memory.validate_hash_id(hash_id)
+    fn make_hash_id_ready_for_commit(&mut self, hash_id: HashId) -> Result<HashId, DBError> {
+        self.hashes.in_memory.make_hash_id_ready_for_commit(hash_id)
     }
 
     #[cfg(test)]
@@ -527,6 +523,7 @@ impl KeyValueStoreBackend for Persistent {
         output: &[u8],
     ) -> Result<Option<AbsoluteOffset>, DBError> {
         self.commit_to_disk(output)?;
+        self.hashes.in_memory.set_is_commiting();
         Ok(Some(self.data_file.offset()))
     }
 }
