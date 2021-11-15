@@ -86,7 +86,10 @@ impl HashesContainer {
                 })?;
 
         // Push the `ObjectHash` into `Self::commiting`
-        let hash_id = self.commiting.push(*hash)?;
+        let commiting_index: usize = self.commiting.push(*hash)?.try_into()?;
+
+        // Retrieve the `HashId`
+        let hash_id = HashId::try_from(self.first_index + commiting_index)?;
 
         // Return the new `HashId`
         Ok(hash_id)
