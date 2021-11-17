@@ -181,6 +181,12 @@ define_hash!(PublicKeySecp256k1);
 define_hash!(PublicKeyP256);
 define_hash!(Signature);
 
+impl std::borrow::Borrow<[u8]> for BlockHash {
+    fn borrow(&self) -> &[u8] {
+        self.0.as_slice()
+    }
+}
+
 /// Note: see Tezos ocaml lib_crypto/base58.ml
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum HashType {

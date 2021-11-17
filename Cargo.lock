@@ -3821,6 +3821,7 @@ dependencies = [
 name = "tezos_timing"
 version = "1.11.0"
 dependencies = [
+ "crypto",
  "rusqlite",
  "serde 1.0.130",
  "static_assertions",

@@ -14,6 +14,7 @@ use std::{
 };
 
 use container::{InlinedBlockHash, InlinedContextHash, InlinedOperationHash, InlinedString};
+use crypto::hash::BlockHash;
 use rusqlite::{named_params, Batch, Connection, Error as SQLError, Transaction};
 use serde::Serialize;
 use static_assertions::assert_eq_size;
@@ -26,6 +27,73 @@ use tezos_spsc::{
 pub mod container;
 
 pub const FILENAME_DB: &str = "context_stats.db";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Protocol {
+    Genesis,
+    Bootstrap,
+    Alpha1,
+    Alpha2,
+    Alpha3,
+    AthensA,
+    Babylon,
+    Carthage,
+    Delphi,
+    Edo,
+    Florence,
+    Granada,
+}
+
+const PROTOCOLS: &[(&str, Protocol)] = &[
+    (
+        "BLockGenesisGenesisGenesisGenesisGenesisf79b5d1CoW2",
+        Protocol::Genesis,
+    ), // block 0
+    (
+        "BLSqrcLvFtqVCx8WSqkVJypW2kAVRM3eEj2BHgBsB6kb24NqYev",
+        Protocol::Bootstrap,
+    ), // block 1
+    (
+        "BMMmnb2LoJQs3PjvhysXAgK2pAjJE71hoqXFCs6u85xUH3KrRqa",
+        Protocol::Alpha1,
+    ), // block 2
+    (
+        "BLYbRjXpmDUF6VisMLYcmagP7KLbUrwyYqkTA3puiRjs6YPM2gA",
+        Protocol::Alpha2,
+    ), // block 28_083
+    (
+        "BLMqRYnvd2KF11awHweGzShLYDfQoPUfDWVnQgmxg53iX6dcE89",
+        Protocol::Alpha3,
+    ), // block 204_762
+    (
+        "BMWyM6dcDsbsDjcD8iUJYa166mEAFpw9yori2ofSPooBmFqv6uC",
+        Protocol::AthensA,
+    ), // block 458_753
+    (
+        "BLu2kYLJuELGnxqeX1DCKWsnAy6kM3Qii563Ja9nkPtqy3iSCaf",
+        Protocol::Babylon,
+    ), // block 655_361
+    (
+        "BLTZgaJ7cohaD1D7sno334wEVU83s2G7FQvpp1SN6EzHdQTVQsM",
+        Protocol::Carthage,
+    ), // block 851_969
+    (
+        "BM5fVxrUeoHJ8pLZNzdDwgW656MnWJMciJYGFvTF6ysj9pT4wi6",
+        Protocol::Delphi,
+    ), // block 1_212_417
+    (
+        "BKpJVfDq5BkSPQpJFiJumZxnWs7GM9zZJjRkScaoqWLSCUDYMdJ",
+        Protocol::Edo,
+    ), // block 1_343_489
+    (
+        "BMTcukHJeJpDoABwNVkhqeFM9JcDv29GCqpcgohY2Qcy8kXM9Uw",
+        Protocol::Florence,
+    ), // block 1_466_368
+    (
+        "BLzEHPYwpqWSDfu28saTkAUxZ7WnPkNxe8Epg5NfixBfQv7KRUN",
+        Protocol::Granada,
+    ), // block 1_589_248
+];
 
 #[derive(Debug)]
 pub struct BlockMemoryUsage {
@@ -387,6 +455,9 @@ struct Timing {
     irmin_commit_stats: RangeStats,
     tezedge_checkout_stats: RangeStats,
     irmin_checkout_stats: RangeStats,
+
+    protocol_tables: HashMap<BlockHash, Protocol>,
+    current_protocol: Option<Protocol>,
 }
 
 impl std::fmt::Debug for Timing {
@@ -447,6 +518,16 @@ impl TimingChannel {
 
         result.map_err(|e| ChannelError::PushError(e))
     }
+}
+
+fn make_protocol_table() -> HashMap<BlockHash, Protocol> {
+    let mut table = HashMap::default();
+
+    for (hash, protocol) in PROTOCOLS {
+        table.insert(BlockHash::from_base58_check(hash).unwrap(), *protocol);
+    }
+
+    table
 }
 
 thread_local! {
@@ -581,6 +662,8 @@ impl Timing {
             irmin_commit_stats: RangeStats::default(),
             tezedge_checkout_stats: Default::default(),
             irmin_checkout_stats: RangeStats::default(),
+            protocol_tables: make_protocol_table(),
+            current_protocol: None,
         }
     }
 
@@ -764,6 +847,8 @@ impl Timing {
             })?;
         }
 
+        self.set_current_protocol(&block_hash);
+
         Self::set_current(sql, block_hash, &mut self.current_block, "blocks")?;
 
         if let Some(transaction) = transaction.take() {
@@ -779,6 +864,22 @@ impl Timing {
         self.block_stats = HashMap::default();
 
         Ok(())
+    }
+
+    fn set_current_protocol(&mut self, block_hash: &Option<InlinedBlockHash>) {
+        let block_hash = match block_hash {
+            Some(block_hash) => block_hash,
+            None => return,
+        };
+
+        let protocol = match self.protocol_tables.get(block_hash.as_ref()).copied() {
+            Some(protocol) => protocol,
+            None => return,
+        };
+
+        if Some(protocol) != self.current_protocol {
+            self.current_protocol.replace(protocol);
+        }
     }
 
     fn set_current_operation(
