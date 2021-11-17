@@ -298,7 +298,13 @@ pub fn deserialize_hash_id(data: &[u8]) -> Result<(Option<HashId>, usize), Deser
     }
 }
 
-pub fn serialize_hash_id(hash_id: u32, output: &mut Vec<u8>) -> Result<usize, SerializationError> {
+pub fn serialize_hash_id(
+    hash_id: u32,
+    output: &mut Vec<u8>,
+    stats: &mut SerializeStats,
+) -> Result<(), SerializationError> {
+    stats.highest_hash_id = stats.highest_hash_id.max(hash_id);
+
     if hash_id & FULL_23_BITS == hash_id {
         // The HashId fits in 23 bits
 
@@ -307,12 +313,16 @@ pub fn serialize_hash_id(hash_id: u32, output: &mut Vec<u8>) -> Result<usize, Se
         let hash_id: [u8; 4] = hash_id.to_be_bytes();
 
         output.write_all(&hash_id[1..])?;
-        Ok(3)
+        stats.hash_ids_length = stats.hash_ids_length.saturating_add(3);
+
+        Ok(())
     } else if hash_id & FULL_31_BITS == hash_id {
         // HashId fits in 31 bits
 
         output.write_all(&hash_id.to_be_bytes())?;
-        Ok(4)
+        stats.hash_ids_length = stats.hash_ids_length.saturating_add(3);
+
+        Ok(())
     } else {
         // The HashId must not be 32 bits because we use the
         // MSB to determine if the HashId is compact or not

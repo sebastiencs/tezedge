@@ -43,24 +43,36 @@ pub struct SerializeStats {
     pub nblobs: usize,
     pub nblobs_inlined: usize,
     pub nshapes: usize,
+    pub ninode_pointers: usize,
+    pub offset_length: usize,
     pub total_bytes: usize,
 }
 
 impl SerializeStats {
     pub fn add_directory(
         &mut self,
-        hash_ids_length: usize,
         keys_length: usize,
-        highest_hash_id: u32,
         nblobs_inlined: usize,
         blobs_length: usize,
     ) {
         self.ndirectories += 1;
-        self.hash_ids_length += hash_ids_length;
         self.keys_length += keys_length;
-        self.highest_hash_id = self.highest_hash_id.max(highest_hash_id);
         self.nblobs_inlined += nblobs_inlined;
         self.blobs_length += blobs_length;
+    }
+
+    pub fn add_shape(&mut self, nblobs_inlined: usize, blobs_length: usize) {
+        self.nshapes += 1;
+        self.nblobs_inlined += nblobs_inlined;
+        self.blobs_length += blobs_length;
+    }
+
+    pub fn add_inode_pointers(&mut self) {
+        self.ninode_pointers += 1;
+    }
+
+    pub fn add_offset(&mut self, offset_length: usize) {
+        self.offset_length += offset_length;
     }
 
     pub fn add_blob(&mut self, blob_length: usize) {
@@ -651,6 +663,8 @@ impl Timing {
               serialize_nblobs = :serialize_nblobs,
               serialize_nblobs_inlined = :serialize_nblobs_inlined,
               serialize_nshapes = :serialize_nshapes,
+              serialize_ninode_pointers = :serialize_ninode_pointers,
+              serialize_offset_length = :serialize_offset_length,
               serialize_total_bytes = :serialize_total_bytes,
               total_bytes = :total_bytes
             WHERE
@@ -693,6 +707,8 @@ impl Timing {
             ":serialize_nblobs": stats.serialize.nblobs,
             ":serialize_nblobs_inlined": stats.serialize.nblobs_inlined,
             ":serialize_nshapes": stats.serialize.nshapes,
+            ":serialize_ninode_pointers": stats.serialize.ninode_pointers,
+            ":serialize_offset_length": stats.serialize.offset_length,
             ":serialize_total_bytes": stats.serialize.total_bytes,
             ":total_bytes": stats.context.repo.total_bytes
                 .saturating_add(stats.context.storage.total_bytes)

@@ -397,7 +397,17 @@ impl KeyValueStoreBackend for Persistent {
     }
 
     fn memory_usage(&self) -> RepositoryMemoryUsage {
-        RepositoryMemoryUsage::default()
+        RepositoryMemoryUsage {
+            values_bytes: 0,
+            values_capacity: 0,
+            values_length: 0,
+            hashes_capacity: self.hashes.in_memory.capacity(),
+            hashes_length: 0,
+            total_bytes: 0,
+            npending_free_ids: 0,
+            gc_npending_free_ids: 0,
+            nshapes: self.shapes.nshapes(),
+        }
     }
 
     fn get_shape(&self, shape_id: DirectoryShapeId) -> Result<ShapeStrings, DBError> {

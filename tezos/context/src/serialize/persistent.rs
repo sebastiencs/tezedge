@@ -150,6 +150,7 @@ fn serialize_offset(
     output: &mut Vec<u8>,
     relative_offset: RelativeOffset,
     offset_length: OffsetLength,
+    stats: &mut SerializeStats,
 ) -> Result<(), SerializationError> {
     let relative_offset = relative_offset.as_u64();
 
@@ -157,17 +158,21 @@ fn serialize_offset(
         OffsetLength::RelativeOneByte => {
             let offset: u8 = relative_offset as u8;
             output.write_all(&offset.to_le_bytes())?;
+            stats.add_offset(1);
         }
         OffsetLength::RelativeTwoBytes => {
             let offset: u16 = relative_offset as u16;
             output.write_all(&offset.to_le_bytes())?;
+            stats.add_offset(2);
         }
         OffsetLength::RelativeFourBytes => {
             let offset: u32 = relative_offset as u32;
             output.write_all(&offset.to_le_bytes())?;
+            stats.add_offset(4);
         }
         OffsetLength::RelativeEightBytes => {
             output.write_all(&relative_offset.to_le_bytes())?;
+            stats.add_offset(8);
         }
     }
 
@@ -185,12 +190,15 @@ fn serialize_shaped_directory(
 ) -> Result<(), SerializationError> {
     use SerializationError::*;
 
+    let mut nblobs_inlined: usize = 0;
+    let mut blobs_length: usize = 0;
+
     let start = output.len();
 
     // Replaced by ObjectHeader
     output.write_all(&[0, 0])?;
 
-    let _nbytes = serialize_hash_id(object_hash_id.as_u32(), output)?;
+    serialize_hash_id(object_hash_id.as_u32(), output, stats)?;
 
     let shape_id = shape_id.as_u32();
     output.write_all(&shape_id.to_le_bytes())?;
@@ -212,6 +220,9 @@ fn serialize_shaped_directory(
 
             output.write_all(&byte[..])?;
             output.write_all(&blob_inline)?;
+
+            nblobs_inlined += 1;
+            blobs_length += blob_inline.len();
         } else {
             let dir_entry_offset = dir_entry.get_offset().ok_or(MissingOffset)?;
             let (relative_offset, offset_length) = get_relative_offset(offset, dir_entry_offset);
@@ -223,14 +234,13 @@ fn serialize_shaped_directory(
                 .into_bytes();
 
             output.write_all(&byte[..])?;
-
-            serialize_offset(output, relative_offset, offset_length)?;
+            serialize_offset(output, relative_offset, offset_length, stats)?;
         }
     }
 
     write_object_header(output, start, ObjectTag::ShapedDirectory);
 
-    stats.nshapes = stats.nshapes.saturating_add(1);
+    stats.add_shape(nblobs_inlined, blobs_length);
 
     Ok(())
 }
@@ -329,8 +339,6 @@ fn serialize_directory(
     use SerializationError::*;
 
     let mut keys_length: usize = 0;
-    let hash_ids_length: usize = 0;
-    let highest_hash_id: u32 = 0;
     let mut nblobs_inlined: usize = 0;
     let mut blobs_length: usize = 0;
 
@@ -339,7 +347,7 @@ fn serialize_directory(
     // Replaced by ObjectHeader
     output.write_all(&[0, 0])?;
 
-    serialize_hash_id(object_hash_id.as_u32(), output)?;
+    serialize_hash_id(object_hash_id.as_u32(), output, stats)?;
 
     for (key_id, dir_entry_id) in dir {
         let key = strings.get_str(*key_id).unwrap();
@@ -396,19 +404,13 @@ fn serialize_directory(
             let relative_offset = relative_offset.ok_or(MissingOffset)?;
             let offset_length = offset_length.ok_or(MissingOffset)?;
 
-            serialize_offset(output, relative_offset, offset_length)?;
+            serialize_offset(output, relative_offset, offset_length, stats)?;
         }
     }
 
     write_object_header(output, start, ObjectTag::Directory);
 
-    stats.add_directory(
-        hash_ids_length,
-        keys_length,
-        highest_hash_id,
-        nblobs_inlined,
-        blobs_length,
-    );
+    stats.add_directory(keys_length, nblobs_inlined, blobs_length);
 
     Ok(())
 }
@@ -466,8 +468,7 @@ pub fn serialize_object(
             // Replaced by ObjectHeader
             output.write_all(&[0, 0])?;
 
-            serialize_hash_id(object_hash_id.as_u32(), output)?;
-
+            serialize_hash_id(object_hash_id.as_u32(), output, stats)?;
             output.write_all(blob.as_ref())?;
 
             write_object_header(output, start, ObjectTag::Blob);
@@ -478,7 +479,7 @@ pub fn serialize_object(
             // Replaced by ObjectHeader
             output.write_all(&[0, 0])?;
 
-            serialize_hash_id(object_hash_id.as_u32(), output)?;
+            serialize_hash_id(object_hash_id.as_u32(), output, stats)?;
 
             let author_length = match commit.author.len() {
                 length if length <= 0xFF => ObjectLength::OneByte,
@@ -505,14 +506,14 @@ pub fn serialize_object(
             output.write_all(&header)?;
 
             if let Some(parent) = commit.parent_commit_ref {
-                serialize_hash_id(parent.hash_id().as_u32(), output)?;
-                serialize_offset(output, parent_relative_offset, parent_offset_length)?;
+                serialize_hash_id(parent.hash_id().as_u32(), output, stats)?;
+                serialize_offset(output, parent_relative_offset, parent_offset_length, stats)?;
             };
 
             let root_hash_id = commit.root_ref.hash_id().as_u32();
-            serialize_hash_id(root_hash_id, output)?;
 
-            serialize_offset(output, root_relative_offset, root_offset_length)?;
+            serialize_hash_id(root_hash_id, output, stats)?;
+            serialize_offset(output, root_relative_offset, root_offset_length, stats)?;
 
             output.write_all(&commit.time.to_le_bytes())?;
 
@@ -541,7 +542,7 @@ pub fn serialize_object(
         }
     };
 
-    stats.total_bytes += output.len();
+    stats.total_bytes += output.len() - start;
 
     Ok(Some(offset))
 }
@@ -638,6 +639,8 @@ fn serialize_inode(
             npointers: _,
             pointers,
         } => {
+            stats.add_inode_pointers();
+
             // Recursively serialize all children
             for pointer in pointers.iter().filter_map(|p| p.as_ref()) {
                 let hash_id = pointer.hash_id().ok_or(MissingHashId)?;
@@ -663,7 +666,7 @@ fn serialize_inode(
             // Replaced by ObjectHeader
             output.write_all(&[0, 0])?;
 
-            let _nbytes = serialize_hash_id(object_hash_id.as_u32(), output)?;
+            serialize_hash_id(object_hash_id.as_u32(), output, stats)?;
 
             output.write_all(&depth.to_le_bytes())?;
             output.write_all(&nchildren.to_le_bytes())?;
@@ -678,7 +681,7 @@ fn serialize_inode(
                 let (relative_offset, offset_length) =
                     get_relative_offset(offset, pointer.offset());
 
-                serialize_offset(output, relative_offset, offset_length)?;
+                serialize_offset(output, relative_offset, offset_length, stats)?;
             }
 
             write_object_header(output, start, ObjectTag::InodePointers);

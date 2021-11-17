@@ -47,6 +47,8 @@ CREATE TABLE IF NOT EXISTS blocks (
   serialize_nblobs INTEGER,
   serialize_nblobs_inlined INTEGER,
   serialize_nshapes INTEGER,
+  serialize_ninode_pointers INTEGER,
+  serialize_offset_length INTEGER,
   serialize_total_bytes INTEGER,
   total_bytes INTEGER
 );

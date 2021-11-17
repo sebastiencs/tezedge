@@ -51,6 +51,9 @@ fn serialize_shaped_directory(
     storage: &Storage,
     stats: &mut SerializeStats,
 ) -> Result<(), SerializationError> {
+    let mut nblobs_inlined: usize = 0;
+    let mut blobs_length: usize = 0;
+
     let header: [u8; 1] = ObjectHeader::new()
         .with_tag(ObjectTag::ShapedDirectory)
         .with_is_persistent(false)
@@ -80,13 +83,16 @@ fn serialize_shaped_directory(
         output.write_all(&byte[..])?;
 
         if let Some(blob_inline) = blob_inline {
+            nblobs_inlined += 1;
+            blobs_length += blob_inline.len();
+
             output.write_all(&blob_inline)?;
         } else {
-            let _nbytes = serialize_hash_id(hash_id, output)?;
+            serialize_hash_id(hash_id, output, stats)?;
         }
     }
 
-    stats.nshapes = stats.nshapes.saturating_add(1);
+    stats.add_shape(nblobs_inlined, blobs_length);
 
     Ok(())
 }
@@ -100,8 +106,6 @@ fn serialize_directory(
     stats: &mut SerializeStats,
 ) -> Result<(), SerializationError> {
     let mut keys_length: usize = 0;
-    let mut hash_ids_length: usize = 0;
-    let mut highest_hash_id: u32 = 0;
     let mut nblobs_inlined: usize = 0;
     let mut blobs_length: usize = 0;
 
@@ -158,20 +162,11 @@ fn serialize_directory(
 
             output.write_all(&blob_inline)?;
         } else {
-            let nbytes = serialize_hash_id(hash_id, output)?;
-
-            hash_ids_length += nbytes;
-            highest_hash_id = highest_hash_id.max(hash_id);
+            serialize_hash_id(hash_id, output, stats)?;
         }
     }
 
-    stats.add_directory(
-        hash_ids_length,
-        keys_length,
-        highest_hash_id,
-        nblobs_inlined,
-        blobs_length,
-    );
+    stats.add_directory(keys_length, nblobs_inlined, blobs_length);
 
     Ok(())
 }
@@ -241,10 +236,10 @@ pub fn serialize_object(
                 .and_then(|p| p.hash_id_opt())
                 .map(|h| h.as_u32())
                 .unwrap_or(0);
-            serialize_hash_id(parent_hash_id, output)?;
+            serialize_hash_id(parent_hash_id, output, stats)?;
 
             let root_hash_id = commit.root_ref.hash_id().as_u32();
-            serialize_hash_id(root_hash_id, output)?;
+            serialize_hash_id(root_hash_id, output, stats)?;
 
             output.write_all(&commit.time.to_ne_bytes())?;
 
@@ -288,6 +283,8 @@ fn serialize_inode(
             npointers: _,
             pointers,
         } => {
+            stats.add_inode_pointers();
+
             let header: [u8; 1] = ObjectHeader::new()
                 .with_tag(ObjectTag::InodePointers)
                 .with_is_persistent(false)
@@ -307,7 +304,7 @@ fn serialize_inode(
                 let hash_id = pointer.hash_id().ok_or(MissingHashId)?;
                 let hash_id = hash_id.as_u32();
 
-                serialize_hash_id(hash_id, output)?;
+                serialize_hash_id(hash_id, output, stats)?;
             }
 
             batch.push((hash_id, Arc::from(output.as_slice())));

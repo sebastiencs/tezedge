@@ -36,6 +36,10 @@ impl HashesContainer {
         }
     }
 
+    pub fn capacity(&self) -> usize {
+        self.commiting.capacity()
+    }
+
     pub fn set_is_commiting(&mut self) {
         self.is_commiting = true;
     }
