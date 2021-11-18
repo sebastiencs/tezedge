@@ -81,6 +81,8 @@ impl Protocol {
     }
 }
 
+pub const STATS_ALL_PROTOCOL: &str = "_all_";
+
 const BLOCK_GENESIS: &str = "BLockGenesisGenesisGenesisGenesisGenesisf79b5d1CoW2";
 const BLOCK_BOOTSTRAP: &str = "BLSqrcLvFtqVCx8WSqkVJypW2kAVRM3eEj2BHgBsB6kb24NqYev";
 const BLOCK_ALPHA1: &str = "BMMmnb2LoJQs3PjvhysXAgK2pAjJE71hoqXFCs6u85xUH3KrRqa";
@@ -966,8 +968,6 @@ impl Timing {
         if Some(protocol) != self.current_protocol {
             self.current_protocol.replace(protocol);
         }
-
-        self.current_protocol.replace(protocol);
     }
 
     fn set_current_operation(
@@ -1422,7 +1422,10 @@ impl Timing {
             ",
         )?;
 
-        let protocol = protocol.as_ref().map(|p| p.as_str());
+        let protocol = protocol
+            .as_ref()
+            .map(|p| p.as_str())
+            .unwrap_or(STATS_ALL_PROTOCOL);
 
         query.execute(named_params! {
             ":root": root,

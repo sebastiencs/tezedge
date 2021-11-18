@@ -10,6 +10,7 @@ use serde::Serialize;
 use crypto::hash::BlockHash;
 use tezos_timing::{
     hash_to_string, Protocol, QueryData, QueryStats, QueryStatsWithRange, RangeStats, FILENAME_DB,
+    STATS_ALL_PROTOCOL,
 };
 
 use crate::helpers::RpcServiceError;
@@ -146,7 +147,7 @@ fn make_context_stats_impl(
 
     let mut rows = stmt.query(named_params! {
         ":context_name": context_name,
-        ":protocol": protocol.as_ref().map(|p| p.as_str()),
+        ":protocol": protocol.as_ref().map(|p| p.as_str()).unwrap_or(STATS_ALL_PROTOCOL),
     })?;
 
     let mut map: HashMap<String, QueryStatsWithRange> = HashMap::default();

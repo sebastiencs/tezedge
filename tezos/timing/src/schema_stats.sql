@@ -175,5 +175,5 @@ CREATE TABLE IF NOT EXISTS global_query_stats (
   one_hundred_s_max_time REAL DEFAULT 0.0,
   one_hundred_s_total_time REAL DEFAULT 0.0,
 
-  UNIQUE(root, query_name, context_name)
+  UNIQUE(root, query_name, context_name, protocol)
 );
