@@ -28,7 +28,7 @@ pub mod container;
 
 pub const FILENAME_DB: &str = "context_stats.db";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Protocol {
     Genesis,
     Bootstrap,
@@ -42,6 +42,25 @@ enum Protocol {
     Edo,
     Florence,
     Granada,
+}
+
+impl Protocol {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Protocol::Genesis => "genesis",
+            Protocol::Bootstrap => "bootstrap",
+            Protocol::Alpha1 => "alpha1",
+            Protocol::Alpha2 => "alpha2",
+            Protocol::Alpha3 => "alpha3",
+            Protocol::AthensA => "athens_a",
+            Protocol::Babylon => "babylon",
+            Protocol::Carthage => "carthage",
+            Protocol::Delphi => "delphi",
+            Protocol::Edo => "edo",
+            Protocol::Florence => "florence",
+            Protocol::Granada => "granada",
+        }
+    }
 }
 
 const BLOCK_GENESIS: &str = "BLockGenesisGenesisGenesisGenesisGenesisf79b5d1CoW2";
@@ -414,6 +433,86 @@ impl QueryStats {
     }
 }
 
+#[derive(Default)]
+struct GlobalStatistics {
+    tezedge_global_stats: HashMap<String, QueryStatsWithRange>,
+    irmin_global_stats: HashMap<String, QueryStatsWithRange>,
+    tezedge_commit_stats: RangeStats,
+    irmin_commit_stats: RangeStats,
+    tezedge_checkout_stats: RangeStats,
+    irmin_checkout_stats: RangeStats,
+}
+
+impl GlobalStatistics {
+    fn add_time(&mut self, irmin_time: Option<f64>, tezedge_time: Option<f64>) {
+        self.tezedge_commit_stats.add_time(tezedge_time);
+        self.irmin_commit_stats.add_time(irmin_time);
+    }
+
+    fn compute_mean(&mut self) {
+        for query in self.tezedge_global_stats.values_mut() {
+            query.compute_mean();
+        }
+        for query in self.irmin_global_stats.values_mut() {
+            query.compute_mean();
+        }
+        self.tezedge_checkout_stats.compute_mean();
+        self.irmin_checkout_stats.compute_mean();
+        self.tezedge_commit_stats.compute_mean();
+        self.irmin_commit_stats.compute_mean();
+    }
+
+    fn update_stats(&mut self, root: &str, query: &Query) {
+        for (global_stats, time) in &mut [
+            (Some(&mut self.tezedge_global_stats), query.tezedge_time),
+            (Some(&mut self.irmin_global_stats), query.irmin_time),
+        ] {
+            let global_stats = match global_stats {
+                Some(global_stats) => global_stats,
+                None => continue,
+            };
+
+            let time = match time {
+                Some(time) => time,
+                None => continue,
+            };
+
+            let entry = match global_stats.get_mut(root) {
+                Some(entry) => entry,
+                None => {
+                    let stats = QueryStatsWithRange {
+                        root: root.to_string(),
+                        ..Default::default()
+                    };
+                    global_stats.insert(root.to_string(), stats);
+                    match global_stats.get_mut(root) {
+                        Some(entry) => entry,
+                        None => {
+                            eprintln!("Fail to get timing entry {:?}", root);
+                            continue;
+                        }
+                    }
+                }
+            };
+
+            let time = *time;
+            let query_stats = match query.query_kind {
+                QueryKind::Mem => &mut entry.mem,
+                QueryKind::MemTree => &mut entry.mem_tree,
+                QueryKind::Find => &mut entry.find,
+                QueryKind::FindTree => &mut entry.find_tree,
+                QueryKind::Add => &mut entry.add,
+                QueryKind::AddTree => &mut entry.add_tree,
+                QueryKind::Remove => &mut entry.remove,
+            };
+
+            entry.queries_count = entry.queries_count.saturating_add(1);
+            entry.total_time += time;
+            query_stats.add_time(time);
+        }
+    }
+}
+
 struct Timing {
     current_block: Option<(HashId, InlinedBlockHash)>,
     current_operation: Option<(HashId, InlinedOperationHash)>,
@@ -426,15 +525,10 @@ struct Timing {
     /// Statistics for the current block
     block_stats: HashMap<String, QueryStats>,
     /// Global statistics
-    tezedge_global_stats: HashMap<String, QueryStatsWithRange>,
-    irmin_global_stats: HashMap<String, QueryStatsWithRange>,
-    tezedge_commit_stats: RangeStats,
-    irmin_commit_stats: RangeStats,
-    tezedge_checkout_stats: RangeStats,
-    irmin_checkout_stats: RangeStats,
-
+    global: GlobalStatistics,
     protocol_tables: HashMap<InlinedBlockHash, Protocol>,
     current_protocol: Option<Protocol>,
+    stats_per_protocol: HashMap<Protocol, GlobalStatistics>,
 }
 
 impl std::fmt::Debug for Timing {
@@ -634,14 +728,10 @@ impl Timing {
             nqueries: 0,
             checkout_time: None,
             block_stats: HashMap::default(),
-            tezedge_global_stats: HashMap::default(),
-            irmin_global_stats: HashMap::default(),
-            tezedge_commit_stats: Default::default(),
-            irmin_commit_stats: RangeStats::default(),
-            tezedge_checkout_stats: Default::default(),
-            irmin_checkout_stats: RangeStats::default(),
             protocol_tables: make_protocol_table(),
             current_protocol: None,
+            global: Default::default(),
+            stats_per_protocol: Default::default(),
         }
     }
 
@@ -858,6 +948,8 @@ impl Timing {
         if Some(protocol) != self.current_protocol {
             self.current_protocol.replace(protocol);
         }
+
+        self.current_protocol.replace(protocol);
     }
 
     fn set_current_operation(
@@ -966,12 +1058,34 @@ impl Timing {
             return Ok(());
         }
 
-        self.tezedge_checkout_stats.add_time(tezedge_time);
-        self.irmin_checkout_stats.add_time(irmin_time);
+        self.global.add_time(irmin_time, tezedge_time);
+
+        if let Some(protocol_stats) = self.get_stats_protocol_mut() {
+            protocol_stats.add_time(irmin_time, tezedge_time);
+        };
+
         self.set_current_context(sql, context_hash)?;
         self.checkout_time = Some((irmin_time, tezedge_time));
 
         Ok(())
+    }
+
+    fn get_stats_protocol_mut(&mut self) -> Option<&mut GlobalStatistics> {
+        let protocol = match self.current_protocol {
+            Some(protocol) => protocol,
+            None => return None,
+        };
+
+        Some(self.stats_per_protocol.entry(protocol).or_default())
+    }
+
+    fn get_stats_protocol(&self) -> Option<(Protocol, &GlobalStatistics)> {
+        let protocol = match self.current_protocol {
+            Some(protocol) => protocol,
+            None => return None,
+        };
+
+        Some((protocol, self.stats_per_protocol.get(&protocol)?))
     }
 
     fn insert_commit(
@@ -984,8 +1098,12 @@ impl Timing {
             return Ok(());
         }
 
-        self.tezedge_commit_stats.add_time(tezedge_time);
-        self.irmin_commit_stats.add_time(irmin_time);
+        self.global.add_time(irmin_time, tezedge_time);
+
+        if let Some(protocol_stats) = self.get_stats_protocol_mut() {
+            protocol_stats.add_time(irmin_time, tezedge_time);
+        };
+
         self.sync_global_stats(sql, irmin_time, tezedge_time)?;
         self.sync_block_stats(sql)?;
 
@@ -1074,48 +1192,11 @@ impl Timing {
     }
 
     fn add_global_stats(&mut self, root: &str, query: &Query) {
-        for (global_stats, time) in &mut [
-            (&mut self.tezedge_global_stats, query.tezedge_time),
-            (&mut self.irmin_global_stats, query.irmin_time),
-        ] {
-            let time = match time {
-                Some(time) => time,
-                None => continue,
-            };
+        self.global.update_stats(root, query);
 
-            let entry = match global_stats.get_mut(root) {
-                Some(entry) => entry,
-                None => {
-                    let stats = QueryStatsWithRange {
-                        root: root.to_string(),
-                        ..Default::default()
-                    };
-                    global_stats.insert(root.to_string(), stats);
-                    match global_stats.get_mut(root) {
-                        Some(entry) => entry,
-                        None => {
-                            eprintln!("Fail to get timing entry {:?}", root);
-                            continue;
-                        }
-                    }
-                }
-            };
-
-            let time = *time;
-            let query_stats = match query.query_kind {
-                QueryKind::Mem => &mut entry.mem,
-                QueryKind::MemTree => &mut entry.mem_tree,
-                QueryKind::Find => &mut entry.find,
-                QueryKind::FindTree => &mut entry.find_tree,
-                QueryKind::Add => &mut entry.add,
-                QueryKind::AddTree => &mut entry.add_tree,
-                QueryKind::Remove => &mut entry.remove,
-            };
-
-            entry.queries_count = entry.queries_count.saturating_add(1);
-            entry.total_time += time;
-            query_stats.add_time(time);
-        }
+        if let Some(protocol_stats) = self.get_stats_protocol_mut() {
+            protocol_stats.update_stats(root, query);
+        };
     }
 
     fn add_block_stats(&mut self, root: &str, query: &Query) {
@@ -1251,45 +1332,55 @@ impl Timing {
             ":block_id": block_id
         })?;
 
-        for query in self.tezedge_global_stats.values_mut() {
-            query.compute_mean();
-        }
-        for query in self.irmin_global_stats.values_mut() {
-            query.compute_mean();
-        }
-        self.tezedge_checkout_stats.compute_mean();
-        self.irmin_checkout_stats.compute_mean();
-        self.tezedge_commit_stats.compute_mean();
-        self.irmin_commit_stats.compute_mean();
+        self.global.compute_mean();
 
+        if let Some(protocol_stats) = self.get_stats_protocol_mut() {
+            protocol_stats.compute_mean();
+        };
+
+        self.sync_global_stats_impl(sql, &self.global, None)?;
+
+        if let Some((protocol, stats)) = self.get_stats_protocol() {
+            self.sync_global_stats_impl(sql, stats, Some(protocol))?;
+        }
+
+        Ok(())
+    }
+
+    fn sync_global_stats_impl(
+        &self,
+        sql: &Connection,
+        global: &GlobalStatistics,
+        protocol: Option<Protocol>,
+    ) -> Result<(), SQLError> {
         for (global_stats, commits, checkouts, name) in &mut [
             (
-                &self.tezedge_global_stats,
-                &self.tezedge_commit_stats,
-                &self.tezedge_checkout_stats,
+                &global.tezedge_global_stats,
+                &global.tezedge_commit_stats,
+                &global.tezedge_checkout_stats,
                 "tezedge",
             ),
             (
-                &self.irmin_global_stats,
-                &self.irmin_commit_stats,
-                &self.irmin_checkout_stats,
+                &global.irmin_global_stats,
+                &global.irmin_commit_stats,
+                &global.irmin_checkout_stats,
                 "irmin",
             ),
         ] {
-            for (root, query_stats) in global_stats.iter() {
+            for (root, query) in global_stats.iter() {
                 let root = root.as_str();
 
-                self.insert_query_stats(sql, name, root, "mem", &query_stats.mem)?;
-                self.insert_query_stats(sql, name, root, "mem_tree", &query_stats.mem_tree)?;
-                self.insert_query_stats(sql, name, root, "find", &query_stats.find)?;
-                self.insert_query_stats(sql, name, root, "find_tree", &query_stats.find_tree)?;
-                self.insert_query_stats(sql, name, root, "add", &query_stats.add)?;
-                self.insert_query_stats(sql, name, root, "add_tree", &query_stats.add_tree)?;
-                self.insert_query_stats(sql, name, root, "remove", &query_stats.remove)?;
+                self.insert_query_stats(sql, name, root, "mem", &query.mem, protocol)?;
+                self.insert_query_stats(sql, name, root, "mem_tree", &query.mem_tree, protocol)?;
+                self.insert_query_stats(sql, name, root, "find", &query.find, protocol)?;
+                self.insert_query_stats(sql, name, root, "find_tree", &query.find_tree, protocol)?;
+                self.insert_query_stats(sql, name, root, "add", &query.add, protocol)?;
+                self.insert_query_stats(sql, name, root, "add_tree", &query.add_tree, protocol)?;
+                self.insert_query_stats(sql, name, root, "remove", &query.remove, protocol)?;
             }
 
-            self.insert_query_stats(sql, name, "commit", "commit", commits)?;
-            self.insert_query_stats(sql, name, "checkout", "checkout", checkouts)?;
+            self.insert_query_stats(sql, name, "commit", "commit", commits, protocol)?;
+            self.insert_query_stats(sql, name, "checkout", "checkout", checkouts, protocol)?;
         }
 
         Ok(())
@@ -1302,20 +1393,24 @@ impl Timing {
         root: &str,
         query_name: &str,
         range_stats: &RangeStats,
+        protocol: Option<Protocol>,
     ) -> Result<(), SQLError> {
         let mut query = sql.prepare_cached(
             "
         INSERT OR IGNORE INTO global_query_stats
-          (root, query_name, context_name)
+          (root, query_name, context_name, protocol)
         VALUES
-          (:root, :query_name, :context_name)
+          (:root, :query_name, :context_name, :protocol)
             ",
         )?;
+
+        let protocol = protocol.as_ref().map(|p| p.as_str());
 
         query.execute(named_params! {
             ":root": root,
             ":query_name": query_name,
             ":context_name": context_name,
+            ":protocol": protocol,
         })?;
 
         let mut query = sql.prepare_cached(
@@ -1362,7 +1457,7 @@ impl Timing {
           one_hundred_s_max_time = :one_hundred_s_max_time,
           one_hundred_s_total_time = :one_hundred_s_total_time
         WHERE
-          root = :root AND query_name = :query_name AND context_name = :context_name;
+          root = :root AND query_name = :query_name AND context_name = :context_name AND protocol = :protocol;
         ",
         )?;
 
@@ -1373,6 +1468,7 @@ impl Timing {
                 ":context_name": context_name,
                 ":total_time": &range_stats.total_time,
                 ":queries_count": &range_stats.queries_count,
+                ":protocol": &protocol,
                 ":one_to_ten_us_count": &range_stats.one_to_ten_us.count,
                 ":one_to_ten_us_mean_time": &range_stats.one_to_ten_us.mean_time,
                 ":one_to_ten_us_max_time": &range_stats.one_to_ten_us.max_time,
@@ -1475,14 +1571,14 @@ impl Timing {
 
             let (global_stats, commit_stats, checkout_stats) = match context_name {
                 "tezedge" => (
-                    &mut self.tezedge_global_stats,
-                    &mut self.tezedge_commit_stats,
-                    &mut self.tezedge_checkout_stats,
+                    &mut self.global.tezedge_global_stats,
+                    &mut self.global.tezedge_commit_stats,
+                    &mut self.global.tezedge_checkout_stats,
                 ),
                 "irmin" => (
-                    &mut self.irmin_global_stats,
-                    &mut self.irmin_commit_stats,
-                    &mut self.irmin_checkout_stats,
+                    &mut self.global.irmin_global_stats,
+                    &mut self.global.irmin_commit_stats,
+                    &mut self.global.irmin_checkout_stats,
                 ),
                 _ => continue,
             };

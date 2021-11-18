@@ -128,6 +128,7 @@ CREATE TABLE IF NOT EXISTS global_query_stats (
   context_name TEXT NOT NULL,
   total_time REAL DEFAULT 0.0,
   queries_count INTEGER DEFAULT 0,
+  protocol TEXT NULL,
 
   one_to_ten_us_count INTEGER DEFAULT 0,
   one_to_ten_us_mean_time REAL DEFAULT 0.0,
