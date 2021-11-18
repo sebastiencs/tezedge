@@ -61,6 +61,24 @@ impl Protocol {
             Protocol::Granada => "granada",
         }
     }
+
+    fn from_str(s: &str) -> Option<Protocol> {
+        match s {
+            "genesis" => Some(Protocol::Genesis),
+            "bootstrap" => Some(Protocol::Bootstrap),
+            "alpha1" => Some(Protocol::Alpha1),
+            "alpha2" => Some(Protocol::Alpha2),
+            "alpha3" => Some(Protocol::Alpha3),
+            "athens_a" => Some(Protocol::AthensA),
+            "babylon" => Some(Protocol::Babylon),
+            "carthage" => Some(Protocol::Carthage),
+            "delphi" => Some(Protocol::Delphi),
+            "edo" => Some(Protocol::Edo),
+            "florence" => Some(Protocol::Florence),
+            "granada" => Some(Protocol::Granada),
+            _ => None,
+        }
+    }
 }
 
 const BLOCK_GENESIS: &str = "BLockGenesisGenesisGenesisGenesisGenesisf79b5d1CoW2";
@@ -1555,7 +1573,8 @@ impl Timing {
       one_hundred_s_total_time,
       total_time,
       queries_count,
-      context_name
+      context_name,
+      protocol
     FROM
       global_query_stats
        ",
@@ -1569,16 +1588,27 @@ impl Timing {
                 Err(_) => continue,
             };
 
+            let protocol = row
+                .get_ref(41)?
+                .as_str()
+                .ok()
+                .and_then(|s| Protocol::from_str(s));
+
+            let global_stats = match protocol {
+                Some(protocol) => self.stats_per_protocol.entry(protocol).or_default(),
+                None => &mut self.global,
+            };
+
             let (global_stats, commit_stats, checkout_stats) = match context_name {
                 "tezedge" => (
-                    &mut self.global.tezedge_global_stats,
-                    &mut self.global.tezedge_commit_stats,
-                    &mut self.global.tezedge_checkout_stats,
+                    &mut global_stats.tezedge_global_stats,
+                    &mut global_stats.tezedge_commit_stats,
+                    &mut global_stats.tezedge_checkout_stats,
                 ),
                 "irmin" => (
-                    &mut self.global.irmin_global_stats,
-                    &mut self.global.irmin_commit_stats,
-                    &mut self.global.irmin_checkout_stats,
+                    &mut global_stats.irmin_global_stats,
+                    &mut global_stats.irmin_commit_stats,
+                    &mut global_stats.irmin_checkout_stats,
                 ),
                 _ => continue,
             };
