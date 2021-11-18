@@ -29,7 +29,7 @@ pub mod container;
 pub const FILENAME_DB: &str = "context_stats.db";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum Protocol {
+pub enum Protocol {
     Genesis,
     Bootstrap,
     Alpha1,
@@ -45,7 +45,7 @@ enum Protocol {
 }
 
 impl Protocol {
-    fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             Protocol::Genesis => "genesis",
             Protocol::Bootstrap => "bootstrap",
@@ -62,7 +62,7 @@ impl Protocol {
         }
     }
 
-    fn from_str(s: &str) -> Option<Protocol> {
+    pub fn from_str(s: &str) -> Option<Protocol> {
         match s {
             "genesis" => Some(Protocol::Genesis),
             "bootstrap" => Some(Protocol::Bootstrap),

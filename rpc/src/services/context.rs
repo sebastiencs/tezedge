@@ -9,7 +9,7 @@ use serde::Serialize;
 
 use crypto::hash::BlockHash;
 use tezos_timing::{
-    hash_to_string, QueryData, QueryStats, QueryStatsWithRange, RangeStats, FILENAME_DB,
+    hash_to_string, Protocol, QueryData, QueryStats, QueryStatsWithRange, RangeStats, FILENAME_DB,
 };
 
 use crate::helpers::RpcServiceError;
@@ -59,6 +59,7 @@ pub(crate) fn make_block_stats(
 pub(crate) fn make_context_stats(
     db_path: Option<&PathBuf>,
     context_name: &str,
+    protocol: Option<&str>,
 ) -> Result<ContextStats, RpcServiceError> {
     let db_path = match db_path {
         Some(db_path) => {
@@ -69,17 +70,29 @@ pub(crate) fn make_context_stats(
         None => PathBuf::from(FILENAME_DB),
     };
 
+    let protocol = match protocol {
+        Some(protocol) => Some(Protocol::from_str(protocol).ok_or(
+            RpcServiceError::InvalidParameters {
+                reason: format!("Invalid 'protocol': {:?}", protocol),
+            },
+        )?),
+        None => None,
+    };
+
     let sql = Connection::open(db_path).map_err(|e| RpcServiceError::UnexpectedError {
         reason: format!("Failed to open context stats db, reason: {}", e),
     })?;
-    make_context_stats_impl(&sql, context_name).map_err(|e| RpcServiceError::UnexpectedError {
-        reason: format!("Failed to make context stats, reason: {}", e),
+    make_context_stats_impl(&sql, context_name, protocol).map_err(|e| {
+        RpcServiceError::UnexpectedError {
+            reason: format!("Failed to make context stats, reason: {}", e),
+        }
     })
 }
 
 fn make_context_stats_impl(
     sql: &Connection,
     context_name: &str,
+    protocol: Option<Protocol>,
 ) -> Result<ContextStats, anyhow::Error> {
     let mut stmt = sql.prepare(
         "
@@ -127,12 +140,13 @@ fn make_context_stats_impl(
     FROM
       global_query_stats
     WHERE
-      context_name = :context_name
+      context_name = :context_name AND protocol = :protocol
        ",
     )?;
 
     let mut rows = stmt.query(named_params! {
-        ":context_name": context_name
+        ":context_name": context_name,
+        ":protocol": protocol.as_ref().map(|p| p.as_str()),
     })?;
 
     let mut map: HashMap<String, QueryStatsWithRange> = HashMap::default();
@@ -473,7 +487,7 @@ mod tests {
         )
         .unwrap();
 
-        let context_stats = make_context_stats_impl(&sql, "tezedge").unwrap();
+        let context_stats = make_context_stats_impl(&sql, "tezedge", None).unwrap();
 
         assert_eq!(context_stats.operations_context.len(), 2);
         assert_float_eq!(context_stats.commit_context.one_to_ten_us.mean_time, 30.3);
