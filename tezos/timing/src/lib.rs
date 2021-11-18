@@ -44,55 +44,32 @@ enum Protocol {
     Granada,
 }
 
+const BLOCK_GENESIS: &str = "BLockGenesisGenesisGenesisGenesisGenesisf79b5d1CoW2";
+const BLOCK_BOOTSTRAP: &str = "BLSqrcLvFtqVCx8WSqkVJypW2kAVRM3eEj2BHgBsB6kb24NqYev";
+const BLOCK_ALPHA1: &str = "BMMmnb2LoJQs3PjvhysXAgK2pAjJE71hoqXFCs6u85xUH3KrRqa";
+const BLOCK_ALPHA2: &str = "BLYbRjXpmDUF6VisMLYcmagP7KLbUrwyYqkTA3puiRjs6YPM2gA";
+const BLOCK_ALPHA3: &str = "BLMqRYnvd2KF11awHweGzShLYDfQoPUfDWVnQgmxg53iX6dcE89";
+const BLOCK_ATHENS_A: &str = "BMWyM6dcDsbsDjcD8iUJYa166mEAFpw9yori2ofSPooBmFqv6uC";
+const BLOCK_BABYLON: &str = "BLu2kYLJuELGnxqeX1DCKWsnAy6kM3Qii563Ja9nkPtqy3iSCaf";
+const BLOCK_CARTHAGE: &str = "BLTZgaJ7cohaD1D7sno334wEVU83s2G7FQvpp1SN6EzHdQTVQsM";
+const BLOCK_DELPHI: &str = "BM5fVxrUeoHJ8pLZNzdDwgW656MnWJMciJYGFvTF6ysj9pT4wi6";
+const BLOCK_EDO: &str = "BKpJVfDq5BkSPQpJFiJumZxnWs7GM9zZJjRkScaoqWLSCUDYMdJ";
+const BLOCK_FLORENCE: &str = "BMTcukHJeJpDoABwNVkhqeFM9JcDv29GCqpcgohY2Qcy8kXM9Uw";
+const BLOCK_GRANADA: &str = "BLzEHPYwpqWSDfu28saTkAUxZ7WnPkNxe8Epg5NfixBfQv7KRUN";
+
 const PROTOCOLS: &[(&str, Protocol)] = &[
-    (
-        "BLockGenesisGenesisGenesisGenesisGenesisf79b5d1CoW2",
-        Protocol::Genesis,
-    ), // block 0
-    (
-        "BLSqrcLvFtqVCx8WSqkVJypW2kAVRM3eEj2BHgBsB6kb24NqYev",
-        Protocol::Bootstrap,
-    ), // block 1
-    (
-        "BMMmnb2LoJQs3PjvhysXAgK2pAjJE71hoqXFCs6u85xUH3KrRqa",
-        Protocol::Alpha1,
-    ), // block 2
-    (
-        "BLYbRjXpmDUF6VisMLYcmagP7KLbUrwyYqkTA3puiRjs6YPM2gA",
-        Protocol::Alpha2,
-    ), // block 28_083
-    (
-        "BLMqRYnvd2KF11awHweGzShLYDfQoPUfDWVnQgmxg53iX6dcE89",
-        Protocol::Alpha3,
-    ), // block 204_762
-    (
-        "BMWyM6dcDsbsDjcD8iUJYa166mEAFpw9yori2ofSPooBmFqv6uC",
-        Protocol::AthensA,
-    ), // block 458_753
-    (
-        "BLu2kYLJuELGnxqeX1DCKWsnAy6kM3Qii563Ja9nkPtqy3iSCaf",
-        Protocol::Babylon,
-    ), // block 655_361
-    (
-        "BLTZgaJ7cohaD1D7sno334wEVU83s2G7FQvpp1SN6EzHdQTVQsM",
-        Protocol::Carthage,
-    ), // block 851_969
-    (
-        "BM5fVxrUeoHJ8pLZNzdDwgW656MnWJMciJYGFvTF6ysj9pT4wi6",
-        Protocol::Delphi,
-    ), // block 1_212_417
-    (
-        "BKpJVfDq5BkSPQpJFiJumZxnWs7GM9zZJjRkScaoqWLSCUDYMdJ",
-        Protocol::Edo,
-    ), // block 1_343_489
-    (
-        "BMTcukHJeJpDoABwNVkhqeFM9JcDv29GCqpcgohY2Qcy8kXM9Uw",
-        Protocol::Florence,
-    ), // block 1_466_368
-    (
-        "BLzEHPYwpqWSDfu28saTkAUxZ7WnPkNxe8Epg5NfixBfQv7KRUN",
-        Protocol::Granada,
-    ), // block 1_589_248
+    (BLOCK_GENESIS, Protocol::Genesis),     // block 0
+    (BLOCK_BOOTSTRAP, Protocol::Bootstrap), // block 1
+    (BLOCK_ALPHA1, Protocol::Alpha1),       // block 2
+    (BLOCK_ALPHA2, Protocol::Alpha2),       // block 28_083
+    (BLOCK_ALPHA3, Protocol::Alpha3),       // block 204_762
+    (BLOCK_ATHENS_A, Protocol::AthensA),    // block 458_753
+    (BLOCK_BABYLON, Protocol::Babylon),     // block 655_361
+    (BLOCK_CARTHAGE, Protocol::Carthage),   // block 851_969
+    (BLOCK_DELPHI, Protocol::Delphi),       // block 1_212_417
+    (BLOCK_EDO, Protocol::Edo),             // block 1_343_489
+    (BLOCK_FLORENCE, Protocol::Florence),   // block 1_466_368
+    (BLOCK_GRANADA, Protocol::Granada),     // block 1_589_248
 ];
 
 #[derive(Debug)]
@@ -456,7 +433,7 @@ struct Timing {
     tezedge_checkout_stats: RangeStats,
     irmin_checkout_stats: RangeStats,
 
-    protocol_tables: HashMap<BlockHash, Protocol>,
+    protocol_tables: HashMap<InlinedBlockHash, Protocol>,
     current_protocol: Option<Protocol>,
 }
 
@@ -520,11 +497,12 @@ impl TimingChannel {
     }
 }
 
-fn make_protocol_table() -> HashMap<BlockHash, Protocol> {
+fn make_protocol_table() -> HashMap<InlinedBlockHash, Protocol> {
     let mut table = HashMap::default();
 
     for (hash, protocol) in PROTOCOLS {
-        table.insert(BlockHash::from_base58_check(hash).unwrap(), *protocol);
+        let block_hash = BlockHash::from_base58_check(hash).unwrap();
+        table.insert(InlinedBlockHash::from(block_hash.0.as_slice()), *protocol);
     }
 
     table
@@ -872,7 +850,7 @@ impl Timing {
             None => return,
         };
 
-        let protocol = match self.protocol_tables.get(block_hash.as_ref()).copied() {
+        let protocol = match self.protocol_tables.get(&block_hash).copied() {
             Some(protocol) => protocol,
             None => return,
         };
