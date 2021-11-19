@@ -464,9 +464,14 @@ struct GlobalStatistics {
 }
 
 impl GlobalStatistics {
-    fn add_time(&mut self, irmin_time: Option<f64>, tezedge_time: Option<f64>) {
+    fn add_commit_times(&mut self, irmin_time: Option<f64>, tezedge_time: Option<f64>) {
         self.tezedge_commit_stats.add_time(tezedge_time);
         self.irmin_commit_stats.add_time(irmin_time);
+    }
+
+    fn add_checkout_times(&mut self, irmin_time: Option<f64>, tezedge_time: Option<f64>) {
+        self.tezedge_checkout_stats.add_time(tezedge_time);
+        self.irmin_checkout_stats.add_time(irmin_time);
     }
 
     fn compute_mean(&mut self) {
@@ -1076,10 +1081,10 @@ impl Timing {
             return Ok(());
         }
 
-        self.global.add_time(irmin_time, tezedge_time);
+        self.global.add_checkout_times(irmin_time, tezedge_time);
 
         if let Some(protocol_stats) = self.get_stats_protocol_mut() {
-            protocol_stats.add_time(irmin_time, tezedge_time);
+            protocol_stats.add_checkout_times(irmin_time, tezedge_time);
         };
 
         self.set_current_context(sql, context_hash)?;
@@ -1116,10 +1121,10 @@ impl Timing {
             return Ok(());
         }
 
-        self.global.add_time(irmin_time, tezedge_time);
+        self.global.add_commit_times(irmin_time, tezedge_time);
 
         if let Some(protocol_stats) = self.get_stats_protocol_mut() {
-            protocol_stats.add_time(irmin_time, tezedge_time);
+            protocol_stats.add_commit_times(irmin_time, tezedge_time);
         };
 
         self.sync_global_stats(sql, irmin_time, tezedge_time)?;
