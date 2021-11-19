@@ -475,45 +475,52 @@ mod tests {
         sql.execute(
             "
         INSERT INTO global_query_stats
-          (context_name, query_name, root, one_to_ten_us_count, one_to_ten_us_mean_time,
+          (context_name, protocol, query_name, root, one_to_ten_us_count, one_to_ten_us_mean_time,
            one_to_ten_us_max_time, one_to_ten_us_total_time, queries_count, total_time)
         VALUES
-          ('tezedge', 'mem', 'a', 2, 1.3, 1.4, 1.5, 1, 2.0),
-          ('tezedge', 'mem', 'b', 3, 10.3, 10.4, 10.5, 1, 2.0),
-          ('tezedge', 'add', 'b', 4, 20.3, 20.4, 20.5, 1, 2.0),
-          ('tezedge', 'commit', 'commit', 4, 30.3, 30.4, 30.5, 1, 2.0),
-          ('tezedge', 'checkout', 'checkout', 5, 40.3, 40.4, 40.5, 1, 2.0);
+          ('tezedge', '_all_', 'mem', 'a', 2, 1.3, 1.4, 1.5, 1, 2.0),
+          ('tezedge', '_all_', 'mem', 'b', 3, 10.3, 10.4, 10.5, 1, 2.0),
+          ('tezedge', '_all_', 'add', 'b', 4, 20.3, 20.4, 20.5, 1, 2.0),
+          ('tezedge', '_all_', 'commit', 'commit', 4, 30.3, 30.4, 30.5, 1, 2.0),
+          ('tezedge', '_all_', 'checkout', 'checkout', 5, 40.3, 40.4, 40.5, 1, 2.0),
+          ('tezedge', 'carthage', 'mem', 'a', 2, 1.3, 1.4, 1.5, 1, 2.0),
+          ('tezedge', 'carthage', 'mem', 'b', 3, 10.3, 10.4, 10.5, 1, 2.0),
+          ('tezedge', 'carthage', 'add', 'b', 4, 20.3, 20.4, 20.5, 1, 2.0),
+          ('tezedge', 'carthage', 'commit', 'commit', 4, 30.3, 30.4, 30.5, 1, 2.0),
+          ('tezedge', 'carthage', 'checkout', 'checkout', 5, 40.3, 40.4, 40.5, 1, 2.0);
             ",
             [],
         )
         .unwrap();
 
-        let context_stats = make_context_stats_impl(&sql, "tezedge", None).unwrap();
+        for protocol in [None, Some(Protocol::Carthage)] {
+            let context_stats = make_context_stats_impl(&sql, "tezedge", protocol).unwrap();
 
-        assert_eq!(context_stats.operations_context.len(), 2);
-        assert_float_eq!(context_stats.commit_context.one_to_ten_us.mean_time, 30.3);
-        assert_eq!(context_stats.commit_context.queries_count, 1);
-        assert_float_eq!(context_stats.checkout_context.one_to_ten_us.mean_time, 40.3);
+            assert_eq!(context_stats.operations_context.len(), 2);
+            assert_float_eq!(context_stats.commit_context.one_to_ten_us.mean_time, 30.3);
+            assert_eq!(context_stats.commit_context.queries_count, 1);
+            assert_float_eq!(context_stats.checkout_context.one_to_ten_us.mean_time, 40.3);
 
-        let query = context_stats
-            .operations_context
-            .iter()
-            .find(|a| a.root == "a")
-            .unwrap();
-        assert_float_eq!(query.mem.one_to_ten_us.mean_time, 1.3);
-        assert_eq!(query.mem.one_to_ten_us.count, 2);
-        assert_float_eq!(query.total_time, 2.0);
-        assert_float_eq!(query.mem.total_time, 2.0);
+            let query = context_stats
+                .operations_context
+                .iter()
+                .find(|a| a.root == "a")
+                .unwrap();
+            assert_float_eq!(query.mem.one_to_ten_us.mean_time, 1.3);
+            assert_eq!(query.mem.one_to_ten_us.count, 2);
+            assert_float_eq!(query.total_time, 2.0);
+            assert_float_eq!(query.mem.total_time, 2.0);
 
-        let query = context_stats
-            .operations_context
-            .iter()
-            .find(|a| a.root == "b")
-            .unwrap();
-        assert_float_eq!(query.mem.one_to_ten_us.mean_time, 10.3);
-        assert_eq!(query.mem.one_to_ten_us.count, 3);
-        assert_float_eq!(query.add.one_to_ten_us.mean_time, 20.3);
-        assert_eq!(query.add.one_to_ten_us.count, 4);
+            let query = context_stats
+                .operations_context
+                .iter()
+                .find(|a| a.root == "b")
+                .unwrap();
+            assert_float_eq!(query.mem.one_to_ten_us.mean_time, 10.3);
+            assert_eq!(query.mem.one_to_ten_us.count, 3);
+            assert_float_eq!(query.add.one_to_ten_us.mean_time, 20.3);
+            assert_eq!(query.add.one_to_ten_us.count, 4);
+        }
 
         let block_hash = BlockHash::try_from_bytes(&[32; 32]).unwrap();
         let block_stats = make_block_stats_impl(&sql, block_hash).unwrap();
