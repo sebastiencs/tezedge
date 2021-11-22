@@ -794,6 +794,7 @@ impl WorkingTree {
     /// to database under the new commit. Return last commit if there are no changes, that is
     /// empty commits are not allowed.
     // FIXME: we don't check for empty commits.
+    #[allow(clippy::too_many_arguments)]
     pub fn prepare_commit(
         &self,
         time: u64,

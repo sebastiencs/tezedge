@@ -37,7 +37,7 @@ use super::{DeserializationError, ObjectHeader, ObjectLength, SerializationError
 pub struct DirEntryShapeHeader {
     kind: DirEntryKind,
     blob_inline_length: B3,
-    offset_length: OffsetLength,
+    offset_length: RelativeOffsetLength,
     #[skip]
     _unused: B2,
 }
@@ -51,7 +51,7 @@ pub struct DirEntryHeader {
     kind: DirEntryKind,
     blob_inline_length: B3,
     key_inline_length: B2,
-    offset_length: OffsetLength,
+    offset_length: RelativeOffsetLength,
 }
 
 // Must fit in 1 byte
@@ -60,17 +60,17 @@ assert_eq_size!(DirEntryHeader, u8);
 #[derive(BitfieldSpecifier)]
 #[bits = 2]
 #[derive(Clone, Debug, Eq, PartialEq, Copy)]
-enum OffsetLength {
-    RelativeOneByte,
-    RelativeTwoBytes,
-    RelativeFourBytes,
-    RelativeEightBytes,
+enum RelativeOffsetLength {
+    OneByte,
+    TwoBytes,
+    FourBytes,
+    EightBytes,
 }
 
 #[bitfield(bits = 8)]
 struct CommitHeader {
-    parent_offset_length: OffsetLength,
-    root_offset_length: OffsetLength,
+    parent_offset_length: RelativeOffsetLength,
+    root_offset_length: RelativeOffsetLength,
     author_length: ObjectLength,
     is_parent_exist: bool,
     #[skip]
@@ -101,7 +101,7 @@ impl AbsoluteOffset {
     pub fn as_u64(self) -> u64 {
         self.0
     }
-    pub fn add(self, add: u64) -> Self {
+    pub fn add_offset(self, add: u64) -> Self {
         Self(self.0 + add)
     }
 }
@@ -115,7 +115,7 @@ impl RelativeOffset {
 fn get_relative_offset(
     current_offset: AbsoluteOffset,
     target_offset: AbsoluteOffset,
-) -> (RelativeOffset, OffsetLength) {
+) -> (RelativeOffset, RelativeOffsetLength) {
     let current_offset = current_offset.as_u64();
     let target_offset = target_offset.as_u64();
 
@@ -126,22 +126,22 @@ fn get_relative_offset(
     if relative_offset <= 0xFF {
         (
             RelativeOffset(relative_offset),
-            OffsetLength::RelativeOneByte,
+            RelativeOffsetLength::OneByte,
         )
     } else if relative_offset <= 0xFFFF {
         (
             RelativeOffset(relative_offset),
-            OffsetLength::RelativeTwoBytes,
+            RelativeOffsetLength::TwoBytes,
         )
     } else if relative_offset <= 0xFFFFFFFF {
         (
             RelativeOffset(relative_offset),
-            OffsetLength::RelativeFourBytes,
+            RelativeOffsetLength::FourBytes,
         )
     } else {
         (
             RelativeOffset(relative_offset),
-            OffsetLength::RelativeEightBytes,
+            RelativeOffsetLength::EightBytes,
         )
     }
 }
@@ -149,28 +149,28 @@ fn get_relative_offset(
 fn serialize_offset(
     output: &mut Vec<u8>,
     relative_offset: RelativeOffset,
-    offset_length: OffsetLength,
+    offset_length: RelativeOffsetLength,
     stats: &mut SerializeStats,
 ) -> Result<(), SerializationError> {
     let relative_offset = relative_offset.as_u64();
 
     match offset_length {
-        OffsetLength::RelativeOneByte => {
+        RelativeOffsetLength::OneByte => {
             let offset: u8 = relative_offset as u8;
             output.write_all(&offset.to_le_bytes())?;
             stats.add_offset(1);
         }
-        OffsetLength::RelativeTwoBytes => {
+        RelativeOffsetLength::TwoBytes => {
             let offset: u16 = relative_offset as u16;
             output.write_all(&offset.to_le_bytes())?;
             stats.add_offset(2);
         }
-        OffsetLength::RelativeFourBytes => {
+        RelativeOffsetLength::FourBytes => {
             let offset: u32 = relative_offset as u32;
             output.write_all(&offset.to_le_bytes())?;
             stats.add_offset(4);
         }
-        OffsetLength::RelativeEightBytes => {
+        RelativeOffsetLength::EightBytes => {
             output.write_all(&relative_offset.to_le_bytes())?;
             stats.add_offset(8);
         }
@@ -214,7 +214,7 @@ fn serialize_shaped_directory(
         if let Some(blob_inline) = blob_inline {
             let byte: [u8; 1] = DirEntryShapeHeader::new()
                 .with_kind(kind)
-                .with_offset_length(OffsetLength::RelativeOneByte) // Ignored on deserialization
+                .with_offset_length(RelativeOffsetLength::OneByte) // Ignored on deserialization
                 .with_blob_inline_length(blob_inline_length as u8)
                 .into_bytes();
 
@@ -292,6 +292,7 @@ fn write_object_header(output: &mut Vec<u8>, start: usize, tag: ObjectTag) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn serialize_directory_or_shape(
     dir: &[(StringId, DirEntryId)],
     object_hash_id: HashId,
@@ -326,6 +327,7 @@ fn serialize_directory_or_shape(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn serialize_directory(
     dir: &[(StringId, DirEntryId)],
     object_hash_id: HashId,
@@ -372,7 +374,7 @@ fn serialize_directory(
                     .with_kind(kind)
                     .with_key_inline_length(len as u8)
                     .with_blob_inline_length(blob_inline_length as u8)
-                    .with_offset_length(offset_length.unwrap_or(OffsetLength::RelativeOneByte))
+                    .with_offset_length(offset_length.unwrap_or(RelativeOffsetLength::OneByte))
                     .into_bytes();
 
                 output.write_all(&byte[..])?;
@@ -384,7 +386,7 @@ fn serialize_directory(
                     .with_kind(kind)
                     .with_key_inline_length(0)
                     .with_blob_inline_length(blob_inline_length as u8)
-                    .with_offset_length(offset_length.unwrap_or(OffsetLength::RelativeOneByte))
+                    .with_offset_length(offset_length.unwrap_or(RelativeOffsetLength::OneByte))
                     .into_bytes();
                 output.write_all(&byte[..])?;
 
@@ -415,6 +417,7 @@ fn serialize_directory(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn serialize_object(
     object: &Object,
     object_hash_id: HashId,
@@ -430,7 +433,7 @@ pub fn serialize_object(
     let start = output.len();
 
     let offset = offset.ok_or(SerializationError::MissingOffset)?;
-    let mut offset: AbsoluteOffset = offset.add(start as u64);
+    let mut offset: AbsoluteOffset = offset.add_offset(start as u64);
 
     match object {
         Object::Directory(dir_id) => {
@@ -493,7 +496,7 @@ pub fn serialize_object(
             let (is_parent_exist, (parent_relative_offset, parent_offset_length)) =
                 match commit.parent_commit_ref {
                     Some(parent) => (true, get_relative_offset(offset, parent.offset())),
-                    None => (false, (0.into(), OffsetLength::RelativeOneByte)),
+                    None => (false, (0.into(), RelativeOffsetLength::OneByte)),
                 };
 
             let header: [u8; 1] = CommitHeader::new()
@@ -553,14 +556,14 @@ struct PointersOffsetsHeader {
 }
 
 impl PointersOffsetsHeader {
-    fn set(&mut self, index: usize, offset_length: OffsetLength) {
+    fn set(&mut self, index: usize, offset_length: RelativeOffsetLength) {
         assert!(index < 32);
 
         let bits: u64 = match offset_length {
-            OffsetLength::RelativeOneByte => 0,
-            OffsetLength::RelativeTwoBytes => 1,
-            OffsetLength::RelativeFourBytes => 2,
-            OffsetLength::RelativeEightBytes => 3,
+            RelativeOffsetLength::OneByte => 0,
+            RelativeOffsetLength::TwoBytes => 1,
+            RelativeOffsetLength::FourBytes => 2,
+            RelativeOffsetLength::EightBytes => 3,
         };
 
         self.bitfield |= bits << (index * 2);
@@ -568,16 +571,16 @@ impl PointersOffsetsHeader {
         assert_eq!(self.get(index), offset_length)
     }
 
-    fn get(&self, index: usize) -> OffsetLength {
+    fn get(&self, index: usize) -> RelativeOffsetLength {
         assert!(index < 32);
 
         let bits = (self.bitfield >> (index * 2)) & 0b11;
 
         match bits {
-            0 => OffsetLength::RelativeOneByte,
-            1 => OffsetLength::RelativeTwoBytes,
-            2 => OffsetLength::RelativeFourBytes,
-            _ => OffsetLength::RelativeEightBytes,
+            0 => RelativeOffsetLength::OneByte,
+            1 => RelativeOffsetLength::TwoBytes,
+            2 => RelativeOffsetLength::FourBytes,
+            _ => RelativeOffsetLength::EightBytes,
         }
     }
 
@@ -604,7 +607,7 @@ impl PointersOffsetsHeader {
         bitfield
     }
 
-    fn to_bytes(self) -> [u8; 8] {
+    fn to_bytes(&self) -> [u8; 8] {
         self.bitfield.to_le_bytes()
     }
 
@@ -615,6 +618,7 @@ impl PointersOffsetsHeader {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn serialize_inode(
     inode_id: InodeId,
     output: &mut Vec<u8>,
@@ -628,7 +632,7 @@ fn serialize_inode(
     use SerializationError::*;
 
     let mut start = output.len();
-    let mut offset = off.add(start as u64);
+    let mut offset = off.add_offset(start as u64);
 
     let inode = storage.get_inode(inode_id)?;
 
@@ -661,7 +665,7 @@ fn serialize_inode(
             }
 
             start = output.len();
-            offset = off.add(start as u64);
+            offset = off.add_offset(start as u64);
 
             // Replaced by ObjectHeader
             output.write_all(&[0, 0])?;
@@ -709,7 +713,7 @@ fn serialize_inode(
 
 fn deserialize_offset(
     data: &[u8],
-    offset_length: OffsetLength,
+    offset_length: RelativeOffsetLength,
     object_offset: AbsoluteOffset,
 ) -> Result<(AbsoluteOffset, usize), DeserializationError> {
     use DeserializationError::*;
@@ -717,25 +721,25 @@ fn deserialize_offset(
     let object_offset = object_offset.as_u64();
 
     match offset_length {
-        OffsetLength::RelativeOneByte => {
+        RelativeOffsetLength::OneByte => {
             let byte = data.get(0).ok_or(UnexpectedEOF)?;
             let relative_offset: u8 = u8::from_le_bytes([*byte]);
             let absolute_offset: u64 = object_offset - relative_offset as u64;
             Ok((absolute_offset.into(), 1))
         }
-        OffsetLength::RelativeTwoBytes => {
+        RelativeOffsetLength::TwoBytes => {
             let bytes = data.get(..2).ok_or(UnexpectedEOF)?;
             let relative_offset: u16 = u16::from_le_bytes(bytes.try_into()?);
             let absolute_offset: u64 = object_offset - relative_offset as u64;
             Ok((absolute_offset.into(), 2))
         }
-        OffsetLength::RelativeFourBytes => {
+        RelativeOffsetLength::FourBytes => {
             let bytes = data.get(..4).ok_or(UnexpectedEOF)?;
             let relative_offset: u32 = u32::from_le_bytes(bytes.try_into()?);
             let absolute_offset: u64 = object_offset - relative_offset as u64;
             Ok((absolute_offset.into(), 4))
         }
-        OffsetLength::RelativeEightBytes => {
+        RelativeOffsetLength::EightBytes => {
             let bytes = data.get(..8).ok_or(UnexpectedEOF)?;
             let relative_offset: u64 = u64::from_le_bytes(bytes.try_into()?);
             let absolute_offset: u64 = object_offset - relative_offset;
@@ -789,7 +793,7 @@ fn deserialize_shaped_directory(
 
             let kind = dir_entry_header.kind();
             let blob_inline_length = dir_entry_header.blob_inline_length() as usize;
-            let offset_length: OffsetLength = dir_entry_header.offset_length();
+            let offset_length: RelativeOffsetLength = dir_entry_header.offset_length();
 
             let dir_entry = if blob_inline_length > 0 {
                 // The blob is inlined
@@ -1675,20 +1679,20 @@ mod tests {
         let mut header = PointersOffsetsHeader::default();
 
         for index in 0..32 {
-            header.set(index, OffsetLength::RelativeOneByte);
-            assert_eq!(header.get(index), OffsetLength::RelativeOneByte);
+            header.set(index, RelativeOffsetLength::OneByte);
+            assert_eq!(header.get(index), RelativeOffsetLength::OneByte);
 
             header.clear(index);
-            header.set(index, OffsetLength::RelativeTwoBytes);
-            assert_eq!(header.get(index), OffsetLength::RelativeTwoBytes);
+            header.set(index, RelativeOffsetLength::TwoBytes);
+            assert_eq!(header.get(index), RelativeOffsetLength::TwoBytes);
 
             header.clear(index);
-            header.set(index, OffsetLength::RelativeFourBytes);
-            assert_eq!(header.get(index), OffsetLength::RelativeFourBytes);
+            header.set(index, RelativeOffsetLength::FourBytes);
+            assert_eq!(header.get(index), RelativeOffsetLength::FourBytes);
 
             header.clear(index);
-            header.set(index, OffsetLength::RelativeEightBytes);
-            assert_eq!(header.get(index), OffsetLength::RelativeEightBytes);
+            header.set(index, RelativeOffsetLength::EightBytes);
+            assert_eq!(header.get(index), RelativeOffsetLength::EightBytes);
         }
     }
 }

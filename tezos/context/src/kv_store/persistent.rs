@@ -246,7 +246,7 @@ impl Persistent {
             // Read the rest of the object
             self.data_file.read_exact_at(
                 &mut buffer[FIRST_READ_OBJECT_LENGTH..object_length],
-                offset.add(FIRST_READ_OBJECT_LENGTH as u64),
+                offset.add_offset(FIRST_READ_OBJECT_LENGTH as u64),
             )?;
         }
 

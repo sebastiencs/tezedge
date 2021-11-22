@@ -171,6 +171,7 @@ fn serialize_directory(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn serialize_object(
     object: &Object,
     object_hash_id: HashId,
@@ -260,6 +261,7 @@ pub fn serialize_object(
     Ok(None)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn serialize_inode(
     inode_id: InodeId,
     output: &mut Vec<u8>,

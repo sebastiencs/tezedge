@@ -117,9 +117,7 @@ impl TezedgeIndex {
             patch_context,
             repository,
             storage: Default::default(),
-            string_interner: Rc::new(RefCell::new(
-                string_interner.unwrap_or_else(Default::default),
-            )),
+            string_interner: Rc::new(RefCell::new(string_interner.unwrap_or_default())),
         }
     }
 
