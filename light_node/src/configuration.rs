@@ -100,7 +100,7 @@ impl Storage {
 
     const LRU_CACHE_SIZE_96MB: usize = 96 * 1024 * 1024;
 
-    const DEFAULT_CONTEXT_KV_STORE_BACKEND: &'static str = tezos_context_api::INMEM;
+    const DEFAULT_CONTEXT_KV_STORE_BACKEND: &'static str = tezos_context_api::ONDISK;
 
     const DEFAULT_MAINDB: &'static str = "rocksdb";
 

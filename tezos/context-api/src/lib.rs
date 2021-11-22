@@ -10,6 +10,7 @@ use strum_macros::EnumIter;
 use tezos_messages::base::rpc_support::{RpcJsonMap, UniversalValue};
 
 pub const INMEM: &str = "inmem";
+pub const ONDISK: &str = "ondisk";
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone, EnumIter)]
 pub enum SupportedContextKeyValueStore {
