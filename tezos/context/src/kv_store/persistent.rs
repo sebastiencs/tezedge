@@ -16,8 +16,8 @@ use crate::{
     hash::OBJECT_HASH_LEN,
     initializer::IndexInitializationError,
     persistent::{
-        get_commit_hash, get_persistent_base_path, DBError, File, FileType, Flushable,
-        KeyValueStoreBackend, Persistable,
+        file::{get_persistent_base_path, File, FileType},
+        get_commit_hash, DBError, Flushable, KeyValueStoreBackend, Persistable,
     },
     serialize::{
         deserialize_hash_id,
@@ -121,9 +121,11 @@ struct Hashes {
 
 impl Hashes {
     fn try_new(hashes_file: File) -> Self {
-        debug_assert_eq!(hashes_file.offset().as_u64() as usize % OBJECT_HASH_LEN, 0);
+        let hash_index = hashes_file.offset().as_u64() - hashes_file.start();
 
-        let in_memory_first_index = (hashes_file.offset().as_u64() as usize) / OBJECT_HASH_LEN;
+        debug_assert_eq!(hash_index as usize % OBJECT_HASH_LEN, 0);
+
+        let in_memory_first_index = (hash_index as usize) / OBJECT_HASH_LEN;
 
         Self {
             in_memory: HashesContainer::new(in_memory_first_index),
@@ -142,6 +144,8 @@ impl Hashes {
 
             let hash_id_index: usize = hash_id.try_into()?;
             let offset = hash_id_index * std::mem::size_of::<ObjectHash>();
+
+            let offset = offset as u64 + self.hashes_file.start();
 
             let mut hash: ObjectHash = Default::default();
 
@@ -299,7 +303,7 @@ fn deserialize_hashes(
     let hashes = Hashes::try_new(hashes_file);
     let mut context_hashes: Map<u64, ObjectReference> = Default::default();
 
-    let mut offset = 0u64;
+    let mut offset = commit_index_file.start();
     let end = commit_index_file.offset().as_u64();
 
     let mut hash_id_bytes = [0u8; 4];

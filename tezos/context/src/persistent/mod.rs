@@ -1,24 +1,21 @@
 // Copyright (c) SimpleStaking, Viable Systems and Tezedge Contributors
 // SPDX-License-Identifier: MIT
 
-use std::{
-    borrow::Cow,
-    convert::TryFrom,
-    fs::OpenOptions,
-    io::{self, Seek, SeekFrom, Write},
-    os::unix::prelude::OpenOptionsExt,
-    path::{Path, PathBuf},
-    sync::{Arc, Mutex, PoisonError},
-};
+use std::{borrow::Cow, convert::TryFrom, io, sync::PoisonError};
 
 use crypto::hash::ContextHash;
 use thiserror::Error;
 
 use tezos_timing::{RepositoryMemoryUsage, SerializeStats};
 
+#[cfg(test)]
+use crate::serialize::persistent::AbsoluteOffset;
+#[cfg(test)]
+use std::sync::Arc;
+
 use crate::{
     kv_store::{readonly_ipc::ContextServiceError, HashId, HashIdError, VacantObjectHash},
-    serialize::{persistent::AbsoluteOffset, DeserializationError},
+    serialize::DeserializationError,
     working_tree::{
         shape::{DirectoryShapeError, DirectoryShapeId, ShapeStrings},
         storage::{DirEntryId, Storage},
@@ -28,6 +25,8 @@ use crate::{
     },
     ContextError, ContextKeyValueStore, ObjectHash,
 };
+
+pub mod file;
 
 pub trait Flushable {
     fn flush(&self) -> Result<(), anyhow::Error>;
@@ -209,144 +208,4 @@ pub(crate) fn get_commit_hash(
     let commit_hash = repo.get_hash(commit_ref)?;
     let commit_hash = ContextHash::try_from(&commit_hash[..])?;
     Ok(commit_hash)
-}
-
-#[derive(Debug)]
-pub enum FileType {
-    ShapeDirectories,
-    ShapeDirectoriesIndex,
-    CommitIndex,
-    Data,
-    Strings,
-    BigStrings,
-    Hashes,
-}
-
-const PERSISTENT_BASE_PATH: &str = "db_persistent";
-
-impl FileType {
-    fn get_path(&self) -> &Path {
-        match self {
-            FileType::ShapeDirectories => Path::new("shape_directories.db"),
-            FileType::ShapeDirectoriesIndex => Path::new("shape_directories_index.db"),
-            FileType::CommitIndex => Path::new("commit_index.db"),
-            FileType::Data => Path::new("data.db"),
-            FileType::Strings => Path::new("strings.db"),
-            FileType::Hashes => Path::new("hashes.db"),
-            FileType::BigStrings => Path::new("big_strings.db"),
-        }
-    }
-}
-
-pub struct File {
-    file: std::fs::File,
-    offset: u64,
-}
-
-/// Absolute offset in the file
-#[derive(Debug)]
-pub struct FileOffset(pub u64);
-
-lazy_static::lazy_static! {
-    static ref BASE_PATH_EXCLU: Arc<Mutex<()>> = {
-        Arc::new(Mutex::new(()))
-    };
-}
-
-fn create_random_path() -> String {
-    use rand::Rng;
-
-    let mut rng = rand::thread_rng();
-
-    // Avoid data races with `Path::exists` below
-    let _guard = BASE_PATH_EXCLU.lock().unwrap();
-
-    let mut path = format!("{}/{}", PERSISTENT_BASE_PATH, rng.gen::<u32>());
-
-    while Path::new(&path).exists() {
-        path = format!("{}/{}", PERSISTENT_BASE_PATH, rng.gen::<u32>());
-    }
-
-    path
-}
-
-pub fn get_persistent_base_path(db_path: Option<&str>) -> String {
-    match db_path {
-        Some(db_path) if !db_path.is_empty() => db_path.to_string(),
-        _ => create_random_path(),
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn get_custom_flags() -> i32 {
-    libc::O_NOATIME
-}
-
-#[cfg(not(target_os = "linux"))]
-fn get_custom_flags() -> i32 {
-    0
-}
-
-impl File {
-    pub fn try_new(base_path: &str, file_type: FileType) -> Result<Self, io::Error> {
-        std::fs::create_dir_all(&base_path).unwrap();
-
-        let mut file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .truncate(false)
-            .append(true)
-            .create(true)
-            .custom_flags(get_custom_flags())
-            .open(PathBuf::from(base_path).join(file_type.get_path()))?;
-
-        // We use seek, in cases metadatas were not synchronized
-        let offset = file.seek(SeekFrom::End(0))?;
-
-        Ok(Self { file, offset })
-    }
-
-    pub fn offset(&self) -> AbsoluteOffset {
-        self.offset.into()
-    }
-
-    pub fn sync(&mut self) -> Result<(), io::Error> {
-        self.file.sync_data()
-    }
-
-    pub fn append(&mut self, bytes: impl AsRef<[u8]>) -> Result<(), io::Error> {
-        let bytes = bytes.as_ref();
-
-        self.offset += bytes.len() as u64;
-        self.file.write_all(bytes)
-    }
-
-    pub fn read_exact_at(
-        &self,
-        buffer: &mut [u8],
-        offset: AbsoluteOffset,
-    ) -> Result<(), io::Error> {
-        use std::os::unix::prelude::FileExt;
-
-        self.file.read_exact_at(buffer, offset.as_u64())
-    }
-
-    pub fn read_at_most<'a>(
-        &self,
-        mut buffer: &'a mut [u8],
-        offset: AbsoluteOffset,
-    ) -> Result<&'a [u8], io::Error> {
-        let buf_len = buffer.len();
-
-        let eof = self.offset as usize;
-        let end = offset.as_u64() as usize + buf_len;
-
-        if eof < end {
-            buffer = &mut buffer[..buf_len - (end - eof)];
-        }
-
-        self.read_exact_at(buffer, offset)?;
-
-        Ok(buffer)
-    }
 }

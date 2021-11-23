@@ -12,6 +12,7 @@ use thiserror::Error;
 use crate::kv_store::in_memory::InMemory;
 use crate::kv_store::persistent::Persistent;
 use crate::kv_store::readonly_ipc::ReadonlyIpcBackend;
+use crate::persistent::file::OpenFileError;
 use crate::serialize::DeserializationError;
 use crate::{ContextKeyValueStore, PatchContextFunction, TezedgeContext, TezedgeIndex};
 
@@ -19,11 +20,17 @@ use crate::{ContextKeyValueStore, PatchContextFunction, TezedgeContext, TezedgeI
 #[derive(Debug, Error)]
 pub enum IndexInitializationError {
     #[error("Failure when initializing IPC context: {reason}")]
-    IpcError { reason: IpcError },
+    IpcError {
+        #[from]
+        reason: IpcError,
+    },
     #[error("Attempted to initialize an IPC context without a socket path")]
     IpcSocketPathMissing,
     #[error("Unexpected IO error occurred, {reason}")]
-    IoError { reason: std::io::Error },
+    IoError {
+        #[from]
+        reason: std::io::Error,
+    },
     #[error("Deserialization error occured, {reason}")]
     DeserializationError {
         #[from]
@@ -31,18 +38,11 @@ pub enum IndexInitializationError {
     },
     #[error("Mutex/lock lock error! Reason: {reason}")]
     LockError { reason: String },
-}
-
-impl From<IpcError> for IndexInitializationError {
-    fn from(error: IpcError) -> Self {
-        Self::IpcError { reason: error }
-    }
-}
-
-impl From<std::io::Error> for IndexInitializationError {
-    fn from(error: std::io::Error) -> Self {
-        Self::IoError { reason: error }
-    }
+    #[error("Failed to open database file, {reason}")]
+    OpenFileError {
+        #[from]
+        reason: OpenFileError,
+    },
 }
 
 pub fn initialize_tezedge_index(

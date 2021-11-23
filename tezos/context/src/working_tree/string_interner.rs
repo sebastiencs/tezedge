@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use static_assertions::const_assert;
 use tezos_timing::StringsMemoryUsage;
 
-use crate::{persistent::File, serialize::DeserializationError, Map};
+use crate::{persistent::file::File, serialize::DeserializationError, Map};
 
 use super::storage::StorageError;
 
@@ -165,7 +165,7 @@ impl BigStrings {
 
         let mut result = Self::default();
 
-        let mut offset = 0u64;
+        let mut offset = big_strings_file.start();
         let end = big_strings_file.offset().as_u64();
 
         let mut length_bytes = [0u8; 4];
@@ -364,7 +364,7 @@ impl StringInterner {
         // Each entry is:
         // [length byte | ...<length> bytes string... ]
         // So it is read in sequence and then passed to `result.get_string_id` which will create the entry
-        let mut offset = 0u64;
+        let mut offset = strings_file.start();
         let end = strings_file.offset().as_u64();
 
         let mut length_byte = [0u8; 1];

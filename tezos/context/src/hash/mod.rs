@@ -643,7 +643,6 @@ mod tests {
         let mut json_file = open_hashes_json_gz(json_gz_file_name);
         let mut bytes = Vec::new();
 
-        let mut storage = Storage::new();
         let mut strings = StringInterner::default();
         let mut output = Vec::new();
         let mut older_objects = Vec::new();
@@ -660,6 +659,8 @@ mod tests {
         let test_cases: Vec<DirEntryHashTest> = serde_json::from_slice(&bytes).unwrap();
 
         for test_case in test_cases {
+            let mut storage = Storage::new();
+
             let bindings_count = test_case.bindings.len();
             let mut dir_id = DirectoryId::empty();
             let mut batch = Vec::new();

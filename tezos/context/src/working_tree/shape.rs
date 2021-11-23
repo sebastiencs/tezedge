@@ -11,7 +11,9 @@ use std::{
     hash::Hasher,
 };
 
-use crate::{kv_store::index_map::IndexMap, persistent::File, serialize::DeserializationError};
+use crate::{
+    kv_store::index_map::IndexMap, persistent::file::File, serialize::DeserializationError,
+};
 use modular_bitfield::prelude::*;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -208,7 +210,7 @@ impl DirectoryShapes {
         let mut result = Self::default();
         let mut string_id_bytes = [0u8; 4];
 
-        let mut offset = 0;
+        let mut offset = shapes_file.start();
         let shape_file_end = shapes_file.offset().as_u64();
 
         while offset < shape_file_end {
@@ -220,7 +222,7 @@ impl DirectoryShapes {
             result.shapes.push(string_id)
         }
 
-        let mut offset = 0;
+        let mut offset = shapes_index_file.start();
         let shape_index_file_end = shapes_index_file.offset().as_u64();
         let mut shape_slice_id_bytes = [0u8; 8];
 
