@@ -221,6 +221,12 @@ pub struct RepositoryMemoryUsage {
     pub gc_npending_free_ids: usize,
     /// Number of shapes
     pub nshapes: usize,
+    /// Bytes occupied by all strings in the repository
+    pub strings_total_bytes: usize,
+    /// Bytes occupied by shapes in the repository
+    pub shapes_total_bytes: usize,
+    /// Bytes occupied by commit index in the repository
+    pub commit_index_total_bytes: usize,
 }
 
 #[derive(Debug)]
@@ -814,6 +820,9 @@ impl Timing {
               repo_npending_free_ids = :repo_npending_free_ids,
               repo_gc_npending_free_ids = :repo_gc_npending_free_ids,
               repo_nshapes = :repo_nshapes,
+              repo_strings_total_bytes = :repo_strings_total_bytes,
+              repo_shapes_total_bytes = :repo_shapes_total_bytes,
+              repo_commit_index_total_bytes = :repo_commit_index_total_bytes,
               storage_nodes_capacity = :storage_nodes_capacity,
               storage_nodes_length = :storage_nodes_length,
               storage_trees_capacity = :storage_trees_capacity,
@@ -858,6 +867,9 @@ impl Timing {
             ":repo_npending_free_ids": stats.context.repo.npending_free_ids,
             ":repo_gc_npending_free_ids": stats.context.repo.gc_npending_free_ids,
             ":repo_nshapes": stats.context.repo.nshapes,
+            ":repo_strings_total_bytes": stats.context.repo.strings_total_bytes,
+            ":repo_shapes_total_bytes": stats.context.repo.shapes_total_bytes,
+            ":repo_commit_index_total_bytes": stats.context.repo.commit_index_total_bytes,
             ":storage_nodes_length": stats.context.storage.nodes_len,
             ":storage_nodes_capacity": stats.context.storage.nodes_cap,
             ":storage_trees_length": stats.context.storage.directories_len,

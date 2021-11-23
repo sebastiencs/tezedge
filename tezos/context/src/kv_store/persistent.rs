@@ -408,16 +408,25 @@ impl KeyValueStoreBackend for Persistent {
     }
 
     fn memory_usage(&self) -> RepositoryMemoryUsage {
+        let strings_total_bytes = self.string_interner.memory_usage().total_bytes;
+        let hashes_capacity = self.hashes.in_memory.total_capacity();
+        let shapes_total_bytes = self.shapes.total_bytes();
+        let commit_index_total_bytes = self.context_hashes.capacity()
+            * (std::mem::size_of::<ObjectReference>() + std::mem::size_of::<u64>());
+
         RepositoryMemoryUsage {
             values_bytes: 0,
             values_capacity: 0,
             values_length: 0,
-            hashes_capacity: self.hashes.in_memory.capacity(),
+            hashes_capacity,
             hashes_length: 0,
-            total_bytes: 0,
+            total_bytes: strings_total_bytes + hashes_capacity,
             npending_free_ids: 0,
             gc_npending_free_ids: 0,
             nshapes: self.shapes.nshapes(),
+            strings_total_bytes,
+            shapes_total_bytes,
+            commit_index_total_bytes,
         }
     }
 

@@ -65,14 +65,24 @@ impl HashValueStore {
         }
     }
 
-    pub fn get_memory_usage(&self) -> RepositoryMemoryUsage {
+    pub fn get_memory_usage(
+        &self,
+        strings_total_bytes: usize,
+        shapes_total_bytes: usize,
+        commit_index_total_bytes: usize,
+        nshapes: usize,
+    ) -> RepositoryMemoryUsage {
         let values_bytes = self.values_bytes;
         let values_capacity = self.values.capacity();
         let hashes_capacity = self.hashes.capacity();
+
         let total_bytes = values_bytes
             .saturating_add(values_capacity * size_of::<Option<Arc<[u8]>>>())
             .saturating_add(values_capacity * 16) // Each `Arc` has 16 extra bytes for the counters
-            .saturating_add(hashes_capacity * size_of::<ObjectHash>());
+            .saturating_add(hashes_capacity * size_of::<ObjectHash>())
+            .saturating_add(strings_total_bytes)
+            .saturating_add(shapes_total_bytes)
+            .saturating_add(commit_index_total_bytes);
 
         RepositoryMemoryUsage {
             values_bytes,
@@ -83,7 +93,10 @@ impl HashValueStore {
             total_bytes,
             npending_free_ids: self.free_ids.as_ref().map(|c| c.len()).unwrap_or(0),
             gc_npending_free_ids: GC_PENDING_HASHIDS.load(Ordering::Acquire),
-            nshapes: 0,
+            nshapes,
+            strings_total_bytes,
+            shapes_total_bytes,
+            commit_index_total_bytes,
         }
     }
 
@@ -215,9 +228,17 @@ impl KeyValueStoreBackend for InMemory {
     }
 
     fn memory_usage(&self) -> RepositoryMemoryUsage {
-        let mut mem = self.hashes.get_memory_usage();
-        mem.nshapes = self.shapes.nshapes();
-        mem
+        let strings_total_bytes = self.string_interner.memory_usage().total_bytes;
+        let shapes_total_bytes = self.shapes.total_bytes();
+        let commit_index_total_bytes = self.context_hashes.capacity()
+            * (std::mem::size_of::<HashId>() + std::mem::size_of::<u64>());
+
+        self.hashes.get_memory_usage(
+            strings_total_bytes,
+            shapes_total_bytes,
+            commit_index_total_bytes,
+            self.shapes.nshapes(),
+        )
     }
 
     fn get_shape(&self, shape_id: DirectoryShapeId) -> Result<ShapeStrings, DBError> {

@@ -255,4 +255,16 @@ impl DirectoryShapes {
 
         Ok(result)
     }
+
+    pub fn total_bytes(&self) -> usize {
+        let hash_to_strings = self.hash_to_strings.len()
+            * (std::mem::size_of::<(DirectoryShapeId, ShapeSliceId)>()
+                + std::mem::size_of::<DirectoryShapeHash>());
+
+        let shapes = self.shapes.capacity() * std::mem::size_of::<StringId>();
+
+        let id_to_hash = self.id_to_hash.capacity() * std::mem::size_of::<DirectoryShapeHash>();
+
+        hash_to_strings + shapes + id_to_hash
+    }
 }
