@@ -123,7 +123,7 @@ fn get_custom_flags() -> i32 {
 
 impl File {
     pub fn try_new(base_path: &str, file_type: FileType) -> Result<Self, OpenFileError> {
-        std::fs::create_dir_all(&base_path).unwrap();
+        std::fs::create_dir_all(&base_path)?;
 
         let mut file = OpenOptions::new()
             .read(true)

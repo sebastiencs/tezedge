@@ -27,6 +27,7 @@ use crate::{
 };
 
 pub mod file;
+pub mod lock;
 
 pub trait Flushable {
     fn flush(&self) -> Result<(), anyhow::Error>;

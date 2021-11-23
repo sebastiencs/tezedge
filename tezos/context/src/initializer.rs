@@ -13,6 +13,7 @@ use crate::kv_store::in_memory::InMemory;
 use crate::kv_store::persistent::Persistent;
 use crate::kv_store::readonly_ipc::ReadonlyIpcBackend;
 use crate::persistent::file::OpenFileError;
+use crate::persistent::lock::LockDatabaseError;
 use crate::serialize::DeserializationError;
 use crate::{ContextKeyValueStore, PatchContextFunction, TezedgeContext, TezedgeIndex};
 
@@ -42,6 +43,11 @@ pub enum IndexInitializationError {
     OpenFileError {
         #[from]
         reason: OpenFileError,
+    },
+    #[error("Failed to lock database file, {reason}")]
+    LockDatabaseError {
+        #[from]
+        reason: LockDatabaseError,
     },
 }
 

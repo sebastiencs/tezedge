@@ -17,7 +17,9 @@ use crate::{
     initializer::IndexInitializationError,
     persistent::{
         file::{get_persistent_base_path, File, FileType},
-        get_commit_hash, DBError, Flushable, KeyValueStoreBackend, Persistable,
+        get_commit_hash,
+        lock::Lock,
+        DBError, Flushable, KeyValueStoreBackend, Persistable,
     },
     serialize::{
         deserialize_hash_id,
@@ -90,6 +92,8 @@ pub struct Persistent {
     string_interner: StringInterner,
 
     pub context_hashes: Map<u64, ObjectReference>,
+
+    lock_file: Lock,
 }
 
 impl NotGarbageCollected for Persistent {}
@@ -192,6 +196,8 @@ impl Persistent {
     pub fn try_new(db_path: Option<&str>) -> Result<Persistent, IndexInitializationError> {
         let base_path = get_persistent_base_path(db_path);
 
+        let lock_file = Lock::try_lock(&base_path)?;
+
         let data_file = File::try_new(&base_path, FileType::Data)?;
         let mut shape_file = File::try_new(&base_path, FileType::ShapeDirectories)?;
         let mut shape_index_file = File::try_new(&base_path, FileType::ShapeDirectoriesIndex)?;
@@ -217,6 +223,7 @@ impl Persistent {
             shapes,
             string_interner,
             context_hashes,
+            lock_file,
         })
     }
 
