@@ -47,7 +47,7 @@ pub enum DirEntryKind {
 pub struct DirEntryInner {
     dir_entry_kind: DirEntryKind,
     commited: bool,
-    object_hash_id: B32,
+    object_hash_id: B48,
     object_available: bool,
     object_id: B61,
     file_offset_available: bool,
@@ -63,7 +63,7 @@ pub struct DirEntry {
     pub(crate) inner: Cell<DirEntryInner>,
 }
 
-assert_eq_size!([u8; 20], DirEntry);
+assert_eq_size!([u8; 22], DirEntry);
 
 /// Commit objects are the entry points to different versions of the context tree.
 #[derive(Debug, Hash, Clone, Eq, PartialEq)]
@@ -272,7 +272,7 @@ impl DirEntry {
         let hash_id = store.make_hash_id_ready_for_commit(hash_id)?;
 
         let mut inner = self.inner.get();
-        inner.set_object_hash_id(hash_id.as_u32());
+        inner.set_object_hash_id(hash_id.as_u64());
         self.inner.set(inner);
         Ok(Some(hash_id))
     }
@@ -316,7 +316,7 @@ impl DirEntry {
                 DirEntryInner::new()
                     .with_commited(true)
                     .with_dir_entry_kind(dir_entry_kind)
-                    .with_object_hash_id(hash_id.map(|h| h.as_u32()).unwrap_or(0))
+                    .with_object_hash_id(hash_id.map(|h| h.as_u64()).unwrap_or(0))
                     .with_object_available(object.is_some())
                     .with_object_id(match object {
                         Some(Object::Directory(dir_id)) => dir_id.into(),
