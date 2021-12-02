@@ -110,14 +110,14 @@ impl TezedgeIndex {
     pub fn new(
         repository: Arc<RwLock<ContextKeyValueStore>>,
         patch_context: Option<BoxRoot<PatchContextFunction>>,
-        string_interner: Option<StringInterner>,
+        string_interner: Option<Rc<RefCell<StringInterner>>>,
     ) -> Self {
         let patch_context = Rc::new(patch_context);
         Self {
             patch_context,
             repository,
             storage: Default::default(),
-            string_interner: Rc::new(RefCell::new(string_interner.unwrap_or_default())),
+            string_interner: string_interner.unwrap_or_default(),
         }
     }
 
