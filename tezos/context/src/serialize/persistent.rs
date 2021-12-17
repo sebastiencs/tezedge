@@ -647,7 +647,10 @@ fn serialize_inode(
 
             // Recursively serialize all children
             for pointer in pointers.iter().filter_map(|p| p.as_ref()) {
-                let hash_id = pointer.hash_id().ok_or(MissingHashId)?;
+                let hash_id = pointer
+                    .hash_id(storage, repository)
+                    .unwrap()
+                    .ok_or(MissingHashId)?;
 
                 if pointer.is_commited() {
                     // We only want to serialize new inodes.
