@@ -1,7 +1,10 @@
 // Copyright (c) SimpleStaking, Viable Systems and Tezedge Contributors
 // SPDX-License-Identifier: MIT
 
-use std::convert::{TryFrom, TryInto};
+use std::{
+    convert::{TryFrom, TryInto},
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 use crate::{
     kv_store::{HashId, VacantObjectHash},
@@ -21,9 +24,11 @@ pub struct HashesContainer {
     /// `ObjectHash` ready to be commited to disk
     commiting: IndexMap<HashId, ObjectHash>,
     /// `true` when we create `ObjectHash` to must be commited
-    is_commiting: bool,
+    pub is_commiting: bool,
     /// First `HashId` in `Self::working_tree` and `Self::commiting`
     first_index: usize,
+
+    pub ncreated: AtomicUsize,
 }
 
 impl HashesContainer {
@@ -33,6 +38,7 @@ impl HashesContainer {
             commiting: IndexMap::with_chunk_capacity(1000),
             is_commiting: false,
             first_index,
+            ncreated: AtomicUsize::new(0),
         }
     }
 
@@ -41,6 +47,22 @@ impl HashesContainer {
     }
 
     pub fn set_is_commiting(&mut self) {
+        // if !self.working_tree.is_empty() {
+        //     let ncreated = self.ncreated.load(Ordering::Relaxed);
+        //     println!(
+        //         "[hash] Hashes created outside of commit: {:?} ncreated={:?}",
+        //         self.working_tree.len(),
+        //         ncreated
+        //     );
+        // }
+
+        let ncreated = self.ncreated.load(Ordering::Relaxed);
+        println!(
+            "[hash] HashesContainer::set_is_commiting commiting={:?} working_tree={:?} ncreated={:?}",
+            self.commiting.len(),
+            self.working_tree.len(),
+            ncreated,
+        );
         self.is_commiting = true;
     }
 
@@ -49,6 +71,7 @@ impl HashesContainer {
         self.working_tree.clear();
         self.commiting.clear();
         self.is_commiting = false;
+        self.ncreated.store(0, Ordering::Relaxed);
     }
 
     pub fn is_commiting_empty(&self) -> bool {
@@ -99,6 +122,21 @@ impl HashesContainer {
         // Retrieve the `HashId`
         let hash_id = HashId::try_from(self.first_index + commiting_index)?;
 
+        if hash_id
+            .get_in_working_tree()
+            .map(|h| h.is_some())
+            .unwrap_or(false)
+        {
+            let hash_id = hash_id.as_u64();
+            println!(
+                "Commited HashId contains the 'working tree' bit: {:?} {:064b} first_index={:?} commiting_index={:?}",
+                hash_id,
+                hash_id,
+                self.first_index,
+                commiting_index,
+            );
+        }
+
         // Return the new `HashId`
         Ok(hash_id)
     }
@@ -130,6 +168,8 @@ impl HashesContainer {
     }
 
     pub fn get_vacant_object_hash(&mut self) -> Result<VacantObjectHash, DBError> {
+        self.ncreated.fetch_add(1, Ordering::Relaxed);
+
         let hashes = if self.is_commiting {
             &mut self.commiting
         } else {
