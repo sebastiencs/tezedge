@@ -332,6 +332,8 @@ pub fn serialize_hash_id(
 
         Ok(())
     } else {
+        panic!("HashIdTooBig {:?} {:064b}", hash_id, hash_id);
+
         // The HashId must not be 48 bits because we use the
         // MSB to determine if the HashId is compact or not
         Err(SerializationError::HashIdTooBig)
