@@ -32,6 +32,8 @@ services:
 
   tezedge-node:
     image: tezedge:timings
+    environment:
+      - RUST_BACKTRACE=full
     pid: host
     network_mode: host
     command: ["--network", "${TEZOS_NETWORK-mainnet}", "--p2p-port=9732", "--rpc-port=18732", "--websocket-address=0.0.0.0:4927", "--log", "terminal", "file", "--log-file", "/tmp/tezedge/tezedge.log", "--tezos-context-storage", "tezedge", "--context-stats-db-path", "context-stats-db", "--peer-thresh-low", "15", "--peer-thresh-high", "30", "--context-kv-store", "ondisk", "--initialize-context-timeout-in-secs", "120000"]
