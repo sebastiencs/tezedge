@@ -306,11 +306,17 @@ pub fn deserialize_hash_id(data: &[u8]) -> Result<(Option<HashId>, usize), Deser
     }
 }
 
-pub fn serialize_hash_id(
-    hash_id: u64,
+pub fn serialize_hash_id_impl(
+    hash_id: Option<HashId>,
     output: &mut Vec<u8>,
+    repository: &mut ContextKeyValueStore,
     stats: &mut SerializeStats,
 ) -> Result<(), SerializationError> {
+    let hash_id = match hash_id {
+        Some(hash_id) => repository.make_hash_id_ready_for_commit(hash_id)?.as_u64(),
+        None => 0,
+    };
+
     stats.highest_hash_id = stats.highest_hash_id.max(hash_id);
 
     if hash_id & FULL_31_BITS == hash_id {
@@ -332,10 +338,21 @@ pub fn serialize_hash_id(
 
         Ok(())
     } else {
-        panic!("HashIdTooBig {:?} {:064b}", hash_id, hash_id);
-
         // The HashId must not be 48 bits because we use the
         // MSB to determine if the HashId is compact or not
         Err(SerializationError::HashIdTooBig)
     }
+}
+
+pub fn serialize_hash_id<T>(
+    hash_id: T,
+    output: &mut Vec<u8>,
+    repository: &mut ContextKeyValueStore,
+    stats: &mut SerializeStats,
+) -> Result<(), SerializationError>
+where
+    T: Into<Option<HashId>>,
+{
+    let hash_id: Option<HashId> = hash_id.into();
+    serialize_hash_id_impl(hash_id, output, repository, stats)
 }
