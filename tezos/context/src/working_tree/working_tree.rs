@@ -49,7 +49,10 @@
 //! Reference: https://git-scm.com/book/en/v2/Git-Internals-Git-Objects
 use std::{
     array::TryFromSliceError,
-    sync::{Arc, PoisonError},
+    sync::{
+        atomic::{AtomicBool, AtomicUsize},
+        Arc, PoisonError,
+    },
     vec::IntoIter,
 };
 
@@ -464,6 +467,9 @@ impl<'a> SerializingData<'a> {
     }
 }
 
+static NEQUAL: AtomicUsize = AtomicUsize::new(0);
+static NHASH: AtomicUsize = AtomicUsize::new(0);
+
 impl WorkingTree {
     /// Creates a new working tree with an empty directory
     pub fn new(index: TezedgeIndex) -> Self {
@@ -563,12 +569,16 @@ impl WorkingTree {
     }
 
     pub fn equal(&self, other: &Self) -> Result<bool, MerkleError> {
+        NEQUAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
         // TODO: ok for now, but perform an actual compare instead of hashing here
         Ok(self.hash()? == other.hash()?)
     }
 
     /// Returns the root hash of this working tree.
     pub fn hash(&self) -> Result<ObjectHash, MerkleError> {
+        NHASH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
         let storage = self.index.storage.borrow();
         let mut repo = self.index.repository.write()?;
 
@@ -803,6 +813,11 @@ impl WorkingTree {
         offset: Option<AbsoluteOffset>,
         keep_older_objects: bool,
     ) -> Result<PostCommitData, MerkleError> {
+        let nequal = NEQUAL.swap(0, std::sync::atomic::Ordering::Relaxed);
+        let nhash = NHASH.swap(0, std::sync::atomic::Ordering::Relaxed);
+
+        println!("[prepare_commit] nequal={:?} nhash={:?}", nequal, nhash);
+
         let root_hash_id = self.get_root_directory_hash(repository)?;
         let root = self.get_root_directory();
 
