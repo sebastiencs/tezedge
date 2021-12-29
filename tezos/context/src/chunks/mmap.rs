@@ -49,7 +49,7 @@ static MMAP_COUNTER: AtomicUsize = AtomicUsize::new(0);
 fn create_file() -> std::io::Result<(PathBuf, File)> {
     loop {
         let file_path = format!(
-            "working_tree_{}",
+            "/tmp/tezedge/context/working_tree_{}",
             MMAP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         );
 
