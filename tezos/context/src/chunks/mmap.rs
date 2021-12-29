@@ -2,7 +2,7 @@ use std::{
     fmt::format, fs::File, mem::ManuallyDrop, ops::Range, path::PathBuf, sync::atomic::AtomicUsize,
 };
 
-use memmap2::MmapRaw;
+use memmap2::{MmapMut, MmapRaw};
 
 #[derive(Debug)]
 pub enum MmappedError {
@@ -11,7 +11,7 @@ pub enum MmappedError {
 
 struct MmapInner<T> {
     ptr: ManuallyDrop<Box<[T]>>,
-    mmap: Option<MmapRaw>,
+    mmap: Option<MmapMut>,
     file_path: PathBuf,
 }
 
@@ -77,11 +77,13 @@ impl<T> MmapInner<T> {
 
         file.set_len(nbytes as u64)?;
 
-        let mmap = memmap2::MmapOptions::new()
-            .len(nbytes)
-            .offset(0)
-            .map_raw(&file)
-            .unwrap();
+        let mut mmap = unsafe {
+            memmap2::MmapOptions::new()
+                .len(nbytes)
+                .offset(0)
+                .map_mut(&file)
+                .unwrap()
+        };
 
         assert_eq!(mmap.len(), nbytes);
 
@@ -104,6 +106,12 @@ impl<T> MmapInner<T> {
         let align_of_t = std::mem::align_of::<T>() as u64;
 
         assert_eq!(ptr_u64 % align_of_t, 0);
+    }
+
+    fn flush(&mut self) {
+        if let Some(mmap) = self.mmap.as_mut() {
+            mmap.flush_async().unwrap();
+        }
     }
 }
 
@@ -165,6 +173,8 @@ impl<T> MmappedVec<T> {
         self.write_item(self.length, element);
         self.length += 1;
 
+        self.inner.flush();
+
         Ok(())
     }
 
@@ -223,6 +233,8 @@ impl<T: Clone> MmappedVec<T> {
         }
 
         self.length += slice.len();
+
+        self.inner.flush();
 
         Ok(())
     }
