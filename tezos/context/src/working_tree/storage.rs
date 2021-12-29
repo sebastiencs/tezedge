@@ -646,15 +646,36 @@ const DEFAULT_BLOBS_CAPACITY: usize = 128 * 1024;
 const DEFAULT_NODES_CAPACITY: usize = 128 * 1024;
 const DEFAULT_INODES_CAPACITY: usize = 32 * 1024;
 
+// sqlite> select id, storage_nodes_capacity, storage_trees_capacity, storage_blobs_capacity, storage_strings_capacity, storage_big_strings_capacity, storage_strings_total_bytes, storage_total_bytes, repo_hashes_capacity from blocks order by storage_total_bytes desc limit 10;
+// id|storage_nodes_capacity|storage_trees_capacity|storage_blobs_capacity|storage_strings_capacity|storage_big_strings_capacity|storage_strings_total_bytes|storage_total_bytes|repo_hashes_capacity
+// 1    |106299392|321388544|76283904|1048576|1073741824|1074790400|47638913024|2000
+// 40961|655360|6815744|3014656|1048576|1073741824|1074790400|174202880|2000
+// 47335|262144|1048576|1048576|1048576|1073741824|1074790400|96995328|2000
+// 49162|262144|1048576|393216|1048576|1073741824|1074790400|96339968|2000
+// 57370|262144|1048576|262144|1048576|1073741824|1074790400|96208896|2000
+// 64565|131072|1048576|786432|1048576|1140850688|1141899264|73402368|2000
+// 36474|131072|1048576|524288|1048576|1073741824|1074790400|73140224|2000
+// 57372|131072|1048576|524288|1048576|1073741824|1074790400|73140224|2000
+// 16392|131072|1048576|393216|1048576|1073741824|1074790400|73009152|2000
+// 32780|131072|1048576|393216|1048576|1073741824|1074790400|73009152|2000
+
 impl Storage {
     pub fn new() -> Self {
         Self {
-            directories: ChunkedVec::with_chunk_capacity_on_disk(1000, 0, 1101), // ~4MB
-            temp_dir: Vec::with_capacity(256),                                   // 2KB
-            blobs: ChunkedVec::with_chunk_capacity_on_disk(1000, 0, 1101),       // 128KB
-            nodes: IndexMap::with_chunk_capacity_on_disk(1000, 0),               // ~3MB
-            inodes: IndexMap::with_chunk_capacity_on_disk(1000, 0),              // ~20MB
-            data: Vec::with_capacity(100_000),                                   // ~97KB
+            directories: ChunkedVec::with_chunk_capacity_on_disk(
+                DEFAULT_DIRECTORIES_CAPACITY,
+                7,
+                32_000_000,
+            ), // ~4MB
+            // directories: ChunkedVec::with_chunk_capacity_on_disk(1000, 0, 1101), // ~4MB
+            temp_dir: Vec::with_capacity(256), // 2KB
+            blobs: ChunkedVec::with_chunk_capacity_on_disk(DEFAULT_BLOBS_CAPACITY, 8, 10_000_000), // 128KB
+            // blobs: ChunkedVec::with_chunk_capacity_on_disk(1000, 0, 1101),       // 128KB
+            // nodes: IndexMap::with_chunk_capacity_on_disk(1000, 0, 1001),
+            nodes: IndexMap::with_chunk_capacity_on_disk(DEFAULT_NODES_CAPACITY, 6, 10_000_000), // ~3MB
+            inodes: IndexMap::with_chunk_capacity_on_disk(DEFAULT_INODES_CAPACITY, 2, 10_000_000), // ~20MB
+            // inodes: IndexMap::with_chunk_capacity_on_disk(1000, 0, 1001), // ~20MB
+            data: Vec::with_capacity(100_000), // ~97KB
             offsets_to_hash_id: HashMap::default(),
         } // Total ~27MB
     }
@@ -684,7 +705,7 @@ impl Storage {
             .saturating_add(blobs_cap)
             .saturating_add(inodes_cap * size_of::<Inode>());
 
-        StorageMemoryUsage {
+        let mem_usage = StorageMemoryUsage {
             nodes_len: self.nodes.len(),
             nodes_cap,
             directories_len: self.directories.len(),
@@ -696,7 +717,11 @@ impl Storage {
             inodes_cap,
             strings,
             total_bytes,
-        }
+        };
+
+        println!("Storage memory usage: {:#?}", mem_usage);
+
+        mem_usage
     }
 
     pub fn add_blob_by_ref(&mut self, blob: &[u8]) -> Result<BlobId, StorageError> {
@@ -1646,25 +1671,32 @@ impl Storage {
 
     pub fn clear(&mut self) {
         if self.blobs.capacity() > DEFAULT_BLOBS_CAPACITY {
-            self.blobs = ChunkedVec::with_chunk_capacity(DEFAULT_BLOBS_CAPACITY);
+            self.blobs =
+                ChunkedVec::with_chunk_capacity_on_disk(DEFAULT_BLOBS_CAPACITY, 8, 10_000_000);
         } else {
             self.blobs.clear();
         }
 
         if self.nodes.capacity() > DEFAULT_NODES_CAPACITY {
-            self.nodes = IndexMap::with_chunk_capacity(DEFAULT_NODES_CAPACITY);
+            self.nodes =
+                IndexMap::with_chunk_capacity_on_disk(DEFAULT_NODES_CAPACITY, 6, 10_000_000);
         } else {
             self.nodes.clear();
         }
 
         if self.directories.capacity() > DEFAULT_DIRECTORIES_CAPACITY {
-            self.directories = ChunkedVec::with_chunk_capacity(DEFAULT_DIRECTORIES_CAPACITY);
+            self.directories = ChunkedVec::with_chunk_capacity_on_disk(
+                DEFAULT_DIRECTORIES_CAPACITY,
+                7,
+                32_000_000,
+            );
         } else {
             self.directories.clear();
         }
 
         if self.inodes.capacity() > DEFAULT_INODES_CAPACITY {
-            self.inodes = IndexMap::with_chunk_capacity(DEFAULT_INODES_CAPACITY);
+            self.inodes =
+                IndexMap::with_chunk_capacity_on_disk(DEFAULT_INODES_CAPACITY, 2, 10_000_000);
         } else {
             self.inodes.clear();
         }

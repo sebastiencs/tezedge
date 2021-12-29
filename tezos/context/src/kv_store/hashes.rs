@@ -29,8 +29,8 @@ pub struct HashesContainer {
 impl HashesContainer {
     pub fn new(first_index: usize) -> Self {
         Self {
-            working_tree: IndexMap::with_chunk_capacity(1000),
-            commiting: IndexMap::with_chunk_capacity(1000),
+            working_tree: IndexMap::with_chunk_capacity_on_disk(100_000, 20, 10_000_000),
+            commiting: IndexMap::with_chunk_capacity_on_disk(100_000, 20, 10_000_000),
             is_commiting: false,
             first_index,
         }
@@ -47,12 +47,12 @@ impl HashesContainer {
     pub fn commited(&mut self) {
         self.first_index += self.commiting.len();
         if self.working_tree.capacity() > 1000 {
-            self.working_tree = IndexMap::with_chunk_capacity(1000);
+            self.working_tree = IndexMap::with_chunk_capacity_on_disk(100_000, 20, 10_000_000);
         } else {
             self.working_tree.clear();
         }
         if self.commiting.capacity() > 1000 {
-            self.commiting = IndexMap::with_chunk_capacity(1000);
+            self.commiting = IndexMap::with_chunk_capacity_on_disk(100_000, 20, 10_000_000);
         } else {
             self.commiting.clear();
         }

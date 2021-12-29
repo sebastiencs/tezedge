@@ -115,9 +115,11 @@ impl DirectoryShapes {
     pub fn new() -> Self {
         Self {
             hash_to_strings: BTreeMap::default(),
-            id_to_hash: IndexMap::with_chunk_capacity(1_024 * 100),
+            id_to_hash: IndexMap::with_chunk_capacity_on_disk(1, 0, 5_000_000),
+            // id_to_hash: IndexMap::with_chunk_capacity(1_024 * 100),
             temp: Vec::with_capacity(256),
-            shapes: ChunkedVec::with_chunk_capacity(64 * 1024 * 1024), // 64 MB
+            shapes: ChunkedVec::with_chunk_capacity_on_disk(1, 0, 100_000_000), // 64 MB
+            // shapes: ChunkedVec::with_chunk_capacity(64 * 1024 * 1024), // 64 MB
             to_serialize: Vec::with_capacity(256),
         }
     }
