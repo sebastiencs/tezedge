@@ -367,7 +367,7 @@ impl<T> ChunkedVec<T> {
         {
             let list = self
                 .list_of_chunks
-                .get(self.first_index_on_disk.unwrap_or(1000)..);
+                .get(self.nchunks_in_memory.unwrap_or(1000)..);
 
             if let Some(list) = list {
                 for chunk in list {
