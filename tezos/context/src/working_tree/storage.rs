@@ -665,15 +665,15 @@ impl Storage {
             directories: ChunkedVec::with_chunk_capacity_on_disk(
                 DEFAULT_DIRECTORIES_CAPACITY,
                 7,
-                32_000_000,
+                100_000,
             ), // ~4MB
             // directories: ChunkedVec::with_chunk_capacity_on_disk(1000, 0, 1101), // ~4MB
             temp_dir: Vec::with_capacity(256), // 2KB
-            blobs: ChunkedVec::with_chunk_capacity_on_disk(DEFAULT_BLOBS_CAPACITY, 8, 10_000_000), // 128KB
+            blobs: ChunkedVec::with_chunk_capacity_on_disk(DEFAULT_BLOBS_CAPACITY, 8, 100_000), // 128KB
             // blobs: ChunkedVec::with_chunk_capacity_on_disk(1000, 0, 1101),       // 128KB
             // nodes: IndexMap::with_chunk_capacity_on_disk(1000, 0, 1001),
-            nodes: IndexMap::with_chunk_capacity_on_disk(DEFAULT_NODES_CAPACITY, 6, 10_000_000), // ~3MB
-            inodes: IndexMap::with_chunk_capacity_on_disk(DEFAULT_INODES_CAPACITY, 2, 10_000_000), // ~20MB
+            nodes: IndexMap::with_chunk_capacity_on_disk(DEFAULT_NODES_CAPACITY, 6, 100_000), // ~3MB
+            inodes: IndexMap::with_chunk_capacity_on_disk(DEFAULT_INODES_CAPACITY, 2, 100_000), // ~20MB
             // inodes: IndexMap::with_chunk_capacity_on_disk(1000, 0, 1001), // ~20MB
             data: Vec::with_capacity(100_000), // ~97KB
             offsets_to_hash_id: HashMap::default(),
@@ -1672,31 +1672,27 @@ impl Storage {
     pub fn clear(&mut self) {
         if self.blobs.capacity() > DEFAULT_BLOBS_CAPACITY {
             self.blobs =
-                ChunkedVec::with_chunk_capacity_on_disk(DEFAULT_BLOBS_CAPACITY, 8, 10_000_000);
+                ChunkedVec::with_chunk_capacity_on_disk(DEFAULT_BLOBS_CAPACITY, 8, 100_000);
         } else {
             self.blobs.clear();
         }
 
         if self.nodes.capacity() > DEFAULT_NODES_CAPACITY {
-            self.nodes =
-                IndexMap::with_chunk_capacity_on_disk(DEFAULT_NODES_CAPACITY, 6, 10_000_000);
+            self.nodes = IndexMap::with_chunk_capacity_on_disk(DEFAULT_NODES_CAPACITY, 6, 100_000);
         } else {
             self.nodes.clear();
         }
 
         if self.directories.capacity() > DEFAULT_DIRECTORIES_CAPACITY {
-            self.directories = ChunkedVec::with_chunk_capacity_on_disk(
-                DEFAULT_DIRECTORIES_CAPACITY,
-                7,
-                32_000_000,
-            );
+            self.directories =
+                ChunkedVec::with_chunk_capacity_on_disk(DEFAULT_DIRECTORIES_CAPACITY, 7, 100_000);
         } else {
             self.directories.clear();
         }
 
         if self.inodes.capacity() > DEFAULT_INODES_CAPACITY {
             self.inodes =
-                IndexMap::with_chunk_capacity_on_disk(DEFAULT_INODES_CAPACITY, 2, 10_000_000);
+                IndexMap::with_chunk_capacity_on_disk(DEFAULT_INODES_CAPACITY, 2, 100_000);
         } else {
             self.inodes.clear();
         }

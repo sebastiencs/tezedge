@@ -109,25 +109,25 @@ impl<T> MmapInner<T> {
     }
 
     fn pageout(&self, Range { start, end }: Range<usize>) {
-        let length = end - start;
-        let npages = (length / 4096) + 1;
-        let max_length = self
-            .mmap
-            .as_ref()
-            .map(|mmap| mmap.len())
-            .unwrap_or(usize::MAX);
+        // let length = end - start;
+        // let npages = (length / 4096) + 1;
+        let max_length = self.mmap.as_ref().map(|mmap| mmap.len()).unwrap();
 
         let result = unsafe {
-            let ptr = self.ptr.as_ptr().add(start);
+            let ptr = self.ptr.as_ptr();
+            // let ptr = self.ptr.as_ptr().add(start);
             libc::madvise(
                 ptr as *const u8 as *mut libc::c_void,
-                (npages * 4096).min(max_length),
+                max_length,
+                // (npages * 4096).min(max_length),
                 21, // MADV_PAGEOUT
             )
         };
 
         if result != 0 {
             eprintln!("libc::madvice failed with {:?}", result);
+        } else {
+            println!("libc::madvice succeded");
         }
     }
 }
