@@ -365,6 +365,21 @@ impl<T> ChunkedVec<T> {
             })
             .unwrap_or(true)
         {
+            let list = self
+                .list_of_chunks
+                .get(self.first_index_on_disk.unwrap_or(1000)..);
+
+            if let Some(list) = list {
+                for chunk in list {
+                    if let ChunkEnum::OnDisk { ref mmap } = chunk {
+                        mmap.pageout(None);
+                    };
+                }
+            };
+
+            // if let Some(ChunkEnum::OnDisk { ref mmap }) = self.list_of_chunks.last() {
+            // };
+
             let on_disk = self
                 .nchunks_in_memory
                 .as_ref()

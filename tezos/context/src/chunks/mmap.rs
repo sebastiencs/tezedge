@@ -81,7 +81,7 @@ impl<T> MmapInner<T> {
             memmap2::MmapOptions::new()
                 .len(nbytes)
                 .offset(0)
-                .map_mut(&file)
+                .map_copy(&file)
                 .unwrap()
         };
 
@@ -108,9 +108,26 @@ impl<T> MmapInner<T> {
         assert_eq!(ptr_u64 % align_of_t, 0);
     }
 
-    fn flush(&mut self) {
-        if let Some(mmap) = self.mmap.as_mut() {
-            mmap.flush_async().unwrap();
+    fn pageout(&self, Range { start, end }: Range<usize>) {
+        let length = end - start;
+        let npages = (length / 4096) + 1;
+        let max_length = self
+            .mmap
+            .as_ref()
+            .map(|mmap| mmap.len())
+            .unwrap_or(usize::MAX);
+
+        let result = unsafe {
+            let ptr = self.ptr.as_ptr().add(start);
+            libc::madvise(
+                ptr as *const u8 as *mut libc::c_void,
+                (npages * 4096).min(max_length),
+                21, // MADV_PAGEOUT
+            )
+        };
+
+        if result != 0 {
+            eprintln!("libc::madvice failed with {:?}", result);
         }
     }
 }
@@ -173,7 +190,7 @@ impl<T> MmappedVec<T> {
         self.write_item(self.length, element);
         self.length += 1;
 
-        self.inner.flush();
+        // self.inner.flush();
 
         Ok(())
     }
@@ -190,6 +207,10 @@ impl<T> MmappedVec<T> {
         let slice = &mut self.inner[range];
         let slice: *mut [T] = slice as *mut [T];
         unsafe { std::ptr::drop_in_place(slice) }
+    }
+
+    pub fn pageout(&self, range: Option<Range<usize>>) {
+        self.inner.pageout(range.unwrap_or(0..self.length));
     }
 
     pub fn len(&self) -> usize {
@@ -234,7 +255,7 @@ impl<T: Clone> MmappedVec<T> {
 
         self.length += slice.len();
 
-        self.inner.flush();
+        // self.inner.flush();
 
         Ok(())
     }
