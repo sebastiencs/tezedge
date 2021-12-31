@@ -163,7 +163,7 @@ impl ProtocolRunnerInstance {
     /// Returns `true` if the protocol runner process is running
     pub fn is_alive(&mut self) -> bool {
         if let Some(child) = &mut self.child_process_handle {
-            let running = Self::is_running(child);
+            let running = Self::is_running(child, &self.log);
 
             if !running {
                 self.child_process_handle = None
@@ -291,8 +291,29 @@ impl ProtocolRunnerInstance {
     }
 
     /// Checks if process is running
-    fn is_running(process: &mut tokio::process::Child) -> bool {
-        matches!(process.try_wait(), Ok(None))
+    fn is_running(process: &mut tokio::process::Child, log: &Logger) -> bool {
+        match process.try_wait() {
+            Ok(None) => true,
+            Ok(Some(status)) => {
+                if status.success() {
+                    info!(log, "is_running: protocol-runner was closed normally");
+                } else {
+                    warn!(
+                        log,
+                        "is_running: protocol-runner exited with status code: {}", status
+                    );
+                }
+                false
+            }
+            Err(e) => {
+                warn!(
+                    log,
+                    "failed to obtain protocol-runner exit status code: {:?}", e
+                );
+                false
+            }
+        }
+        // matches!(process.try_wait(), Ok(None))
     }
 
     /// Logs exit status
