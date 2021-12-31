@@ -126,8 +126,6 @@ impl<T> MmapInner<T> {
 
         if result != 0 {
             eprintln!("libc::madvice failed with {:?}", result);
-        } else {
-            println!("libc::madvice succeded");
         }
     }
 }
