@@ -68,6 +68,8 @@ fn main() {
         Commands::IsValidContext { context_path } => {
             println!("Reading context...");
 
+            let now = std::time::Instant::now();
+
             let sizes_file = File::<{ TAG_SIZES }>::try_new(&context_path, true).unwrap();
             let sizes = FileSizes::make_list_from_file(&sizes_file).unwrap_or(Vec::new());
             assert!(!sizes.is_empty(), "sizes.db doesn't exist or is empty");
@@ -77,7 +79,11 @@ fn main() {
 
             println!("{:?}", ctx.memory_usage());
 
-            println!("Context at {:?} is valid", context_path);
+            println!(
+                "Context at {:?} is valid in {:?}",
+                context_path,
+                now.elapsed()
+            );
         }
     }
 }
