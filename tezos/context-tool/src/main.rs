@@ -22,7 +22,7 @@ enum Commands {
         context_path: String,
         #[clap(short, long)]
         /// Path to write the resulting `sizes.db`
-        output: Option<String>,
+        output_dir: Option<String>,
     },
     /// Check if the context match its `sizes.db`
     IsValidContext {
@@ -38,24 +38,24 @@ fn main() {
     match args.command {
         Commands::BuildIntegrity {
             context_path,
-            output,
+            output_dir,
         } => {
-            let output = output.unwrap_or("".to_string());
+            let output_dir = output_dir.unwrap_or("".to_string());
 
             // Make sure `sizes.db` doesn't already exist
-            match File::<{ TAG_SIZES }>::create_new_file(&output) {
+            match File::<{ TAG_SIZES }>::create_new_file(&output_dir) {
                 Ok(_) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                     panic!(
                         "The resulting file `sizes.db` already exist at `{:?}`",
-                        output
+                        output_dir
                     );
                 }
                 Err(e) => panic!("{:?}", e),
             };
 
             let mut ctx = Persistent::try_new(Some(context_path.as_str()), true).unwrap();
-            let mut output_file = File::<{ TAG_SIZES }>::try_new(&output).unwrap();
+            let mut output_file = File::<{ TAG_SIZES }>::try_new(&output_dir).unwrap();
 
             ctx.compute_integrity(&mut output_file).unwrap();
 
@@ -63,9 +63,11 @@ fn main() {
             println!("Result={:#?}", sizes);
         }
         Commands::IsValidContext { context_path } => {
+            println!("Reading context...");
+
             let sizes_file = File::<{ TAG_SIZES }>::try_new(&context_path).unwrap();
             let sizes = FileSizes::make_list_from_file(&sizes_file).unwrap_or(Vec::new());
-            assert!(!sizes.is_empty());
+            assert!(!sizes.is_empty(), "sizes.db doesn't exist or is empty");
 
             let mut ctx = Persistent::try_new(Some(context_path.as_str()), true).unwrap();
             ctx.reload_database(true).unwrap();

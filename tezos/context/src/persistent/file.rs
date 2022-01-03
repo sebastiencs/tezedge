@@ -185,8 +185,6 @@ impl<const T: TaggedFile> File<T> {
             checksum_computed_until: 0,
         };
 
-        println!("OFFSET={:?}", offset);
-
         if offset == 0 {
             file.write_header()?;
         } else {

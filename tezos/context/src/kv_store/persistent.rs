@@ -584,22 +584,21 @@ hashes_file={:?}, in sizes.db={:?}",
 
         // Spawn the deserializers
         let thread_shapes = std::thread::spawn(move || {
-            log!("Deserializing shapes..");
-            let result = DirectoryShapes::deserialize(shape_file, shape_index_file);
-            log!("Shapes deserialized");
-            result
+            log_deserializing("Deserializing shapes..", "Shapes deserialized", || {
+                DirectoryShapes::deserialize(shape_file, shape_index_file)
+            })
         });
         let thread_strings = std::thread::spawn(move || {
-            log!("Deserializing strings..");
-            let result = StringInterner::deserialize(strings_file, big_strings_file);
-            log!("Strings deserialized");
-            result
+            log_deserializing("Deserializing strings..", "Strings deserialized", || {
+                StringInterner::deserialize(strings_file, big_strings_file)
+            })
         });
         let thread_commit_index = std::thread::spawn(move || {
-            log!("Deserializing commit index..");
-            let result = deserialize_commit_index(commit_index_file);
-            log!("Commit index deserialized");
-            result
+            log_deserializing(
+                "Deserializing commit index..",
+                "Commit index deserialized",
+                || deserialize_commit_index(commit_index_file),
+            )
         });
 
         // Gather results
@@ -668,6 +667,14 @@ hashes_file={:?}, in sizes.db={:?}",
         output.write_all_at(file_sizes, (offset + SIZES_HASH_BYTES_LENGTH as u64).into())?;
         output.sync()
     }
+}
+
+fn log_deserializing<T>(start_text: &str, end_text: &str, fun: impl FnOnce() -> T) -> T {
+    log!("{}", start_text);
+    let now = std::time::Instant::now();
+    let result = fun();
+    log!("{} in {:?}", end_text, now.elapsed());
+    result
 }
 
 fn serialize_file_sizes(file_sizes: &FileSizes) -> std::io::Result<Vec<u8>> {
