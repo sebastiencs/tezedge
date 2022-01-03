@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 use tezos_context::{
+    kv_store::persistent::FileSizes,
     persistent::file::{File, TAG_SIZES},
     Persistent,
 };
@@ -22,6 +23,12 @@ enum Commands {
         #[clap(short, long)]
         /// Path to write the resulting `sizes.db`
         output: Option<String>,
+    },
+    /// Check if the context match its `sizes.db`
+    IsValidContext {
+        /// Path of the persistent context
+        #[clap(short, long)]
+        context_path: String,
     },
 }
 
@@ -54,6 +61,16 @@ fn main() {
 
             let sizes = ctx.get_file_sizes();
             println!("Result={:#?}", sizes);
+        }
+        Commands::IsValidContext { context_path } => {
+            let sizes_file = File::<{ TAG_SIZES }>::try_new(&context_path).unwrap();
+            let sizes = FileSizes::make_list_from_file(&sizes_file).unwrap_or(Vec::new());
+            assert!(!sizes.is_empty());
+
+            let mut ctx = Persistent::try_new(Some(context_path.as_str()), true).unwrap();
+            ctx.reload_database(true).unwrap();
+
+            println!("Context at {:?} is valid", context_path);
         }
     }
 }

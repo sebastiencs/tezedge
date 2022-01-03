@@ -286,6 +286,7 @@ impl Persistent {
         big_strings_file: &mut File<{ TAG_BIG_STRINGS }>,
         hashes_file: &mut File<{ TAG_HASHES }>,
         startup_check: bool,
+        read_only: bool,
     ) -> Result<u64, IndexInitializationError> {
         let list_sizes = match list_sizes {
             Some(list) => list,
@@ -439,16 +440,18 @@ hashes_file={:?}, in sizes.db={:?}",
 
         log!("Found a valid set of sizes and checksums");
 
-        data_file.truncate_with_checksum(sizes.data_size, sizes.data_checksum)?;
-        shape_file.truncate_with_checksum(sizes.shape_size, sizes.shape_checksum)?;
-        shape_index_file
-            .truncate_with_checksum(sizes.shape_index_size, sizes.shape_index_checksum)?;
-        commit_index_file
-            .truncate_with_checksum(sizes.commit_index_size, sizes.commit_index_checksum)?;
-        strings_file.truncate_with_checksum(sizes.strings_size, sizes.strings_checksum)?;
-        big_strings_file
-            .truncate_with_checksum(sizes.big_strings_size, sizes.big_strings_checksum)?;
-        hashes_file.truncate_with_checksum(sizes.hashes_size, sizes.hashes_checksum)?;
+        if !read_only {
+            data_file.truncate_with_checksum(sizes.data_size, sizes.data_checksum)?;
+            shape_file.truncate_with_checksum(sizes.shape_size, sizes.shape_checksum)?;
+            shape_index_file
+                .truncate_with_checksum(sizes.shape_index_size, sizes.shape_index_checksum)?;
+            commit_index_file
+                .truncate_with_checksum(sizes.commit_index_size, sizes.commit_index_checksum)?;
+            strings_file.truncate_with_checksum(sizes.strings_size, sizes.strings_checksum)?;
+            big_strings_file
+                .truncate_with_checksum(sizes.big_strings_size, sizes.big_strings_checksum)?;
+            hashes_file.truncate_with_checksum(sizes.hashes_size, sizes.hashes_checksum)?;
+        }
 
         Ok(sizes.commit_counter + 1)
     }
@@ -556,7 +559,7 @@ hashes_file={:?}, in sizes.db={:?}",
         Ok(())
     }
 
-    fn reload_database(&mut self) -> Result<(), IndexInitializationError> {
+    pub fn reload_database(&mut self, read_only: bool) -> Result<(), IndexInitializationError> {
         let list_sizes = FileSizes::make_list_from_file(&self.sizes_file);
 
         let commit_counter = Self::truncate_files_with_correct_sizes(
@@ -569,6 +572,7 @@ hashes_file={:?}, in sizes.db={:?}",
             &mut self.big_strings_file,
             &mut self.hashes.hashes_file,
             self.startup_check,
+            read_only,
         )?;
 
         // Clone the `File` to deserialize them in other threads
@@ -700,7 +704,7 @@ pub struct FileSizes {
 }
 
 impl FileSizes {
-    fn make_list_from_file(file: &File<{ TAG_SIZES }>) -> Option<Vec<FileSizes>> {
+    pub fn make_list_from_file(file: &File<{ TAG_SIZES }>) -> Option<Vec<FileSizes>> {
         if file.offset().as_u64() == file.start() {
             // The file is empty, we just started a new database
             return None;
@@ -808,7 +812,7 @@ fn serialize_context_hash(
 
 impl KeyValueStoreBackend for Persistent {
     fn reload_database(&mut self) -> Result<(), DBError> {
-        if let Err(e) = self.reload_database() {
+        if let Err(e) = self.reload_database(false) {
             elog!("Failed to reload database: {:?}", e);
             return Err(e.into());
         }
