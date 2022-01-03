@@ -220,19 +220,20 @@ impl Persistent {
     pub fn try_new(
         db_path: Option<&str>,
         startup_check: bool,
+        read_only: bool,
     ) -> Result<Persistent, IndexInitializationError> {
         let base_path = get_persistent_base_path(db_path);
 
         let lock_file = Lock::try_lock(&base_path)?;
 
-        let sizes_file = File::<{ TAG_SIZES }>::try_new(&base_path)?;
-        let data_file = File::<{ TAG_DATA }>::try_new(&base_path)?;
-        let shape_file = File::<{ TAG_SHAPE }>::try_new(&base_path)?;
-        let shape_index_file = File::<{ TAG_SHAPE_INDEX }>::try_new(&base_path)?;
-        let commit_index_file = File::<{ TAG_COMMIT_INDEX }>::try_new(&base_path)?;
-        let strings_file = File::<{ TAG_STRINGS }>::try_new(&base_path)?;
-        let big_strings_file = File::<{ TAG_BIG_STRINGS }>::try_new(&base_path)?;
-        let hashes_file = File::<{ TAG_HASHES }>::try_new(&base_path)?;
+        let sizes_file = File::<{ TAG_SIZES }>::try_new(&base_path, read_only)?;
+        let data_file = File::<{ TAG_DATA }>::try_new(&base_path, read_only)?;
+        let shape_file = File::<{ TAG_SHAPE }>::try_new(&base_path, read_only)?;
+        let shape_index_file = File::<{ TAG_SHAPE_INDEX }>::try_new(&base_path, read_only)?;
+        let commit_index_file = File::<{ TAG_COMMIT_INDEX }>::try_new(&base_path, read_only)?;
+        let strings_file = File::<{ TAG_STRINGS }>::try_new(&base_path, read_only)?;
+        let big_strings_file = File::<{ TAG_BIG_STRINGS }>::try_new(&base_path, read_only)?;
+        let hashes_file = File::<{ TAG_HASHES }>::try_new(&base_path, read_only)?;
 
         let hashes = Hashes::try_new(hashes_file);
 
@@ -440,18 +441,16 @@ hashes_file={:?}, in sizes.db={:?}",
 
         log!("Found a valid set of sizes and checksums");
 
-        if !read_only {
-            data_file.truncate_with_checksum(sizes.data_size, sizes.data_checksum)?;
-            shape_file.truncate_with_checksum(sizes.shape_size, sizes.shape_checksum)?;
-            shape_index_file
-                .truncate_with_checksum(sizes.shape_index_size, sizes.shape_index_checksum)?;
-            commit_index_file
-                .truncate_with_checksum(sizes.commit_index_size, sizes.commit_index_checksum)?;
-            strings_file.truncate_with_checksum(sizes.strings_size, sizes.strings_checksum)?;
-            big_strings_file
-                .truncate_with_checksum(sizes.big_strings_size, sizes.big_strings_checksum)?;
-            hashes_file.truncate_with_checksum(sizes.hashes_size, sizes.hashes_checksum)?;
-        }
+        data_file.truncate_with_checksum(sizes.data_size, sizes.data_checksum)?;
+        shape_file.truncate_with_checksum(sizes.shape_size, sizes.shape_checksum)?;
+        shape_index_file
+            .truncate_with_checksum(sizes.shape_index_size, sizes.shape_index_checksum)?;
+        commit_index_file
+            .truncate_with_checksum(sizes.commit_index_size, sizes.commit_index_checksum)?;
+        strings_file.truncate_with_checksum(sizes.strings_size, sizes.strings_checksum)?;
+        big_strings_file
+            .truncate_with_checksum(sizes.big_strings_size, sizes.big_strings_checksum)?;
+        hashes_file.truncate_with_checksum(sizes.hashes_size, sizes.hashes_checksum)?;
 
         Ok(sizes.commit_counter + 1)
     }
@@ -559,7 +558,7 @@ hashes_file={:?}, in sizes.db={:?}",
         Ok(())
     }
 
-    pub fn reload_database(&mut self, read_only: bool) -> Result<(), IndexInitializationError> {
+    pub fn reload_database(&mut self) -> Result<(), IndexInitializationError> {
         let list_sizes = FileSizes::make_list_from_file(&self.sizes_file);
 
         let commit_counter = Self::truncate_files_with_correct_sizes(
@@ -819,7 +818,7 @@ fn serialize_context_hash(
 
 impl KeyValueStoreBackend for Persistent {
     fn reload_database(&mut self) -> Result<(), DBError> {
-        if let Err(e) = self.reload_database(false) {
+        if let Err(e) = self.reload_database() {
             elog!("Failed to reload database: {:?}", e);
             return Err(e.into());
         }

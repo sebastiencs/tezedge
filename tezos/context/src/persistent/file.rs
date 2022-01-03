@@ -113,6 +113,7 @@ pub struct File<const T: TaggedFile> {
     /// where the checksum was computed
     checksum_computed_until: u64,
     crc32: crc32fast::Hasher,
+    read_only: bool,
 }
 
 /// Absolute offset in the file
@@ -160,7 +161,7 @@ fn get_custom_flags() -> i32 {
 }
 
 impl<const T: TaggedFile> File<T> {
-    pub fn try_new(base_path: &str) -> Result<Self, OpenFileError> {
+    pub fn try_new(base_path: &str, read_only: bool) -> Result<Self, OpenFileError> {
         std::fs::create_dir_all(&base_path)?;
 
         let file_type: FileType = T.into();
@@ -183,6 +184,7 @@ impl<const T: TaggedFile> File<T> {
             offset,
             crc32,
             checksum_computed_until: 0,
+            read_only,
         };
 
         if offset == 0 {
@@ -218,6 +220,7 @@ impl<const T: TaggedFile> File<T> {
             offset: self.offset,
             checksum_computed_until: self.checksum_computed_until,
             crc32: self.crc32.clone(),
+            read_only: self.read_only,
         })
     }
 
@@ -296,7 +299,9 @@ impl<const T: TaggedFile> File<T> {
         if new_size != self.offset {
             assert!(new_size < self.offset);
 
-            self.file.set_len(new_size)?;
+            if !self.read_only {
+                self.file.set_len(new_size)?;
+            }
             self.offset = new_size;
             self.checksum_computed_until = new_size;
             self.crc32 = crc32fast::Hasher::new_with_initial(checksum);
@@ -309,7 +314,9 @@ impl<const T: TaggedFile> File<T> {
         if new_size != self.offset {
             assert!(new_size < self.offset);
 
-            self.file.set_len(new_size)?;
+            if !self.read_only {
+                self.file.set_len(new_size)?;
+            }
             self.offset = new_size;
         }
 
@@ -335,6 +342,8 @@ impl<const T: TaggedFile> File<T> {
     }
 
     pub fn append(&mut self, bytes: impl AsRef<[u8]>) -> Result<(), io::Error> {
+        assert!(!self.read_only);
+
         let bytes = bytes.as_ref();
 
         self.crc32.update(bytes);
@@ -353,6 +362,8 @@ impl<const T: TaggedFile> File<T> {
         offset: AbsoluteOffset,
     ) -> Result<(), io::Error> {
         use std::os::unix::prelude::FileExt;
+
+        assert!(!self.read_only);
 
         // This method must be used with TAG_SIZES only, other files are append only
         assert_eq!(T, TAG_SIZES);

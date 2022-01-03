@@ -1,7 +1,10 @@
 use clap::{Parser, Subcommand};
 use tezos_context::{
     kv_store::persistent::FileSizes,
-    persistent::file::{File, TAG_SIZES},
+    persistent::{
+        file::{File, TAG_SIZES},
+        KeyValueStoreBackend,
+    },
     Persistent,
 };
 
@@ -54,8 +57,8 @@ fn main() {
                 Err(e) => panic!("{:?}", e),
             };
 
-            let mut ctx = Persistent::try_new(Some(context_path.as_str()), true).unwrap();
-            let mut output_file = File::<{ TAG_SIZES }>::try_new(&output_dir).unwrap();
+            let mut ctx = Persistent::try_new(Some(context_path.as_str()), true, true).unwrap();
+            let mut output_file = File::<{ TAG_SIZES }>::try_new(&output_dir, false).unwrap();
 
             ctx.compute_integrity(&mut output_file).unwrap();
 
@@ -65,12 +68,14 @@ fn main() {
         Commands::IsValidContext { context_path } => {
             println!("Reading context...");
 
-            let sizes_file = File::<{ TAG_SIZES }>::try_new(&context_path).unwrap();
+            let sizes_file = File::<{ TAG_SIZES }>::try_new(&context_path, true).unwrap();
             let sizes = FileSizes::make_list_from_file(&sizes_file).unwrap_or(Vec::new());
             assert!(!sizes.is_empty(), "sizes.db doesn't exist or is empty");
 
-            let mut ctx = Persistent::try_new(Some(context_path.as_str()), true).unwrap();
-            ctx.reload_database(true).unwrap();
+            let mut ctx = Persistent::try_new(Some(context_path.as_str()), true, true).unwrap();
+            ctx.reload_database().unwrap();
+
+            println!("{:?}", ctx.memory_usage());
 
             println!("Context at {:?} is valid", context_path);
         }

@@ -107,9 +107,13 @@ pub fn initialize_tezedge_index(
             )?)),
         },
         ContextKvStoreConfiguration::InMem => Arc::new(RwLock::new(InMemory::try_new()?)),
-        ContextKvStoreConfiguration::OnDisk(ref options) => Arc::new(RwLock::new(
-            Persistent::try_new(Some(options.base_path.as_str()), options.startup_check)?,
-        )),
+        ContextKvStoreConfiguration::OnDisk(ref options) => {
+            Arc::new(RwLock::new(Persistent::try_new(
+                Some(options.base_path.as_str()),
+                options.startup_check,
+                false,
+            )?))
+        }
     };
 
     // We reload the database in another thread, to avoid blocking on
