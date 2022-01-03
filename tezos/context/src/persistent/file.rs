@@ -185,6 +185,8 @@ impl<const T: TaggedFile> File<T> {
             checksum_computed_until: 0,
         };
 
+        println!("OFFSET={:?}", offset);
+
         if offset == 0 {
             file.write_header()?;
         } else {
@@ -192,6 +194,24 @@ impl<const T: TaggedFile> File<T> {
         }
 
         Ok(file)
+    }
+
+    pub fn create_new_file(base_path: &str) -> std::io::Result<()> {
+        std::fs::create_dir_all(&base_path)?;
+
+        let file_type: FileType = T.into();
+        let append_mode = !matches!(file_type, FileType::Sizes);
+
+        OpenOptions::new()
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .append(append_mode)
+            .create_new(true)
+            .custom_flags(get_custom_flags())
+            .open(PathBuf::from(base_path).join(file_type.get_path()))?;
+
+        Ok(())
     }
 
     pub fn try_clone(&self) -> std::io::Result<Self> {

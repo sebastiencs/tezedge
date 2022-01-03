@@ -254,6 +254,28 @@ impl Persistent {
         })
     }
 
+    pub fn compute_integrity(&mut self, output: &mut File<{ TAG_SIZES }>) -> std::io::Result<()> {
+        self.data_file
+            .update_checksum_until(self.data_file.offset().as_u64())?;
+        self.shape_file
+            .update_checksum_until(self.shape_file.offset().as_u64())?;
+        self.shape_index_file
+            .update_checksum_until(self.shape_index_file.offset().as_u64())?;
+        self.commit_index_file
+            .update_checksum_until(self.commit_index_file.offset().as_u64())?;
+        self.strings_file
+            .update_checksum_until(self.strings_file.offset().as_u64())?;
+        self.big_strings_file
+            .update_checksum_until(self.big_strings_file.offset().as_u64())?;
+        self.hashes
+            .hashes_file
+            .update_checksum_until(self.hashes.hashes_file.offset().as_u64())?;
+
+        self.update_sizes_to_disk(Some(output))?;
+
+        Ok(())
+    }
+
     fn truncate_files_with_correct_sizes(
         list_sizes: Option<&[FileSizes]>,
         data_file: &mut File<{ TAG_DATA }>,
@@ -505,12 +527,15 @@ hashes_file={:?}, in sizes.db={:?}",
         self.hashes.hashes_file.sync()?;
         self.commit_index_file.sync()?;
 
-        self.update_sizes_to_disk()?;
+        self.update_sizes_to_disk(None)?;
 
         Ok(())
     }
 
-    fn update_sizes_to_disk(&mut self) -> Result<(), std::io::Error> {
+    fn update_sizes_to_disk(
+        &mut self,
+        output: Option<&mut File<{ TAG_SIZES }>>,
+    ) -> Result<(), std::io::Error> {
         // Gather all the file sizes + counter in a `Vec<u8>`
         let file_sizes = self.get_file_sizes();
         let file_sizes_bytes = serialize_file_sizes(&file_sizes)?;
@@ -523,7 +548,7 @@ hashes_file={:?}, in sizes.db={:?}",
         debug_assert_eq!(hash.len(), SIZES_HASH_BYTES_LENGTH);
 
         // Write them to disk
-        self.write_sizes_to_disk(&hash, &file_sizes_bytes)?;
+        self.write_sizes_to_disk(&hash, &file_sizes_bytes, output)?;
 
         // Increment the counter
         self.commit_counter = self.commit_counter.wrapping_add(1);
@@ -600,7 +625,7 @@ hashes_file={:?}, in sizes.db={:?}",
         Ok(())
     }
 
-    fn get_file_sizes(&self) -> FileSizes {
+    pub fn get_file_sizes(&self) -> FileSizes {
         FileSizes {
             commit_counter: self.commit_counter,
             data_size: self.data_file.offset().as_u64(),
@@ -624,6 +649,7 @@ hashes_file={:?}, in sizes.db={:?}",
         &mut self,
         hash: &[u8],
         file_sizes: &[u8],
+        output: Option<&mut File<{ TAG_SIZES }>>,
     ) -> Result<(), std::io::Error> {
         let counter = self.commit_counter;
 
@@ -632,10 +658,11 @@ hashes_file={:?}, in sizes.db={:?}",
         let offset = offset * SIZES_BYTES_PER_LINE as u64;
         let offset = offset + self.sizes_file.start();
 
-        self.sizes_file.write_all_at(hash, offset.into())?;
-        self.sizes_file
-            .write_all_at(file_sizes, (offset + SIZES_HASH_BYTES_LENGTH as u64).into())?;
-        self.sizes_file.sync()
+        let output = output.unwrap_or(&mut self.sizes_file);
+
+        output.write_all_at(hash, offset.into())?;
+        output.write_all_at(file_sizes, (offset + SIZES_HASH_BYTES_LENGTH as u64).into())?;
+        output.sync()
     }
 }
 
@@ -654,7 +681,7 @@ fn serialize_file_sizes(file_sizes: &FileSizes) -> std::io::Result<Vec<u8>> {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct FileSizes {
+pub struct FileSizes {
     commit_counter: u64,
     data_size: u64,
     data_checksum: u32,
