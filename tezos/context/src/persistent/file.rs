@@ -4,7 +4,7 @@
 use std::{
     convert::TryInto,
     fs::OpenOptions,
-    io::{self, Seek, SeekFrom, Write},
+    io::{self, BufReader, Seek, SeekFrom, Write},
     os::unix::prelude::OpenOptionsExt,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -268,7 +268,11 @@ impl<const T: TaggedFile> File<T> {
     /// Compute the checksum of the file from `Self::checksum_computed_until` until `end`
     /// and return it
     pub fn update_checksum_until(&mut self, end: u64) -> Result<u32, io::Error> {
-        let mut buffer = vec![0; 64 * 1024];
+        // We read chunks of 4MB, an other value make the operation slower
+        // We are limited by IO here, `crc32` is very fast and is only a small fraction
+        // of the time spent.
+
+        let mut buffer = vec![0; 4 * 1024 * 1024];
         let mut offset = self.checksum_computed_until;
 
         while offset < end {
@@ -321,6 +325,14 @@ impl<const T: TaggedFile> File<T> {
         }
 
         Ok(())
+    }
+
+    pub fn buffered(self) -> Result<BufReader<std::fs::File>, io::Error> {
+        let start = self.start();
+        let mut file = self.file;
+
+        file.seek(SeekFrom::Start(start))?;
+        Ok(BufReader::with_capacity(4 * 1024 * 1024, file)) // 4 MB
     }
 
     pub fn start(&self) -> u64 {

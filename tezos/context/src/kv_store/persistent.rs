@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: MIT
 
 use std::{
-    borrow::Cow, collections::hash_map::DefaultHasher, convert::TryInto, hash::Hasher, io::Write,
+    borrow::Cow,
+    collections::hash_map::DefaultHasher,
+    convert::TryInto,
+    hash::Hasher,
+    io::{Read, Write},
 };
 
 #[cfg(test)]
@@ -289,8 +293,8 @@ impl Persistent {
         startup_check: bool,
     ) -> Result<u64, IndexInitializationError> {
         let list_sizes = match list_sizes {
-            Some(list) => list,
-            None => {
+            Some(list) if !list.is_empty() => list,
+            _ => {
                 // New database, or the file `sizes.db` doesn't exist
                 data_file.update_checksum_until(data_file.offset().as_u64())?;
                 commit_index_file.update_checksum_until(commit_index_file.offset().as_u64())?;
@@ -783,18 +787,20 @@ fn deserialize_commit_index(
     let mut hash_offset_bytes = [0u8; 8];
     let mut commit_hash: ObjectHash = Default::default();
 
+    let mut commit_index_file = commit_index_file.buffered()?;
+
     while offset < end {
         // commit index file is a sequence of entries that look like:
         // [hash_id 6 le bytes | offset u64 le bytes | hash <HASH_LEN> bytes]
-        commit_index_file.read_exact_at(&mut hash_id_bytes[..6], offset.into())?;
+        commit_index_file.read_exact(&mut hash_id_bytes[..6])?;
         offset += (hash_id_bytes[..6]).len() as u64;
         let hash_id = u64::from_le_bytes(hash_id_bytes);
 
-        commit_index_file.read_exact_at(&mut hash_offset_bytes, offset.into())?;
+        commit_index_file.read_exact(&mut hash_offset_bytes)?;
         offset += hash_offset_bytes.len() as u64;
         let hash_offset = u64::from_le_bytes(hash_offset_bytes);
 
-        commit_index_file.read_exact_at(&mut commit_hash, offset.into())?;
+        commit_index_file.read_exact(&mut commit_hash)?;
         offset += commit_hash.len() as u64;
 
         let object_reference = ObjectReference::new(HashId::new(hash_id), Some(hash_offset.into()));
@@ -1069,7 +1075,7 @@ mod tests {
     #[test]
     fn test_commit_index() {
         let mut commit_index_file =
-            File::<{ TAG_COMMIT_INDEX }>::try_new("test_commit_index").unwrap();
+            File::<{ TAG_COMMIT_INDEX }>::try_new("test_commit_index", false).unwrap();
 
         let bytes =
             serialize_context_hash(HashId::new(101).unwrap(), 102.into(), &vec![3; 32]).unwrap();

@@ -4,6 +4,7 @@
 //! Implementation of string interning used to implement hash-consing for context path fragments.
 //! This avoids un-necessary duplication of strings, saving memory.
 
+use std::io::Read;
 use std::{borrow::Cow, collections::hash_map::DefaultHasher, convert::TryInto, hash::Hasher};
 
 use static_assertions::const_assert;
@@ -189,13 +190,15 @@ impl BigStrings {
         // [u32 start le bytes | u32 end le bytes]
         // but using `result.push_str` with the string seems to be enough to also update the offsets?
 
+        let mut big_strings_file = big_strings_file.buffered()?;
+
         while offset < end {
-            big_strings_file.read_exact_at(&mut length_bytes, offset.into())?;
+            big_strings_file.read_exact(&mut length_bytes)?;
 
             let length = u32::from_le_bytes(length_bytes) as usize;
             offset += length_bytes.len() as u64;
 
-            big_strings_file.read_exact_at(&mut string_bytes[0..length], offset.into())?;
+            big_strings_file.read_exact(&mut string_bytes[0..length])?;
             offset += length as u64;
 
             let s = std::str::from_utf8(&string_bytes[..length])?;
@@ -391,12 +394,14 @@ impl StringInterner {
         let mut length_byte = [0u8; 1];
         let mut string_bytes = [0u8; 256]; //  30 should be enough here
 
+        let mut strings_file = strings_file.buffered()?;
+
         while offset < end {
-            strings_file.read_exact_at(&mut length_byte, offset.into())?;
+            strings_file.read_exact(&mut length_byte)?;
             offset += length_byte.len() as u64;
 
             let length = u8::from_le_bytes(length_byte) as usize;
-            strings_file.read_exact_at(&mut string_bytes[..length], offset.into())?;
+            strings_file.read_exact(&mut string_bytes[..length])?;
 
             offset += length as u64;
 
