@@ -72,7 +72,7 @@ fn main() {
 
             let sizes_file = File::<{ TAG_SIZES }>::try_new(&context_path, true).unwrap();
             let sizes = FileSizes::make_list_from_file(&sizes_file).unwrap_or(Vec::new());
-            assert!(!sizes.is_empty(), "sizes.db doesn't exist or is empty");
+            assert!(!sizes.is_empty(), "sizes.db is invalid");
 
             let mut ctx = Persistent::try_new(Some(context_path.as_str()), true, true).unwrap();
             ctx.reload_database().unwrap();

@@ -287,7 +287,6 @@ impl Persistent {
         big_strings_file: &mut File<{ TAG_BIG_STRINGS }>,
         hashes_file: &mut File<{ TAG_HASHES }>,
         startup_check: bool,
-        read_only: bool,
     ) -> Result<u64, IndexInitializationError> {
         let list_sizes = match list_sizes {
             Some(list) => list,
@@ -350,6 +349,7 @@ hashes_file={:?}, in sizes.db={:?}",
             // We start with smaller files to fail early
 
             if startup_check {
+                let now = std::time::Instant::now();
                 if strings_file.update_checksum_until(sizes.strings_size)? != sizes.strings_checksum
                 {
                     elog!(
@@ -360,7 +360,9 @@ hashes_file={:?}, in sizes.db={:?}",
                     );
                     break;
                 }
+                println!("string crc computed in {:?}", now.elapsed());
 
+                let now = std::time::Instant::now();
                 if commit_index_file.update_checksum_until(sizes.commit_index_size)?
                     != sizes.commit_index_checksum
                 {
@@ -372,7 +374,9 @@ hashes_file={:?}, in sizes.db={:?}",
                     );
                     break;
                 }
+                println!("commit index crc computed in {:?}", now.elapsed());
 
+                let now = std::time::Instant::now();
                 if shape_index_file.update_checksum_until(sizes.shape_index_size)?
                     != sizes.shape_index_checksum
                 {
@@ -384,7 +388,9 @@ hashes_file={:?}, in sizes.db={:?}",
                     );
                     break;
                 }
+                println!("shape index crc computed in {:?}", now.elapsed());
 
+                let now = std::time::Instant::now();
                 if big_strings_file.update_checksum_until(sizes.big_strings_size)?
                     != sizes.big_strings_checksum
                 {
@@ -396,7 +402,9 @@ hashes_file={:?}, in sizes.db={:?}",
                     );
                     break;
                 }
+                println!("big string crc computed in {:?}", now.elapsed());
 
+                let now = std::time::Instant::now();
                 if shape_file.update_checksum_until(sizes.shape_size)? != sizes.shape_checksum {
                     elog!(
                         "Checksum of shape file do not match: {:?} != {:?} at offset {:?}",
@@ -406,7 +414,9 @@ hashes_file={:?}, in sizes.db={:?}",
                     );
                     break;
                 }
+                println!("shape crc computed in {:?}", now.elapsed());
 
+                let now = std::time::Instant::now();
                 if hashes_file.update_checksum_until(sizes.hashes_size)? != sizes.hashes_checksum {
                     elog!(
                         "Checksum of hashes file do not match: {:?} != {:?} at offset {:?}",
@@ -416,7 +426,9 @@ hashes_file={:?}, in sizes.db={:?}",
                     );
                     break;
                 }
+                println!("hashes crc computed in {:?}", now.elapsed());
 
+                let now = std::time::Instant::now();
                 if data_file.update_checksum_until(sizes.data_size)? != sizes.data_checksum {
                     elog!(
                         "Checksum of data file do not match: {:?} != {:?} at offset {:?}",
@@ -426,6 +438,7 @@ hashes_file={:?}, in sizes.db={:?}",
                     );
                     break;
                 }
+                println!("data crc computed in {:?}", now.elapsed());
             }
 
             last_valid = Some(sizes.clone());
@@ -571,7 +584,6 @@ hashes_file={:?}, in sizes.db={:?}",
             &mut self.big_strings_file,
             &mut self.hashes.hashes_file,
             self.startup_check,
-            read_only,
         )?;
 
         // Clone the `File` to deserialize them in other threads
