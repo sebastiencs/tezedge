@@ -121,6 +121,7 @@ pub struct WorkingTreeStatistics {
     nhashes: usize,
     unique_hash: HashSet<ObjectHash>,
     blobs_by_length: HashMap<BlobSize, BlobStatistics>,
+    strings_total_bytes: usize,
 }
 
 impl std::fmt::Debug for WorkingTreeStatistics {
@@ -138,6 +139,7 @@ impl std::fmt::Debug for WorkingTreeStatistics {
             .field("nobjects_inlined", &self.nobjects_inlined)
             .field("nhashes", &self.nhashes)
             .field("unique_hash", &self.unique_hash.len())
+            .field("strings_total_bytes", &self.strings_total_bytes)
             .finish()
     }
 }
@@ -1103,7 +1105,10 @@ impl WorkingTree {
 
                 stats.nobjects += dir.len();
 
-                for (_, dir_entry_id) in dir {
+                for (string_id, dir_entry_id) in dir {
+                    let string = strings.get_str(string_id).unwrap();
+                    stats.strings_total_bytes += string.len();
+
                     let dir_entry = storage.get_dir_entry(dir_entry_id)?;
 
                     {
