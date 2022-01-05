@@ -522,13 +522,6 @@ hashes_file={:?}, in sizes.db={:?}",
             self.read_nobjects.fetch_add(1, Relaxed);
             self.read_object_length.fetch_add(object_length, Relaxed);
             self.read_lowest_offset.fetch_min(offset.as_u64(), Relaxed);
-
-            // println!(
-            //     "nobject={:?} object_length={:?} lowest_offset={:?}",
-            //     self.read_nobjects.load(Relaxed),
-            //     self.read_object_length.load(Relaxed),
-            //     self.read_lowest_offset.load(Relaxed),
-            // );
         }
 
         Ok(&buffer[..object_length])

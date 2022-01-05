@@ -1019,17 +1019,26 @@ impl WorkingTree {
         strings: &mut StringInterner,
         depth: usize,
         max_depth: &mut usize,
+        nobjects: &mut usize,
+        nobjects_inlined: &mut usize,
         // repository: &mut ContextKeyValueStore,
     ) -> Result<(), MerkleError> {
         *max_depth = depth.max(*max_depth);
 
         match object {
-            Object::Blob(_blob_id) => Ok(()),
+            Object::Blob(blob_id) => {
+                if blob_id.is_inline() {
+                    *nobjects_inlined += 1;
+                }
+                Ok(())
+            }
             Object::Directory(dir_id) => {
                 let dir = {
                     let repository = self.index.repository.read()?;
                     storage.dir_to_vec_unsorted(dir_id, strings, &*repository)?
                 };
+
+                *nobjects += dir.len();
 
                 // println!("{}DIR_LENGTH={:?}", " ".repeat(depth), dir.len());
 
@@ -1041,6 +1050,9 @@ impl WorkingTree {
                         match dir_entry.object_hash_id(&mut *repository, storage, strings)? {
                             Some(_) => {}
                             None => {
+                                // *nobjects -= 1;
+
+                                // continue;
                                 // println!("{}inlined", " ".repeat(depth));
                             }
                         }
@@ -1049,12 +1061,15 @@ impl WorkingTree {
                     let object = self
                         .index
                         .dir_entry_object(dir_entry_id, storage, strings)?;
+
                     self.traverse_working_tree_recursive(
                         object,
                         storage,
                         strings,
                         depth + 1,
                         max_depth,
+                        nobjects,
+                        nobjects_inlined,
                     )?;
                 }
 
@@ -1082,6 +1097,8 @@ impl WorkingTree {
         // let mut repository = self.index.repository.write()?;
 
         let mut max_depth = 0;
+        let mut nobjects = 0;
+        let mut nobjects_inlined = 0;
 
         self.traverse_working_tree_recursive(
             object,
@@ -1089,9 +1106,17 @@ impl WorkingTree {
             &mut *strings,
             0,
             &mut max_depth,
+            &mut nobjects,
+            &mut nobjects_inlined,
         )?;
 
-        println!("MAX_DEPTH={:?}", max_depth);
+        println!(
+            "MAX_DEPTH={:?} NOBJECTS={:?} NOBJECTS_INLINED={:?} NOBJECTS_WITHOUT_INLINED={:?}",
+            max_depth,
+            nobjects,
+            nobjects_inlined,
+            nobjects - nobjects_inlined,
+        );
 
         Ok(())
     }

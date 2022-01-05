@@ -187,8 +187,8 @@ impl TezedgeIndex {
         strings: &mut StringInterner,
     ) -> Result<Object, MerkleError> {
         match self.fetch_object(object_ref, storage, strings)? {
-            None => Err(MerkleError::ObjectNotFound { object_ref }),
             Some(object) => Ok(object),
+            None => Err(MerkleError::ObjectNotFound { object_ref }),
         }
     }
 
