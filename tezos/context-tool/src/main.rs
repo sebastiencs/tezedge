@@ -1,11 +1,14 @@
+use std::sync::{Arc, RwLock};
+
 use clap::{Parser, Subcommand};
+use crypto::hash::{ContextHash, HashTrait};
 use tezos_context::{
     kv_store::persistent::FileSizes,
     persistent::{
         file::{File, TAG_SIZES},
         KeyValueStoreBackend,
     },
-    Persistent,
+    IndexApi, Persistent, TezedgeIndex,
 };
 
 /// Simple program to greet a person
@@ -33,6 +36,37 @@ enum Commands {
         #[clap(short, long)]
         context_path: String,
     },
+    ContextSize {
+        /// Path of the persistent context
+        #[clap(short, long)]
+        context_path: String,
+        /// Commit to inspect, `None` to inspect the last commit
+        #[clap(short, long)]
+        context_hash: Option<String>,
+    },
+}
+
+fn reload_context(context_path: String) -> Persistent {
+    println!("Reading context...");
+
+    let now = std::time::Instant::now();
+
+    let sizes_file = File::<{ TAG_SIZES }>::try_new(&context_path, true).unwrap();
+    let sizes = FileSizes::make_list_from_file(&sizes_file).unwrap_or(Vec::new());
+    assert!(!sizes.is_empty(), "sizes.db is invalid");
+
+    let mut ctx = Persistent::try_new(Some(context_path.as_str()), true, true).unwrap();
+    ctx.reload_database().unwrap();
+
+    println!("{:?}", ctx.memory_usage());
+
+    println!(
+        "Context at {:?} is valid in {:?}",
+        context_path,
+        now.elapsed()
+    );
+
+    ctx
 }
 
 fn main() {
@@ -66,24 +100,26 @@ fn main() {
             println!("Result={:#?}", sizes);
         }
         Commands::IsValidContext { context_path } => {
-            println!("Reading context...");
+            reload_context(context_path);
+        }
+        Commands::ContextSize {
+            context_path,
+            context_hash,
+        } => {
+            let ctx = reload_context(context_path);
 
-            let now = std::time::Instant::now();
+            let context_hash = if let Some(context_hash) = context_hash.as_ref() {
+                ContextHash::from_b58check(&context_hash).unwrap()
+            } else {
+                ctx.get_last_context_hash().unwrap()
+            };
 
-            let sizes_file = File::<{ TAG_SIZES }>::try_new(&context_path, true).unwrap();
-            let sizes = FileSizes::make_list_from_file(&sizes_file).unwrap_or(Vec::new());
-            assert!(!sizes.is_empty(), "sizes.db is invalid");
+            let index = TezedgeIndex::new(Arc::new(RwLock::new(ctx)), None);
 
-            let mut ctx = Persistent::try_new(Some(context_path.as_str()), true, true).unwrap();
-            ctx.reload_database().unwrap();
+            let context = index.checkout(&context_hash).unwrap().unwrap();
+            context.tree.traverse_working_tree().unwrap();
 
-            println!("{:?}", ctx.memory_usage());
-
-            println!(
-                "Context at {:?} is valid in {:?}",
-                context_path,
-                now.elapsed()
-            );
+            // index.
         }
     }
 }

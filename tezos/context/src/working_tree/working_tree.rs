@@ -1012,6 +1012,71 @@ impl WorkingTree {
         hash_directory(root, repository, &storage, &strings).map_err(MerkleError::from)
     }
 
+    fn traverse_working_tree_recursive(
+        &self,
+        object: Object,
+        storage: &mut Storage,
+        strings: &mut StringInterner,
+        depth: usize,
+        // repository: &mut ContextKeyValueStore,
+    ) -> Result<(), MerkleError> {
+        match object {
+            Object::Blob(_blob_id) => Ok(()),
+            Object::Directory(dir_id) => {
+                let dir = {
+                    let repository = self.index.repository.read()?;
+                    storage.dir_to_vec_unsorted(dir_id, strings, &*repository)?
+                };
+
+                println!("{}DIR_LENGTH={:?}", " ".repeat(depth), dir.len());
+
+                for (_, dir_entry_id) in dir {
+                    let dir_entry = storage.get_dir_entry(dir_entry_id)?;
+
+                    {
+                        let mut repository = self.index.repository.write()?;
+                        match dir_entry.object_hash_id(&mut *repository, storage, strings)? {
+                            Some(_) => {}
+                            None => {
+                                println!("{}inlined", " ".repeat(depth));
+                            }
+                        }
+                    }
+
+                    let object = self
+                        .index
+                        .dir_entry_object(dir_entry_id, storage, strings)?;
+                    self.traverse_working_tree_recursive(object, storage, strings, depth + 1)?;
+                }
+
+                Ok(())
+            }
+            Object::Commit(commit) => {
+                panic!()
+                // let object = match root {
+                //     Some(root) => Object::Directory(root),
+                //     None => self.fetch_object_from_repo(commit.root_ref, repository)?,
+                // };
+                // self.traverse_working_tree_recursive(object, None, storage, strings, repository)
+            }
+        }
+    }
+
+    pub fn traverse_working_tree(&self) -> Result<(), MerkleError> {
+        let object = match self.root {
+            WorkingTreeRoot::Directory(dir_id) => Object::Directory(dir_id),
+            WorkingTreeRoot::Value(blob_id) => Object::Blob(blob_id),
+        };
+
+        let mut storage = self.index.storage.borrow_mut();
+        let mut strings = self.index.get_string_interner()?;
+        // let mut repository = self.index.repository.write()?;
+
+        self.traverse_working_tree_recursive(object, &mut *storage, &mut *strings, 0)?;
+
+        Ok(())
+    }
+
     fn serialize_objects_recursively(
         &self,
         mut object: Object,

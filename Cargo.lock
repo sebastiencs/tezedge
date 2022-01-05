@@ -638,6 +638,7 @@ name = "context-tool"
 version = "0.1.0"
 dependencies = [
  "clap 3.0.0",
+ "crypto",
  "tezos_context",
 ]
 

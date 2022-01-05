@@ -9,4 +9,5 @@ edition = "2021"
 clap = { version = "3.0", features = ["derive"] }
 
 # local dependencies
+crypto = { path = "../../crypto" }
 tezos_context = { path = "../context" }

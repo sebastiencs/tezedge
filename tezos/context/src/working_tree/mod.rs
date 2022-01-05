@@ -203,14 +203,16 @@ impl DirEntry {
     /// If this dir_entry is an inlined blob, this will return an error.
     pub fn object_hash<'a>(
         &self,
-        store: &'a mut ContextKeyValueStore,
+        repository: &'a mut ContextKeyValueStore,
         storage: &Storage,
         strings: &StringInterner,
     ) -> Result<Cow<'a, ObjectHash>, HashingError> {
         let _ = self
-            .object_hash_id(store, storage, strings)?
+            .object_hash_id(repository, storage, strings)?
             .ok_or(HashingError::HashIdEmpty)?;
-        store.get_hash(self.get_reference()).map_err(Into::into)
+        repository
+            .get_hash(self.get_reference())
+            .map_err(Into::into)
     }
 
     /// Returns the `HashId` of this dir_entry, it will compute the hash if necessary.
@@ -218,7 +220,7 @@ impl DirEntry {
     /// If this dir_entry is an inlined blob, this will return `None`.
     fn object_hash_id(
         &self,
-        store: &mut ContextKeyValueStore,
+        repository: &mut ContextKeyValueStore,
         storage: &Storage,
         strings: &StringInterner,
     ) -> Result<Option<HashId>, HashingError> {
@@ -237,13 +239,13 @@ impl DirEntry {
                 {
                     Some(*hash_id)
                 } else if self.get_object().is_none() {
-                    Some(store.get_hash_id(self.get_reference())?)
+                    Some(repository.get_hash_id(self.get_reference())?)
                 } else {
                     hash_object(
                         self.get_object()
                             .as_ref()
                             .ok_or(HashingError::MissingObject)?,
-                        store,
+                        repository,
                         storage,
                         strings,
                     )?
