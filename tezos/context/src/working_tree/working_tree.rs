@@ -49,6 +49,7 @@
 //! Reference: https://git-scm.com/book/en/v2/Git-Internals-Git-Objects
 use std::{
     array::TryFromSliceError,
+    collections::HashSet,
     sync::{Arc, PoisonError},
     vec::IntoIter,
 };
@@ -1021,6 +1022,8 @@ impl WorkingTree {
         max_depth: &mut usize,
         nobjects: &mut usize,
         nobjects_inlined: &mut usize,
+        nhashes: &mut usize,
+        unique_hash: &mut HashSet<ObjectHash>,
         // repository: &mut ContextKeyValueStore,
     ) -> Result<(), MerkleError> {
         *max_depth = depth.max(*max_depth);
@@ -1048,7 +1051,12 @@ impl WorkingTree {
                     {
                         let mut repository = self.index.repository.write()?;
                         match dir_entry.object_hash_id(&mut *repository, storage, strings)? {
-                            Some(_) => {}
+                            Some(hash_id) => {
+                                *nhashes += 1;
+                                let hash =
+                                    repository.get_hash(hash_id.into()).unwrap().into_owned();
+                                unique_hash.insert(hash);
+                            }
                             None => {
                                 // *nobjects -= 1;
 
@@ -1070,6 +1078,8 @@ impl WorkingTree {
                         max_depth,
                         nobjects,
                         nobjects_inlined,
+                        nhashes,
+                        unique_hash,
                     )?;
                 }
 
@@ -1099,6 +1109,8 @@ impl WorkingTree {
         let mut max_depth = 0;
         let mut nobjects = 0;
         let mut nobjects_inlined = 0;
+        let mut nhashes = 0;
+        let mut unique_hash = Default::default();
 
         self.traverse_working_tree_recursive(
             object,
@@ -1108,14 +1120,18 @@ impl WorkingTree {
             &mut max_depth,
             &mut nobjects,
             &mut nobjects_inlined,
+            &mut nhashes,
+            &mut unique_hash,
         )?;
 
         println!(
-            "MAX_DEPTH={:?} NOBJECTS={:?} NOBJECTS_INLINED={:?} NOBJECTS_WITHOUT_INLINED={:?}",
+            "MAX_DEPTH={:?} NOBJECTS={:?} NOBJECTS_INLINED={:?} NOBJECTS_WITHOUT_INLINED={:?} NHASHES={:?} UNIQUE_HASH={:?}",
             max_depth,
             nobjects,
             nobjects_inlined,
             nobjects - nobjects_inlined,
+            nhashes,
+            unique_hash.len(),
         );
 
         Ok(())
