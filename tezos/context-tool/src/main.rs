@@ -116,12 +116,15 @@ fn main() {
 
             let index = TezedgeIndex::new(Arc::new(RwLock::new(ctx)), None);
 
+            let now = std::time::Instant::now();
+
             let context = index.checkout(&context_hash).unwrap().unwrap();
             context.tree.traverse_working_tree().unwrap();
 
             let repo = context.index.repository.read().unwrap();
             let stats = repo.get_read_statistics().unwrap().unwrap();
 
+            println!("Time {:?}", now.elapsed());
             println!("{:#?}", stats);
         }
     }
