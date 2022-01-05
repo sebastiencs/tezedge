@@ -284,6 +284,10 @@ impl StringInterner {
         self.big_strings.extend_from(&other.big_strings);
     }
 
+    pub fn len(&self) -> usize {
+        self.all_strings.len() + self.big_strings.strings.len()
+    }
+
     pub fn make_string_id(&mut self, s: &str) -> StringId {
         if s.len() >= STRING_INTERN_THRESHOLD {
             let index = self.big_strings.push_str(s);

@@ -1105,10 +1105,7 @@ impl WorkingTree {
 
                 stats.nobjects += dir.len();
 
-                for (string_id, dir_entry_id) in dir {
-                    let string = strings.get_str(string_id).unwrap();
-                    stats.strings_total_bytes += string.len();
-
+                for (_, dir_entry_id) in dir {
                     let dir_entry = storage.get_dir_entry(dir_entry_id)?;
 
                     {
@@ -1159,6 +1156,8 @@ impl WorkingTree {
         let mut stats = WorkingTreeStatistics::default();
 
         self.traverse_working_tree_recursive(object, &mut *storage, &mut *strings, 0, &mut stats)?;
+
+        stats.strings_total_bytes = strings.len();
 
         println!("Stats={:#?}", stats);
 
