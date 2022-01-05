@@ -114,6 +114,8 @@ fn main() {
                 ctx.get_last_context_hash().unwrap()
             };
 
+            println!("Computing size for {:?}", context_hash.to_base58_check());
+
             let index = TezedgeIndex::new(Arc::new(RwLock::new(ctx)), None);
 
             let now = std::time::Instant::now();
