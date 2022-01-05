@@ -119,7 +119,10 @@ fn main() {
             let context = index.checkout(&context_hash).unwrap().unwrap();
             context.tree.traverse_working_tree().unwrap();
 
-            // index.
+            let repo = context.index.repository.read().unwrap();
+            let stats = repo.get_read_statistics().unwrap().unwrap();
+
+            println!("{:#?}", stats);
         }
     }
 }

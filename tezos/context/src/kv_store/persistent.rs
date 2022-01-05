@@ -7,7 +7,7 @@ use std::{
     convert::TryInto,
     hash::Hasher,
     io::{Read, Write},
-    sync::atomic::{AtomicUsize, Ordering::Relaxed},
+    sync::atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed},
 };
 
 #[cfg(test)]
@@ -32,7 +32,7 @@ use crate::{
         },
         get_commit_hash,
         lock::Lock,
-        DBError, Flushable, KeyValueStoreBackend, Persistable,
+        DBError, Flushable, KeyValueStoreBackend, Persistable, ReadStatistics,
     },
     serialize::{
         deserialize_hash_id,
@@ -128,6 +128,7 @@ pub struct Persistent {
     read_mode: bool,
     read_nobjects: AtomicUsize,
     read_object_length: AtomicUsize,
+    read_lowest_offset: AtomicU64,
 }
 
 impl NotGarbageCollected for Persistent {}
@@ -266,6 +267,7 @@ impl Persistent {
             read_mode,
             read_nobjects: AtomicUsize::new(0),
             read_object_length: AtomicUsize::new(0),
+            read_lowest_offset: AtomicU64::new(u64::MAX),
         })
     }
 
@@ -363,7 +365,7 @@ hashes_file={:?}, in sizes.db={:?}",
             // We start with smaller files to fail early
 
             if startup_check {
-                // let now = std::time::Instant::now();
+                let now = std::time::Instant::now();
                 if strings_file.update_checksum_until(sizes.strings_size)? != sizes.strings_checksum
                 {
                     elog!(
@@ -374,9 +376,9 @@ hashes_file={:?}, in sizes.db={:?}",
                     );
                     break;
                 }
-                // println!("string crc computed in {:?}", now.elapsed());
+                println!("string crc computed in {:?}", now.elapsed());
 
-                // let now = std::time::Instant::now();
+                let now = std::time::Instant::now();
                 if commit_index_file.update_checksum_until(sizes.commit_index_size)?
                     != sizes.commit_index_checksum
                 {
@@ -388,9 +390,9 @@ hashes_file={:?}, in sizes.db={:?}",
                     );
                     break;
                 }
-                // println!("commit index crc computed in {:?}", now.elapsed());
+                println!("commit index crc computed in {:?}", now.elapsed());
 
-                // let now = std::time::Instant::now();
+                let now = std::time::Instant::now();
                 if shape_index_file.update_checksum_until(sizes.shape_index_size)?
                     != sizes.shape_index_checksum
                 {
@@ -402,9 +404,9 @@ hashes_file={:?}, in sizes.db={:?}",
                     );
                     break;
                 }
-                // println!("shape index crc computed in {:?}", now.elapsed());
+                println!("shape index crc computed in {:?}", now.elapsed());
 
-                // let now = std::time::Instant::now();
+                let now = std::time::Instant::now();
                 if big_strings_file.update_checksum_until(sizes.big_strings_size)?
                     != sizes.big_strings_checksum
                 {
@@ -416,9 +418,9 @@ hashes_file={:?}, in sizes.db={:?}",
                     );
                     break;
                 }
-                // println!("big string crc computed in {:?}", now.elapsed());
+                println!("big string crc computed in {:?}", now.elapsed());
 
-                // let now = std::time::Instant::now();
+                let now = std::time::Instant::now();
                 if shape_file.update_checksum_until(sizes.shape_size)? != sizes.shape_checksum {
                     elog!(
                         "Checksum of shape file do not match: {:?} != {:?} at offset {:?}",
@@ -428,9 +430,9 @@ hashes_file={:?}, in sizes.db={:?}",
                     );
                     break;
                 }
-                // println!("shape crc computed in {:?}", now.elapsed());
+                println!("shape crc computed in {:?}", now.elapsed());
 
-                // let now = std::time::Instant::now();
+                let now = std::time::Instant::now();
                 if hashes_file.update_checksum_until(sizes.hashes_size)? != sizes.hashes_checksum {
                     elog!(
                         "Checksum of hashes file do not match: {:?} != {:?} at offset {:?}",
@@ -440,9 +442,9 @@ hashes_file={:?}, in sizes.db={:?}",
                     );
                     break;
                 }
-                // println!("hashes crc computed in {:?}", now.elapsed());
+                println!("hashes crc computed in {:?}", now.elapsed());
 
-                // let now = std::time::Instant::now();
+                let now = std::time::Instant::now();
                 if data_file.update_checksum_until(sizes.data_size)? != sizes.data_checksum {
                     elog!(
                         "Checksum of data file do not match: {:?} != {:?} at offset {:?}",
@@ -452,7 +454,7 @@ hashes_file={:?}, in sizes.db={:?}",
                     );
                     break;
                 }
-                // println!("data crc computed in {:?}", now.elapsed());
+                println!("data crc computed in {:?}", now.elapsed());
             }
 
             last_valid = Some(sizes.clone());
@@ -519,12 +521,14 @@ hashes_file={:?}, in sizes.db={:?}",
         if self.read_mode {
             self.read_nobjects.fetch_add(1, Relaxed);
             self.read_object_length.fetch_add(object_length, Relaxed);
+            self.read_lowest_offset.fetch_min(offset.as_u64(), Relaxed);
 
-            println!(
-                "nobject={:?} object_length={:?}",
-                self.read_nobjects.load(Relaxed),
-                self.read_object_length.load(Relaxed)
-            );
+            // println!(
+            //     "nobject={:?} object_length={:?} lowest_offset={:?}",
+            //     self.read_nobjects.load(Relaxed),
+            //     self.read_object_length.load(Relaxed),
+            //     self.read_lowest_offset.load(Relaxed),
+            // );
         }
 
         Ok(&buffer[..object_length])
@@ -1108,6 +1112,16 @@ impl KeyValueStoreBackend for Persistent {
 
     fn make_hash_id_ready_for_commit(&mut self, hash_id: HashId) -> Result<HashId, DBError> {
         self.hashes.in_memory.make_hash_id_ready_for_commit(hash_id)
+    }
+
+    fn get_read_statistics(&self) -> Result<Option<ReadStatistics>, DBError> {
+        let stats = ReadStatistics {
+            nobjects: self.read_nobjects.load(Relaxed),
+            objects_total_length: self.read_object_length.load(Relaxed),
+            lowest_offset: self.read_lowest_offset.load(Relaxed),
+        };
+
+        Ok(Some(stats))
     }
 
     #[cfg(test)]

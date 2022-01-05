@@ -137,6 +137,8 @@ pub trait KeyValueStoreBackend {
     fn make_hash_id_ready_for_commit(&mut self, hash_id: HashId) -> Result<HashId, DBError>;
     /// Reload the persistent database and verify its integrity
     fn reload_database(&mut self) -> Result<(), DBError>;
+    ///
+    fn get_read_statistics(&self) -> Result<Option<ReadStatistics>, DBError>;
     /// Simulate a `commit`, by writing data to disk/memory, without computing hash
     #[cfg(test)]
     fn synchronize_data(
@@ -144,6 +146,13 @@ pub trait KeyValueStoreBackend {
         batch: &[(HashId, Arc<[u8]>)],
         output: &[u8],
     ) -> Result<Option<AbsoluteOffset>, DBError>;
+}
+
+#[derive(Debug)]
+pub struct ReadStatistics {
+    pub nobjects: usize,
+    pub objects_total_length: usize,
+    pub lowest_offset: u64,
 }
 
 /// Possible errors for schema

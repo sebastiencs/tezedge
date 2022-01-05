@@ -1018,8 +1018,11 @@ impl WorkingTree {
         storage: &mut Storage,
         strings: &mut StringInterner,
         depth: usize,
+        max_depth: &mut usize,
         // repository: &mut ContextKeyValueStore,
     ) -> Result<(), MerkleError> {
+        *max_depth = depth.max(*max_depth);
+
         match object {
             Object::Blob(_blob_id) => Ok(()),
             Object::Directory(dir_id) => {
@@ -1028,7 +1031,7 @@ impl WorkingTree {
                     storage.dir_to_vec_unsorted(dir_id, strings, &*repository)?
                 };
 
-                println!("{}DIR_LENGTH={:?}", " ".repeat(depth), dir.len());
+                // println!("{}DIR_LENGTH={:?}", " ".repeat(depth), dir.len());
 
                 for (_, dir_entry_id) in dir {
                     let dir_entry = storage.get_dir_entry(dir_entry_id)?;
@@ -1038,7 +1041,7 @@ impl WorkingTree {
                         match dir_entry.object_hash_id(&mut *repository, storage, strings)? {
                             Some(_) => {}
                             None => {
-                                println!("{}inlined", " ".repeat(depth));
+                                // println!("{}inlined", " ".repeat(depth));
                             }
                         }
                     }
@@ -1046,7 +1049,13 @@ impl WorkingTree {
                     let object = self
                         .index
                         .dir_entry_object(dir_entry_id, storage, strings)?;
-                    self.traverse_working_tree_recursive(object, storage, strings, depth + 1)?;
+                    self.traverse_working_tree_recursive(
+                        object,
+                        storage,
+                        strings,
+                        depth + 1,
+                        max_depth,
+                    )?;
                 }
 
                 Ok(())
@@ -1072,7 +1081,17 @@ impl WorkingTree {
         let mut strings = self.index.get_string_interner()?;
         // let mut repository = self.index.repository.write()?;
 
-        self.traverse_working_tree_recursive(object, &mut *storage, &mut *strings, 0)?;
+        let mut max_depth = 0;
+
+        self.traverse_working_tree_recursive(
+            object,
+            &mut *storage,
+            &mut *strings,
+            0,
+            &mut max_depth,
+        )?;
+
+        println!("MAX_DEPTH={:?}", max_depth);
 
         Ok(())
     }

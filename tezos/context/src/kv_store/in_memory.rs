@@ -25,7 +25,7 @@ use crate::{
         GarbageCollectionError, GarbageCollector,
     },
     hash::ObjectHash,
-    persistent::{DBError, Flushable, KeyValueStoreBackend, Persistable},
+    persistent::{DBError, Flushable, KeyValueStoreBackend, Persistable, ReadStatistics},
     working_tree::{
         shape::{DirectoryShapeId, DirectoryShapes, ShapeStrings},
         storage::{DirEntryId, InodeId, Storage},
@@ -346,6 +346,10 @@ impl KeyValueStoreBackend for InMemory {
     fn make_hash_id_ready_for_commit(&mut self, hash_id: HashId) -> Result<HashId, DBError> {
         // Unused HashId are garbage collected
         Ok(hash_id)
+    }
+
+    fn get_read_statistics(&self) -> Result<Option<ReadStatistics>, DBError> {
+        Ok(None)
     }
 
     #[cfg(test)]
