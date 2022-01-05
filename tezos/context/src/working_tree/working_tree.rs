@@ -95,6 +95,7 @@ pub struct PostCommitData {
 
 #[derive(Default)]
 pub struct BlobStatistics {
+    size: usize,
     total: usize,
     unique: HashSet<Vec<u8>>,
 }
@@ -102,7 +103,8 @@ pub struct BlobStatistics {
 impl std::fmt::Debug for BlobStatistics {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!(
-            "BlobStatistics {{ total: {}, unique: {} }}",
+            "{{ blob_length: {:>5} total: {:>8}, unique: {:>8} }}",
+            self.size,
             self.total,
             self.unique.len()
         ))
@@ -123,13 +125,19 @@ pub struct WorkingTreeStatistics {
 
 impl std::fmt::Debug for WorkingTreeStatistics {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut blobs_stats = Vec::with_capacity(self.blobs_by_length.len());
+        for stats in self.blobs_by_length.values() {
+            blobs_stats.push(stats);
+        }
+        blobs_stats.sort_by_key(|stats| stats.size);
+
         f.debug_struct("WorkingTreeStatistics")
+            .field("blobs_by_length", &blobs_stats)
             .field("max_depth", &self.max_depth)
             .field("nobjects", &self.nobjects)
             .field("nobjects_inlined", &self.nobjects_inlined)
             .field("nhashes", &self.nhashes)
             .field("unique_hash", &self.unique_hash.len())
-            .field("blobs_by_length", &self.blobs_by_length)
             .finish()
     }
 }
@@ -1073,7 +1081,15 @@ impl WorkingTree {
                 let blob = storage.get_blob(blob_id).unwrap();
                 let blob_length = blob.len();
 
-                let blob_stats = stats.blobs_by_length.entry(blob_length).or_default();
+                let blob_stats =
+                    stats
+                        .blobs_by_length
+                        .entry(blob_length)
+                        .or_insert_with(|| BlobStatistics {
+                            size: blob_length,
+                            total: 0,
+                            unique: HashSet::default(),
+                        });
                 blob_stats.total += 1;
                 blob_stats.unique.insert(blob.to_vec());
 
