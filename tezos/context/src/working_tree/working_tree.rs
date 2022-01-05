@@ -49,7 +49,7 @@
 //! Reference: https://git-scm.com/book/en/v2/Git-Internals-Git-Objects
 use std::{
     array::TryFromSliceError,
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::{Arc, PoisonError},
     vec::IntoIter,
 };
@@ -91,6 +91,47 @@ pub struct PostCommitData {
     pub reused: Vec<HashId>,
     pub serialize_stats: Box<SerializeStats>,
     pub output: Vec<u8>,
+}
+
+#[derive(Default)]
+pub struct BlobStatistics {
+    total: usize,
+    unique: HashSet<Vec<u8>>,
+}
+
+impl std::fmt::Debug for BlobStatistics {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!(
+            "BlobStatistics {{ total: {}, unique: {} }}",
+            self.total,
+            self.unique.len()
+        ))
+    }
+}
+
+type BlobSize = usize;
+
+#[derive(Default)]
+pub struct WorkingTreeStatistics {
+    max_depth: usize,
+    nobjects: usize,
+    nobjects_inlined: usize,
+    nhashes: usize,
+    unique_hash: HashSet<ObjectHash>,
+    blobs_by_length: HashMap<BlobSize, BlobStatistics>,
+}
+
+impl std::fmt::Debug for WorkingTreeStatistics {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WorkingTreeStatistics")
+            .field("max_depth", &self.max_depth)
+            .field("nobjects", &self.nobjects)
+            .field("nobjects_inlined", &self.nobjects_inlined)
+            .field("nhashes", &self.nhashes)
+            .field("unique_hash", &self.unique_hash.len())
+            .field("blobs_by_length", &self.blobs_by_length)
+            .finish()
+    }
 }
 
 impl PostCommitData {
@@ -1019,20 +1060,23 @@ impl WorkingTree {
         storage: &mut Storage,
         strings: &mut StringInterner,
         depth: usize,
-        max_depth: &mut usize,
-        nobjects: &mut usize,
-        nobjects_inlined: &mut usize,
-        nhashes: &mut usize,
-        unique_hash: &mut HashSet<ObjectHash>,
-        // repository: &mut ContextKeyValueStore,
+        stats: &mut WorkingTreeStatistics,
     ) -> Result<(), MerkleError> {
-        *max_depth = depth.max(*max_depth);
+        stats.max_depth = depth.max(stats.max_depth);
 
         match object {
             Object::Blob(blob_id) => {
                 if blob_id.is_inline() {
-                    *nobjects_inlined += 1;
+                    stats.nobjects_inlined += 1;
                 }
+
+                let blob = storage.get_blob(blob_id).unwrap();
+                let blob_length = blob.len();
+
+                let blob_stats = stats.blobs_by_length.entry(blob_length).or_default();
+                blob_stats.total += 1;
+                blob_stats.unique.insert(blob.to_vec());
+
                 Ok(())
             }
             Object::Directory(dir_id) => {
@@ -1041,9 +1085,7 @@ impl WorkingTree {
                     storage.dir_to_vec_unsorted(dir_id, strings, &*repository)?
                 };
 
-                *nobjects += dir.len();
-
-                // println!("{}DIR_LENGTH={:?}", " ".repeat(depth), dir.len());
+                stats.nobjects += dir.len();
 
                 for (_, dir_entry_id) in dir {
                     let dir_entry = storage.get_dir_entry(dir_entry_id)?;
@@ -1052,16 +1094,13 @@ impl WorkingTree {
                         let mut repository = self.index.repository.write()?;
                         match dir_entry.object_hash_id(&mut *repository, storage, strings)? {
                             Some(hash_id) => {
-                                *nhashes += 1;
+                                stats.nhashes += 1;
                                 let hash =
                                     repository.get_hash(hash_id.into()).unwrap().into_owned();
-                                unique_hash.insert(hash);
+                                stats.unique_hash.insert(hash);
                             }
                             None => {
-                                // *nobjects -= 1;
-
-                                // continue;
-                                // println!("{}inlined", " ".repeat(depth));
+                                // inlined blob
                             }
                         }
                     }
@@ -1075,11 +1114,7 @@ impl WorkingTree {
                         storage,
                         strings,
                         depth + 1,
-                        max_depth,
-                        nobjects,
-                        nobjects_inlined,
-                        nhashes,
-                        unique_hash,
+                        stats,
                     )?;
                 }
 
@@ -1087,11 +1122,6 @@ impl WorkingTree {
             }
             Object::Commit(commit) => {
                 panic!()
-                // let object = match root {
-                //     Some(root) => Object::Directory(root),
-                //     None => self.fetch_object_from_repo(commit.root_ref, repository)?,
-                // };
-                // self.traverse_working_tree_recursive(object, None, storage, strings, repository)
             }
         }
     }
@@ -1104,35 +1134,12 @@ impl WorkingTree {
 
         let mut storage = self.index.storage.borrow_mut();
         let mut strings = self.index.get_string_interner()?;
-        // let mut repository = self.index.repository.write()?;
 
-        let mut max_depth = 0;
-        let mut nobjects = 0;
-        let mut nobjects_inlined = 0;
-        let mut nhashes = 0;
-        let mut unique_hash = Default::default();
+        let mut stats = WorkingTreeStatistics::default();
 
-        self.traverse_working_tree_recursive(
-            object,
-            &mut *storage,
-            &mut *strings,
-            0,
-            &mut max_depth,
-            &mut nobjects,
-            &mut nobjects_inlined,
-            &mut nhashes,
-            &mut unique_hash,
-        )?;
+        self.traverse_working_tree_recursive(object, &mut *storage, &mut *strings, 0, &mut stats)?;
 
-        println!(
-            "MAX_DEPTH={:?} NOBJECTS={:?} NOBJECTS_INLINED={:?} NOBJECTS_WITHOUT_INLINED={:?} NHASHES={:?} UNIQUE_HASH={:?}",
-            max_depth,
-            nobjects,
-            nobjects_inlined,
-            nobjects - nobjects_inlined,
-            nhashes,
-            unique_hash.len(),
-        );
+        println!("Stats={:#?}", stats);
 
         Ok(())
     }
