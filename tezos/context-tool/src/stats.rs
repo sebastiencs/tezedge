@@ -51,6 +51,7 @@ impl std::fmt::Debug for DebugWorkingTreeStatistics {
             )
             .field("number_of_objects", &objects)
             .field("number_of_hashes ", &hashes)
+            .field("number_of_shapes ", &self.0.nshapes)
             .field(
                 "hashes_total_bytes (hashes.db file)",
                 &BytesDisplay {
@@ -67,6 +68,12 @@ impl std::fmt::Debug for DebugWorkingTreeStatistics {
                 "objects_total_bytes (data.db file)",
                 &BytesDisplay {
                     bytes: self.0.objects_total_bytes,
+                },
+            )
+            .field(
+                "shapes_total_bytes (shape_directories.db file)",
+                &BytesDisplay {
+                    bytes: self.0.shapes_total_bytes,
                 },
             )
             .field("total_bytes", &BytesDisplay { bytes: total_bytes })

@@ -50,7 +50,6 @@
 use std::{
     array::TryFromSliceError,
     collections::{HashMap, HashSet},
-    fmt::format,
     sync::{Arc, PoisonError},
     vec::IntoIter,
 };
@@ -120,11 +119,13 @@ pub struct WorkingTreeStatistics {
     pub nobjects: usize,
     pub nobjects_inlined: usize,
     pub nhashes: usize,
+    pub nshapes: usize,
     pub unique_hash: HashSet<ObjectHash>,
     pub unique_strings: HashMap<String, ()>,
     pub blobs_by_length: HashMap<BlobSize, BlobStatistics>,
     pub strings_total_bytes: usize,
     pub objects_total_bytes: usize,
+    pub shapes_total_bytes: usize,
     pub lowest_offset: u64,
 }
 
@@ -1092,12 +1093,13 @@ impl WorkingTree {
                 for (string_id, dir_entry_id) in dir {
                     let string = strings.get_str(string_id).unwrap().into_owned();
 
-                    let string_length = string.len();
                     let mut length_to_add = 0;
-                    stats.unique_strings.entry(string).or_insert_with_key(|_| {
-                        length_to_add = string_length;
-                        ()
-                    });
+                    stats
+                        .unique_strings
+                        .entry(string)
+                        .or_insert_with_key(|string| {
+                            length_to_add = string.len();
+                        });
                     stats.strings_total_bytes += length_to_add;
 
                     let dir_entry = storage.get_dir_entry(dir_entry_id)?;

@@ -7,7 +7,7 @@ use std::{
     convert::TryInto,
     hash::Hasher,
     io::{Read, Write},
-    sync::atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed},
+    sync::Mutex,
 };
 
 #[cfg(test)]
@@ -125,10 +125,7 @@ pub struct Persistent {
     startup_check: bool,
     last_commit_on_startup: Option<ObjectReference>,
 
-    read_mode: bool,
-    read_nobjects: AtomicUsize,
-    read_object_length: AtomicUsize,
-    read_lowest_offset: AtomicU64,
+    read_statistics: Option<Mutex<ReadStatistics>>,
 }
 
 impl NotGarbageCollected for Persistent {}
@@ -264,10 +261,11 @@ impl Persistent {
             sizes_file,
             startup_check,
             last_commit_on_startup: None,
-            read_mode,
-            read_nobjects: AtomicUsize::new(0),
-            read_object_length: AtomicUsize::new(0),
-            read_lowest_offset: AtomicU64::new(u64::MAX),
+            read_statistics: if read_mode {
+                Some(Mutex::new(ReadStatistics::default()))
+            } else {
+                None
+            },
         })
     }
 
@@ -518,11 +516,12 @@ hashes_file={:?}, in sizes.db={:?}",
             )?;
         }
 
-        if self.read_mode {
-            self.read_nobjects.fetch_add(1, Relaxed);
-            self.read_object_length.fetch_add(object_length, Relaxed);
-            self.read_lowest_offset.fetch_min(offset.as_u64(), Relaxed);
-        }
+        if let Some(stats) = self.read_statistics.as_ref() {
+            let mut stats = stats.lock()?;
+            stats.nobjects += 1;
+            stats.objects_total_bytes += object_length;
+            stats.lowest_offset = stats.lowest_offset.min(offset.as_u64());
+        };
 
         Ok(&buffer[..object_length])
     }
@@ -668,21 +667,6 @@ hashes_file={:?}, in sizes.db={:?}",
         let context_hash = ContextHash::try_from_bytes(raw_hash.as_ref()).unwrap();
 
         Some(context_hash)
-    }
-
-    pub fn context_size_at_commit(&self, context_hash: Option<ContextHash>) -> Result<(), DBError> {
-        let commit = if let Some(context_hash) = context_hash.as_ref() {
-            self.get_context_hash(context_hash)?
-        } else {
-            self.last_commit_on_startup
-        };
-
-        let commit = match commit {
-            Some(commit) => commit,
-            None => panic!("Cannot find commit at {:?}", context_hash),
-        };
-
-        Ok(())
     }
 
     pub fn get_file_sizes(&self) -> FileSizes {
@@ -969,10 +953,22 @@ impl KeyValueStoreBackend for Persistent {
     }
 
     fn get_shape(&self, shape_id: DirectoryShapeId) -> Result<ShapeStrings, DBError> {
-        self.shapes
+        let result = self
+            .shapes
             .get_shape(shape_id)
-            .map(ShapeStrings::SliceIds)
-            .map_err(Into::into)
+            .map(ShapeStrings::SliceIds)?;
+
+        if let Some(stats) = self.read_statistics.as_ref() {
+            let mut stats = stats.lock()?;
+
+            let mut length_to_add = 0;
+            stats.unique_shapes.entry(shape_id).or_insert_with_key(|_| {
+                length_to_add = result.len();
+            });
+            stats.shapes_length += length_to_add;
+        };
+
+        Ok(result)
     }
 
     fn make_shape(
@@ -1108,13 +1104,12 @@ impl KeyValueStoreBackend for Persistent {
     }
 
     fn get_read_statistics(&self) -> Result<Option<ReadStatistics>, DBError> {
-        let stats = ReadStatistics {
-            nobjects: self.read_nobjects.load(Relaxed),
-            objects_total_length: self.read_object_length.load(Relaxed),
-            lowest_offset: self.read_lowest_offset.load(Relaxed),
+        let stats = match self.read_statistics.as_ref() {
+            Some(stats) => stats.lock()?,
+            None => return Ok(None),
         };
 
-        Ok(Some(stats))
+        Ok(Some(stats.clone()))
     }
 
     #[cfg(test)]

@@ -35,7 +35,7 @@ pub enum DirectoryShapeError {
     IdFromUSize,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Hash, Eq, PartialEq)]
 pub struct DirectoryShapeId(u32);
 
 impl TryInto<usize> for DirectoryShapeId {
@@ -110,6 +110,15 @@ impl Default for DirectoryShapes {
 pub enum ShapeStrings<'a> {
     SliceIds(Cow<'a, [StringId]>),
     Owned(Vec<String>),
+}
+
+impl<'a> ShapeStrings<'a> {
+    pub fn len(&self) -> usize {
+        match self {
+            ShapeStrings::SliceIds(slice) => slice.len(),
+            ShapeStrings::Owned(owned) => owned.len(),
+        }
+    }
 }
 
 impl DirectoryShapes {

@@ -8,6 +8,7 @@ use tezos_context::{
         file::{File, TAG_SIZES},
         KeyValueStoreBackend,
     },
+    working_tree::string_interner::StringId,
     IndexApi, Persistent, TezedgeIndex,
 };
 
@@ -128,11 +129,13 @@ fn main() {
             let repo = context.index.repository.read().unwrap();
             let repo_stats = repo.get_read_statistics().unwrap().unwrap();
 
-            stats.objects_total_bytes = repo_stats.objects_total_length;
+            stats.objects_total_bytes = repo_stats.objects_total_bytes;
             stats.lowest_offset = repo_stats.lowest_offset;
+            stats.nshapes = repo_stats.unique_shapes.len();
+            stats.shapes_total_bytes = repo_stats.shapes_length * std::mem::size_of::<StringId>();
 
             println!("{:#?}", stats::DebugWorkingTreeStatistics(stats));
-            println!("{:#?}", repo_stats);
+            // println!("{:#?}", repo_stats);
             println!("Time {:?}", now.elapsed());
         }
     }

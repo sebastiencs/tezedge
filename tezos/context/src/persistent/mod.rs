@@ -1,7 +1,7 @@
 // Copyright (c) SimpleStaking, Viable Systems and Tezedge Contributors
 // SPDX-License-Identifier: MIT
 
-use std::{borrow::Cow, convert::TryFrom, io, sync::PoisonError};
+use std::{borrow::Cow, collections::HashMap, convert::TryFrom, io, sync::PoisonError};
 
 use crypto::hash::ContextHash;
 use thiserror::Error;
@@ -148,11 +148,25 @@ pub trait KeyValueStoreBackend {
     ) -> Result<Option<AbsoluteOffset>, DBError>;
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ReadStatistics {
     pub nobjects: usize,
-    pub objects_total_length: usize,
+    pub objects_total_bytes: usize,
     pub lowest_offset: u64,
+    pub unique_shapes: HashMap<DirectoryShapeId, ()>,
+    pub shapes_length: usize,
+}
+
+impl Default for ReadStatistics {
+    fn default() -> Self {
+        Self {
+            nobjects: 0,
+            objects_total_bytes: 0,
+            lowest_offset: u64::MAX,
+            unique_shapes: HashMap::default(),
+            shapes_length: 0,
+        }
+    }
 }
 
 /// Possible errors for schema
