@@ -103,7 +103,7 @@ pub struct BlobStatistics {
 impl std::fmt::Debug for BlobStatistics {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!(
-            "{{ blob_length: {:>5} total: {:>8}, unique: {:>8} }}",
+            "{{ blob_length: {:>5}, total: {:>8}, unique: {:>8} }}",
             self.size,
             self.total,
             self.unique.len()
@@ -111,7 +111,23 @@ impl std::fmt::Debug for BlobStatistics {
     }
 }
 
+#[derive(Default)]
+pub struct DirectoryStatistics {
+    pub size: usize,
+    pub total: usize,
+}
+
+impl std::fmt::Debug for DirectoryStatistics {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!(
+            "{{ dir_length: {:>8}, total: {:>8} }}",
+            self.size, self.total,
+        ))
+    }
+}
+
 type BlobSize = usize;
+type DirSize = usize;
 
 #[derive(Default)]
 pub struct WorkingTreeStatistics {
@@ -120,8 +136,10 @@ pub struct WorkingTreeStatistics {
     pub nobjects_inlined: usize,
     pub nhashes: usize,
     pub nshapes: usize,
+    pub ndirectories: usize,
     pub unique_hash: HashSet<ObjectHash>,
     pub unique_strings: HashMap<String, ()>,
+    pub directories_by_length: HashMap<DirSize, DirectoryStatistics>,
     pub blobs_by_length: HashMap<BlobSize, BlobStatistics>,
     pub strings_total_bytes: usize,
     pub objects_total_bytes: usize,
@@ -1087,6 +1105,17 @@ impl WorkingTree {
                     let repository = self.index.repository.read()?;
                     storage.dir_to_vec_unsorted(dir_id, strings, &*repository)?
                 };
+
+                stats.ndirectories += 1;
+
+                let dir_stats = stats
+                    .directories_by_length
+                    .entry(dir.len())
+                    .or_insert_with(|| DirectoryStatistics {
+                        size: dir.len(),
+                        total: 0,
+                    });
+                dir_stats.total += 1;
 
                 stats.nobjects += dir.len();
 

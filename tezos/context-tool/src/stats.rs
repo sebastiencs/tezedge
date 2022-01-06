@@ -12,6 +12,12 @@ impl std::fmt::Debug for DebugWorkingTreeStatistics {
         }
         blobs_stats.sort_by_key(|stats| stats.size);
 
+        let mut dir_stats = Vec::with_capacity(self.0.directories_by_length.len());
+        for stats in self.0.directories_by_length.values() {
+            dir_stats.push(stats);
+        }
+        dir_stats.sort_by_key(|stats| stats.size);
+
         let hashes = format!(
             "{{ total: {:>8}, unique: {:>9} }}",
             &self.0.nhashes,
@@ -45,6 +51,7 @@ impl std::fmt::Debug for DebugWorkingTreeStatistics {
 
         f.debug_struct("WorkingTreeStatistics")
             .field("blobs_by_length", &blobs_stats)
+            .field("directories_by_length", &dir_stats)
             .field("max_depth", &self.0.max_depth)
             .field(
                 "oldest_reference (offset in data.db file) ",
@@ -53,6 +60,7 @@ impl std::fmt::Debug for DebugWorkingTreeStatistics {
             .field("number_of_objects", &objects)
             .field("number_of_hashes ", &hashes)
             .field("number_of_shapes ", &self.0.nshapes)
+            .field("number_of_directories ", &self.0.ndirectories)
             .field(
                 "hashes_total_bytes (hashes.db file)",
                 &BytesDisplay {
