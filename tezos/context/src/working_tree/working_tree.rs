@@ -50,6 +50,7 @@
 use std::{
     array::TryFromSliceError,
     collections::{HashMap, HashSet},
+    fmt::format,
     sync::{Arc, PoisonError},
     vec::IntoIter,
 };
@@ -115,14 +116,18 @@ type BlobSize = usize;
 
 #[derive(Default)]
 pub struct WorkingTreeStatistics {
-    max_depth: usize,
-    nobjects: usize,
-    nobjects_inlined: usize,
-    nhashes: usize,
-    unique_hash: HashSet<ObjectHash>,
-    blobs_by_length: HashMap<BlobSize, BlobStatistics>,
-    strings_total_bytes: usize,
+    pub max_depth: usize,
+    pub nobjects: usize,
+    pub nobjects_inlined: usize,
+    pub nhashes: usize,
+    pub unique_hash: HashSet<ObjectHash>,
+    pub blobs_by_length: HashMap<BlobSize, BlobStatistics>,
+    pub strings_total_bytes: usize,
+    pub objects_total_bytes: usize,
+    pub lowest_offset: u64,
 }
+
+use byte_unit::Byte;
 
 impl std::fmt::Debug for WorkingTreeStatistics {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -132,14 +137,59 @@ impl std::fmt::Debug for WorkingTreeStatistics {
         }
         blobs_stats.sort_by_key(|stats| stats.size);
 
+        let hashes = format!(
+            "{{ total: {:>8}, unique: {:>9} }}",
+            &self.nhashes,
+            &self.unique_hash.len()
+        );
+        let objects = format!(
+            "{{ total: {:>8}, inlined: {:>8}, not inlined: {:>8} }}",
+            &self.nobjects,
+            &self.nobjects_inlined,
+            self.nobjects - self.nobjects_inlined
+        );
+
+        struct BytesDisplay {
+            bytes: usize,
+        }
+
+        impl std::fmt::Debug for BytesDisplay {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                let bytes_str = Byte::from_bytes(self.bytes as u64)
+                    .get_appropriate_unit(false)
+                    .to_string();
+
+                f.write_fmt(format_args!("{:>8} ({:>8})", self.bytes, bytes_str,))
+            }
+        }
+
         f.debug_struct("WorkingTreeStatistics")
             .field("blobs_by_length", &blobs_stats)
             .field("max_depth", &self.max_depth)
-            .field("nobjects", &self.nobjects)
-            .field("nobjects_inlined", &self.nobjects_inlined)
-            .field("nhashes", &self.nhashes)
-            .field("unique_hash", &self.unique_hash.len())
-            .field("strings_total_bytes", &self.strings_total_bytes)
+            .field("number_of_objects", &objects)
+            .field("number_of_hashes ", &hashes)
+            .field(
+                "hashes_total_bytes (hashes.db file)",
+                &BytesDisplay {
+                    bytes: self.nhashes * std::mem::size_of::<ObjectHash>(),
+                },
+            )
+            .field(
+                "strings_total_bytes (small & big strings)",
+                &BytesDisplay {
+                    bytes: self.strings_total_bytes,
+                },
+            )
+            .field(
+                "objects_total_bytes (data.db file)",
+                &BytesDisplay {
+                    bytes: self.objects_total_bytes,
+                },
+            )
+            .field(
+                "oldest_reference (offset in data.db file) ",
+                &self.lowest_offset,
+            )
             .finish()
     }
 }
@@ -1144,7 +1194,7 @@ impl WorkingTree {
         }
     }
 
-    pub fn traverse_working_tree(&self) -> Result<(), MerkleError> {
+    pub fn traverse_working_tree(&self) -> Result<WorkingTreeStatistics, MerkleError> {
         let object = match self.root {
             WorkingTreeRoot::Directory(dir_id) => Object::Directory(dir_id),
             WorkingTreeRoot::Value(blob_id) => Object::Blob(blob_id),
@@ -1159,9 +1209,9 @@ impl WorkingTree {
 
         stats.strings_total_bytes = strings.len();
 
-        println!("Stats={:#?}", stats);
+        // println!("Stats={:#?}", stats);
 
-        Ok(())
+        Ok(stats)
     }
 
     fn serialize_objects_recursively(

@@ -121,13 +121,17 @@ fn main() {
             let now = std::time::Instant::now();
 
             let context = index.checkout(&context_hash).unwrap().unwrap();
-            context.tree.traverse_working_tree().unwrap();
+            let mut stats = context.tree.traverse_working_tree().unwrap();
 
             let repo = context.index.repository.read().unwrap();
-            let stats = repo.get_read_statistics().unwrap().unwrap();
+            let repo_stats = repo.get_read_statistics().unwrap().unwrap();
 
-            println!("Time {:?}", now.elapsed());
+            stats.objects_total_bytes = repo_stats.objects_total_length;
+            stats.lowest_offset = repo_stats.lowest_offset;
+
             println!("{:#?}", stats);
+            println!("{:#?}", repo_stats);
+            println!("Time {:?}", now.elapsed());
         }
     }
 }
