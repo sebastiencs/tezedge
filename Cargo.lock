@@ -646,6 +646,7 @@ dependencies = [
 name = "context-tool"
 version = "0.1.0"
 dependencies = [
+ "byte-unit",
  "clap 3.0.0",
  "crypto",
  "tezos_context",
@@ -3715,7 +3716,6 @@ dependencies = [
  "anyhow",
  "bincode",
  "blake2",
- "byte-unit",
  "crc32fast",
  "crossbeam-channel",
  "crypto",

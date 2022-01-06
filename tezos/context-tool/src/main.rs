@@ -11,6 +11,8 @@ use tezos_context::{
     IndexApi, Persistent, TezedgeIndex,
 };
 
+mod stats;
+
 /// Simple program to greet a person
 #[derive(Parser, Debug)]
 #[clap(about, version, author)]
@@ -129,7 +131,7 @@ fn main() {
             stats.objects_total_bytes = repo_stats.objects_total_length;
             stats.lowest_offset = repo_stats.lowest_offset;
 
-            println!("{:#?}", stats);
+            println!("{:#?}", stats::DebugWorkingTreeStatistics(stats));
             println!("{:#?}", repo_stats);
             println!("Time {:?}", now.elapsed());
         }

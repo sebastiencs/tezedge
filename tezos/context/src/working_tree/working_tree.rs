@@ -96,9 +96,9 @@ pub struct PostCommitData {
 
 #[derive(Default)]
 pub struct BlobStatistics {
-    size: usize,
-    total: usize,
-    unique: HashSet<Vec<u8>>,
+    pub size: usize,
+    pub total: usize,
+    pub unique: HashSet<Vec<u8>>,
 }
 
 impl std::fmt::Debug for BlobStatistics {
@@ -121,77 +121,11 @@ pub struct WorkingTreeStatistics {
     pub nobjects_inlined: usize,
     pub nhashes: usize,
     pub unique_hash: HashSet<ObjectHash>,
+    pub unique_strings: HashMap<String, ()>,
     pub blobs_by_length: HashMap<BlobSize, BlobStatistics>,
     pub strings_total_bytes: usize,
     pub objects_total_bytes: usize,
     pub lowest_offset: u64,
-}
-
-use byte_unit::Byte;
-
-impl std::fmt::Debug for WorkingTreeStatistics {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut blobs_stats = Vec::with_capacity(self.blobs_by_length.len());
-        for stats in self.blobs_by_length.values() {
-            blobs_stats.push(stats);
-        }
-        blobs_stats.sort_by_key(|stats| stats.size);
-
-        let hashes = format!(
-            "{{ total: {:>8}, unique: {:>9} }}",
-            &self.nhashes,
-            &self.unique_hash.len()
-        );
-        let objects = format!(
-            "{{ total: {:>8}, inlined: {:>8}, not inlined: {:>8} }}",
-            &self.nobjects,
-            &self.nobjects_inlined,
-            self.nobjects - self.nobjects_inlined
-        );
-
-        struct BytesDisplay {
-            bytes: usize,
-        }
-
-        impl std::fmt::Debug for BytesDisplay {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                let bytes_str = Byte::from_bytes(self.bytes as u64)
-                    .get_appropriate_unit(false)
-                    .to_string();
-
-                f.write_fmt(format_args!("{:>8} ({:>8})", self.bytes, bytes_str,))
-            }
-        }
-
-        f.debug_struct("WorkingTreeStatistics")
-            .field("blobs_by_length", &blobs_stats)
-            .field("max_depth", &self.max_depth)
-            .field("number_of_objects", &objects)
-            .field("number_of_hashes ", &hashes)
-            .field(
-                "hashes_total_bytes (hashes.db file)",
-                &BytesDisplay {
-                    bytes: self.nhashes * std::mem::size_of::<ObjectHash>(),
-                },
-            )
-            .field(
-                "strings_total_bytes (small & big strings)",
-                &BytesDisplay {
-                    bytes: self.strings_total_bytes,
-                },
-            )
-            .field(
-                "objects_total_bytes (data.db file)",
-                &BytesDisplay {
-                    bytes: self.objects_total_bytes,
-                },
-            )
-            .field(
-                "oldest_reference (offset in data.db file) ",
-                &self.lowest_offset,
-            )
-            .finish()
-    }
 }
 
 impl PostCommitData {
@@ -1155,7 +1089,17 @@ impl WorkingTree {
 
                 stats.nobjects += dir.len();
 
-                for (_, dir_entry_id) in dir {
+                for (string_id, dir_entry_id) in dir {
+                    let string = strings.get_str(string_id).unwrap().into_owned();
+
+                    let string_length = string.len();
+                    let mut length_to_add = 0;
+                    stats.unique_strings.entry(string).or_insert_with_key(|_| {
+                        length_to_add = string_length;
+                        ()
+                    });
+                    stats.strings_total_bytes += length_to_add;
+
                     let dir_entry = storage.get_dir_entry(dir_entry_id)?;
 
                     {
@@ -1206,10 +1150,6 @@ impl WorkingTree {
         let mut stats = WorkingTreeStatistics::default();
 
         self.traverse_working_tree_recursive(object, &mut *storage, &mut *strings, 0, &mut stats)?;
-
-        stats.strings_total_bytes = strings.len();
-
-        // println!("Stats={:#?}", stats);
 
         Ok(stats)
     }
