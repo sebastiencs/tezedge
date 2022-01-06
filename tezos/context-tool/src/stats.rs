@@ -26,7 +26,8 @@ impl std::fmt::Debug for DebugWorkingTreeStatistics {
 
         let total_bytes = self.0.nhashes * std::mem::size_of::<ObjectHash>()
             + self.0.strings_total_bytes
-            + self.0.objects_total_bytes;
+            + self.0.objects_total_bytes
+            + self.0.shapes_total_bytes;
 
         struct BytesDisplay {
             bytes: usize,
