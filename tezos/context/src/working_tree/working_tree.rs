@@ -115,13 +115,16 @@ impl std::fmt::Debug for BlobStatistics {
 pub struct DirectoryStatistics {
     pub size: usize,
     pub total: usize,
+    pub unique: HashSet<Vec<u8>>,
 }
 
 impl std::fmt::Debug for DirectoryStatistics {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!(
-            "{{ dir_length: {:>8}, total: {:>8} }}",
-            self.size, self.total,
+            "{{ dir_length: {:>8}, total: {:>8}, unique: {:>8} }}",
+            self.size,
+            self.total,
+            self.unique.len(),
         ))
     }
 }
@@ -1070,6 +1073,7 @@ impl WorkingTree {
     fn traverse_working_tree_recursive(
         &self,
         object: Object,
+        object_hash_id: Option<HashId>,
         storage: &mut Storage,
         strings: &mut StringInterner,
         depth: usize,
@@ -1108,14 +1112,23 @@ impl WorkingTree {
 
                 stats.ndirectories += 1;
 
+                let dir_hash = object_hash_id.map(|hash_id| {
+                    let repository = self.index.repository.read().unwrap();
+                    repository.get_hash(hash_id.into()).unwrap().to_vec()
+                });
+
                 let dir_stats = stats
                     .directories_by_length
                     .entry(dir.len())
                     .or_insert_with(|| DirectoryStatistics {
                         size: dir.len(),
                         total: 0,
+                        unique: HashSet::default(),
                     });
                 dir_stats.total += 1;
+                if let Some(dir_hash) = dir_hash {
+                    dir_stats.unique.insert(dir_hash);
+                }
 
                 stats.nobjects += dir.len();
 
@@ -1133,20 +1146,25 @@ impl WorkingTree {
 
                     let dir_entry = storage.get_dir_entry(dir_entry_id)?;
 
-                    {
+                    let object_hash_id = {
                         let mut repository = self.index.repository.write()?;
                         match dir_entry.object_hash_id(&mut *repository, storage, strings)? {
                             Some(hash_id) => {
+                                assert!(dir_entry.get_hash_id().is_ok());
+
                                 stats.nhashes += 1;
                                 let hash =
                                     repository.get_hash(hash_id.into()).unwrap().into_owned();
                                 stats.unique_hash.insert(hash);
+
+                                Some(hash_id)
                             }
                             None => {
                                 // inlined blob
+                                None
                             }
                         }
-                    }
+                    };
 
                     let object = self
                         .index
@@ -1154,6 +1172,7 @@ impl WorkingTree {
 
                     self.traverse_working_tree_recursive(
                         object,
+                        object_hash_id,
                         storage,
                         strings,
                         depth + 1,
@@ -1180,7 +1199,14 @@ impl WorkingTree {
 
         let mut stats = WorkingTreeStatistics::default();
 
-        self.traverse_working_tree_recursive(object, &mut *storage, &mut *strings, 0, &mut stats)?;
+        self.traverse_working_tree_recursive(
+            object,
+            None,
+            &mut *storage,
+            &mut *strings,
+            0,
+            &mut stats,
+        )?;
 
         Ok(stats)
     }
