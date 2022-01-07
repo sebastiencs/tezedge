@@ -1,4 +1,7 @@
-use std::sync::{Arc, RwLock};
+use std::{
+    rc::Rc,
+    sync::{Arc, RwLock},
+};
 
 use clap::{Parser, Subcommand};
 use crypto::hash::{ContextHash, HashTrait};
@@ -9,7 +12,7 @@ use tezos_context::{
         KeyValueStoreBackend,
     },
     working_tree::string_interner::StringId,
-    IndexApi, Persistent, TezedgeIndex,
+    ContextKeyValueStore, IndexApi, Persistent, ShellContextApi, TezedgeContext, TezedgeIndex,
 };
 
 mod stats;
@@ -59,7 +62,7 @@ enum Commands {
         context_path: String,
         /// Commit to make the snapshot from, default to last commit
         #[clap(short, long)]
-        context_hash: Option<String>,
+        acontext_hash: Option<String>,
         /// Path of the result
         #[clap(short, long)]
         output: String,
@@ -162,21 +165,69 @@ fn main() {
         }
         Commands::MakeSnapshot {
             context_path,
-            context_hash,
+            acontext_hash: context_hash,
             output,
         } => {
-            let ctx = reload_context(context_path);
+            let ((mut tree, storage, string_interner), commit) = {
+                let ctx = reload_context(context_path);
 
-            let context_hash = if let Some(context_hash) = context_hash.as_ref() {
-                ContextHash::from_b58check(&context_hash).unwrap()
-            } else {
-                ctx.get_last_context_hash().unwrap()
+                let context_hash = if let Some(context_hash) = context_hash.as_ref() {
+                    ContextHash::from_b58check(&context_hash).unwrap()
+                } else {
+                    ctx.get_last_context_hash().unwrap()
+                };
+
+                let read_ctx: Arc<RwLock<ContextKeyValueStore>> = Arc::new(RwLock::new(ctx));
+
+                let index = TezedgeIndex::new(Arc::clone(&read_ctx), None);
+
+                let context = index.checkout(&context_hash).unwrap().unwrap();
+
+                // let parent_hash = index
+                //     .fetch_parent_from_context_hash(&context_hash)
+                //     .unwrap()
+                //     .unwrap();
+
+                let commit = index
+                    .fetch_commit_from_context_hash(&context_hash)
+                    .unwrap()
+                    .unwrap();
+
+                println!("COMMIT={:?}", commit);
+
+                // let parent_commit_hash_id = commit.parent_commit_ref.map(|p| p.hash_id());
+                // let parent_commit_hash =
+
+                context.tree.traverse_working_tree().unwrap();
+                // context.tree.forget_references().unwrap();
+
+                (context.take_tree(), commit)
             };
 
-            let index = TezedgeIndex::new(Arc::new(RwLock::new(ctx)), None);
+            let write_ctx = Persistent::try_new(Some("/tmp/new_ctx"), false, false).unwrap();
+            let write_ctx: Arc<RwLock<ContextKeyValueStore>> = Arc::new(RwLock::new(write_ctx));
 
-            let context = index.checkout(&context_hash).unwrap().unwrap();
-            context.tree.traverse_working_tree().unwrap();
+            storage.borrow_mut().forget_references();
+            // storage.borrow_mut().offsets_to_hash_id = Default::default();
+            let index = TezedgeIndex::with_storage(write_ctx, storage, string_interner);
+
+            tree.index = index.clone();
+
+            // TODO: Set parent
+            let context = TezedgeContext::new(index, None, Some(Rc::new(tree)));
+
+            // let read_ctx = index.replace_repository(Arc::new(RwLock::new(write_ctx)));
+
+            // context.index. = index;
+
+            // println!("PARENT={:?}", context.parent_commit_ref);
+
+            // context.index.repository = Arc::clone(&write_ctx);
+            // context.tree.index.repository = write_ctx;
+
+            context
+                .commit(commit.author, commit.message, commit.time as i64)
+                .unwrap();
         }
     }
 }

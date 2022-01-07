@@ -122,6 +122,40 @@ impl TezedgeIndex {
         }
     }
 
+    pub fn with_storage(
+        repository: Arc<RwLock<ContextKeyValueStore>>,
+        storage: Rc<RefCell<Storage>>,
+        string_interner: Rc<RefCell<Option<StringInterner>>>,
+    ) -> Self {
+        Self {
+            patch_context: Default::default(),
+            repository,
+            storage,
+            string_interner,
+        }
+    }
+
+    // pub fn replace_repository(
+    //     &mut self,
+    //     new_repository: ContextKeyValueStore,
+    //     // new_repository: Arc<RwLock<ContextKeyValueStore>>,
+    // ) -> Arc<RwLock<ContextKeyValueStore>> {
+    //     let old = self.repository.write().unwrap();
+
+    //     std::mem::replace(&mut *old, 1);
+    //     // std::mem::replace(&mut *old, new_repository);
+
+    //     todo!()
+    // }
+
+    // pub fn replace_repository(
+    //     &mut self,
+    //     new_repository: Arc<RwLock<ContextKeyValueStore>>,
+    // ) -> Arc<RwLock<ContextKeyValueStore>> {
+    //     // let old = self.repository.write().unwrap();
+    //     std::mem::replace(&mut self.repository, new_repository)
+    // }
+
     pub fn get_string_interner(&self) -> Result<RefMut<StringInterner>, DBError> {
         // When the context is reloaded/restarted, the existings strings (found the the db file)
         // are in the repository.
@@ -146,6 +180,67 @@ impl TezedgeIndex {
 
         // Do not fail, we just replace the `Option`
         Ok(RefMut::map(strings, |s| s.as_mut().unwrap()))
+    }
+
+    pub fn fetch_commit_from_context_hash(
+        &self,
+        context_hash: &ContextHash,
+    ) -> Result<Option<Commit>, ContextError> {
+        let object_ref = {
+            let repository = self.repository.read()?;
+
+            match repository.get_context_hash(context_hash)? {
+                Some(hash_id) => hash_id,
+                None => return Ok(None),
+            }
+        };
+
+        let mut storage = self.storage.borrow_mut();
+        let mut strings = self.get_string_interner()?;
+
+        match self.fetch_commit(object_ref, &mut storage, &mut strings)? {
+            Some(commit) => Ok(Some(commit)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn fetch_parent_from_context_hash(
+        &self,
+        context_hash: &ContextHash,
+    ) -> Result<Option<ObjectHash>, ContextError> {
+        let object_ref = {
+            let repository = self.repository.read()?;
+
+            match repository.get_context_hash(context_hash)? {
+                Some(hash_id) => hash_id,
+                None => return Ok(None),
+            }
+        };
+
+        let mut storage = self.storage.borrow_mut();
+        let mut strings = self.get_string_interner()?;
+
+        let commit = match self.fetch_commit(object_ref, &mut storage, &mut strings)? {
+            Some(commit) => commit,
+            None => return Ok(None),
+        };
+
+        let parent = match commit.parent_commit_ref {
+            Some(parent) => parent,
+            None => return Ok(None),
+        };
+
+        let repository = self.repository.read()?;
+
+        repository
+            .get_hash(parent)
+            .map(|hash| Some(hash.into_owned()))
+            .map_err(Into::into)
+
+        // match repository.get_hash(parent.hash_id())? {
+        //     Ok(hash) => hash,
+        //     None => return Ok(None),
+        // }
     }
 
     fn with_deallocation(&self) -> TezedgeIndexWithDeallocation {
@@ -1067,6 +1162,20 @@ impl TezedgeContext {
 
     fn with_deallocation(&self) -> TezedgeContextWithDeallocation<'_> {
         TezedgeContextWithDeallocation { ctx: self }
+    }
+
+    pub fn take_tree(
+        self,
+    ) -> (
+        WorkingTree,
+        Rc<RefCell<Storage>>,
+        Rc<RefCell<Option<StringInterner>>>,
+    ) {
+        (
+            (*self.tree).clone(),
+            Rc::clone(&self.index.storage),
+            Rc::clone(&self.index.string_interner),
+        )
     }
 
     fn commit_impl(

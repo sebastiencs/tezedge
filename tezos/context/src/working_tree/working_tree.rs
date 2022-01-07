@@ -885,8 +885,12 @@ impl WorkingTree {
         offset: Option<AbsoluteOffset>,
         keep_older_objects: bool,
     ) -> Result<PostCommitData, MerkleError> {
+        println!("AAAA");
+
         let root_hash_id = self.get_root_directory_hash(repository)?;
         let root = self.get_root_directory();
+
+        println!("HASHED");
 
         let new_commit = Commit {
             parent_commit_ref,
@@ -1172,6 +1176,8 @@ impl WorkingTree {
 
                     let dir_entry = storage.get_dir_entry(dir_entry_id)?;
                     dir_entry.set_offset(None);
+                    dir_entry.set_hash_id(None);
+                    dir_entry.set_commited(false);
 
                     self.traverse_working_tree_recursive(
                         object,
@@ -1189,6 +1195,59 @@ impl WorkingTree {
                 panic!()
             }
         }
+    }
+
+    fn forget_references_recursive(
+        &self,
+        object: Object,
+        storage: &Storage,
+        strings: &mut StringInterner,
+    ) -> Result<(), MerkleError> {
+        match object {
+            Object::Blob(blob_id) => Ok(()),
+            Object::Directory(dir_id) => {
+                storage.dir_iterate_unsorted(dir_id, |&(_, dir_entry_id)| {
+                    let dir_entry = storage.get_dir_entry(dir_entry_id)?;
+
+                    dir_entry.set_offset(None);
+                    dir_entry.set_hash_id(None);
+                    dir_entry.set_commited(false);
+
+                    let object = dir_entry.get_object().unwrap();
+
+                    // let object = self
+                    //     .index
+                    //     .dir_entry_object(dir_entry_id, storage, strings)?;
+
+                    self.forget_references_recursive(object, storage, strings)?;
+
+                    Ok(())
+                });
+                Ok(())
+            }
+            Object::Commit(commit) => {
+                panic!()
+            }
+        }
+    }
+
+    pub fn forget_references(&self) -> Result<(), MerkleError> {
+        let object = match self.root {
+            WorkingTreeRoot::Directory(dir_id) => Object::Directory(dir_id),
+            WorkingTreeRoot::Value(blob_id) => Object::Blob(blob_id),
+        };
+
+        let mut storage = self.index.storage.borrow_mut();
+        let mut strings = self.index.get_string_interner()?;
+
+        self.forget_references_recursive(
+            object,
+            // None,
+            &mut *storage,
+            &mut *strings,
+        )?;
+
+        Ok(())
     }
 
     pub fn traverse_working_tree(&self) -> Result<WorkingTreeStatistics, MerkleError> {

@@ -108,7 +108,7 @@ impl std::fmt::Debug for DebugWorkingTreeStatistics {
             .field("directories_by_length", &dir_stats)
             .field("max_depth", &self.0.max_depth)
             .field(
-                "oldest_reference (offset in data.db file) ",
+                "oldest_reference (absolute offset in data.db file) ",
                 &self.0.lowest_offset,
             )
             .field(

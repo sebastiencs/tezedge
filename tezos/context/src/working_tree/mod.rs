@@ -67,11 +67,11 @@ assert_eq_size!([u8; 22], DirEntry);
 /// Commit objects are the entry points to different versions of the context tree.
 #[derive(Debug, Hash, Clone, Eq, PartialEq)]
 pub struct Commit {
-    pub(crate) parent_commit_ref: Option<ObjectReference>,
-    pub(crate) root_ref: ObjectReference,
-    pub(crate) time: u64,
-    pub(crate) author: String,
-    pub(crate) message: String,
+    pub parent_commit_ref: Option<ObjectReference>,
+    pub root_ref: ObjectReference,
+    pub time: u64,
+    pub author: String,
+    pub message: String,
 }
 
 impl Commit {
@@ -146,6 +146,14 @@ impl DirEntry {
         HashId::new(id)
     }
 
+    pub fn set_hash_id(&self, hash_id: impl Into<Option<HashId>>) {
+        let hash_id: Option<HashId> = hash_id.into();
+        let hash_id = hash_id.map(|h| h.as_u64()).unwrap_or(0);
+
+        let inner = self.inner.get().with_object_hash_id(hash_id);
+        self.inner.set(inner);
+    }
+
     pub fn set_offset(&self, offset: impl Into<Option<AbsoluteOffset>>) {
         let offset = offset.into();
 
@@ -157,6 +165,8 @@ impl DirEntry {
         let inner = self.inner.get().with_file_offset(offset.as_u64());
 
         self.inner.set(inner);
+
+        assert_eq!(self.inner.get().file_offset(), offset.as_u64());
     }
 
     pub fn with_offset(self, offset: AbsoluteOffset) -> Self {

@@ -446,6 +446,14 @@ impl PointerToInode {
         }
     }
 
+    pub fn forget_reference(&self) {
+        let mut inner = self.inner.get();
+        inner.set_hash_id(0);
+        inner.set_is_commited(false);
+        inner.set_offset(0);
+        self.inner.set(inner);
+    }
+
     pub fn with_offset(self, offset: u64) -> Self {
         debug_assert_ne!(offset, 0);
 
@@ -492,6 +500,7 @@ impl PointerToInode {
             Some(hash_id) => *hash_id,
             None => {
                 let object_ref = ObjectReference::new(None, Some(offset));
+                println!("LAAA {:?}", object_ref);
                 repository.get_hash_id(object_ref)?
             }
         };
@@ -684,6 +693,24 @@ impl Storage {
             inodes_cap,
             strings,
             total_bytes,
+        }
+    }
+
+    pub fn forget_references(&mut self) {
+        self.offsets_to_hash_id = Default::default();
+        for (_, dir_entry_id) in self.directories.iter() {
+            let dir_entry = self.get_dir_entry(*dir_entry_id).unwrap();
+            dir_entry.set_offset(None);
+            dir_entry.set_hash_id(None);
+            dir_entry.set_commited(false);
+        }
+
+        for inode in self.inodes.iter_values() {
+            if let Inode::Pointers { pointers, .. } = inode {
+                for ptr in pointers.iter().filter_map(|p| p.as_ref()) {
+                    ptr.forget_reference();
+                }
+            };
         }
     }
 
