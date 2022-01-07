@@ -317,6 +317,8 @@ impl Persistent {
             }
         };
 
+        println!("SIZES={:#?}", list_sizes);
+
         // We take the last valid in `list_sizes`
         let mut last_valid = Option::<FileSizes>::None;
 
@@ -457,6 +459,8 @@ hashes_file={:?}, in sizes.db={:?}",
 
             last_valid = Some(sizes.clone());
         }
+
+        println!("LAST_VALID={:?}", last_valid);
 
         let sizes = match last_valid {
             Some(valid) => valid,
