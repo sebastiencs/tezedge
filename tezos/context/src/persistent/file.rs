@@ -307,9 +307,9 @@ impl<const T: TaggedFile> File<T> {
                 self.file.set_len(new_size)?;
             }
             self.offset = new_size;
-            self.checksum_computed_until = new_size;
-            self.crc32 = crc32fast::Hasher::new_with_initial(checksum);
         }
+        self.checksum_computed_until = new_size;
+        self.crc32 = crc32fast::Hasher::new_with_initial(checksum);
 
         Ok(())
     }
