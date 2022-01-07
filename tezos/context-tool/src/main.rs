@@ -205,6 +205,10 @@ fn main() {
             };
 
             let write_ctx = Persistent::try_new(Some("/tmp/new_ctx"), false, false).unwrap();
+
+            // WRITE PARENT
+            // write_ctx.get_vacant_object_hash().unwrap().
+
             let write_ctx: Arc<RwLock<ContextKeyValueStore>> = Arc::new(RwLock::new(write_ctx));
 
             storage.borrow_mut().forget_references();

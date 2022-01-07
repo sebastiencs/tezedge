@@ -908,6 +908,12 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
                 None => return Ok(None),
             };
 
+            {
+                let repository = self.repository.read()?;
+                let hash = repository.get_hash(commit.root_ref).unwrap();
+                println!("CHECKOUT ROOT={:?}", hash);
+            }
+
             match self.fetch_directory(commit.root_ref, &mut storage, &mut strings)? {
                 Some(dir_id) => dir_id,
                 None => return Ok(None),
