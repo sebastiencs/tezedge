@@ -4,6 +4,68 @@ use tezos_context::{working_tree::working_tree::WorkingTreeStatistics, ObjectHas
 
 pub struct DebugWorkingTreeStatistics(pub WorkingTreeStatistics);
 
+enum Numbers {
+    N2 {
+        total: usize,
+        inlined: usize,
+        not_inlined: usize,
+    },
+    N3 {
+        total: usize,
+        unique: usize,
+    },
+    N4 {
+        unique: usize,
+    },
+}
+
+// struct Numbers {
+//     name: Option<String>,
+//     total: Option<usize>,
+//     unique: Option<usize>,
+//     inlined: Option<usize>,
+//     not_inlined: Option<usize>,
+// }
+
+// { dir_length:     2302, total:        1, unique:        1 },
+// { blob_length: 14332, total:        1, unique:        1 },
+// { total: 40906723, inlined: 20570881, not inlined: 20335842 },
+// { total: 20335842, unique:   9960098 },
+
+impl std::fmt::Debug for Numbers {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Numbers::N2 {
+                total,
+                inlined,
+                not_inlined,
+            } => f.write_fmt(format_args!(
+                "{{ total: {:>8}, inlined: {:>8}, not inlined: {:>8} }}",
+                total, inlined, not_inlined,
+            )),
+            Numbers::N3 { total, unique } => f.write_fmt(format_args!(
+                "{{ total: {:>8}, unique: {:>8} }}",
+                total, unique,
+            )),
+            Numbers::N4 { unique } => f.write_fmt(format_args!("{{ unique: {:>8} }}", unique,)),
+        }
+    }
+}
+
+struct BytesDisplay {
+    bytes: usize,
+}
+
+impl std::fmt::Debug for BytesDisplay {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let bytes_str = Byte::from_bytes(self.bytes as u64)
+            .get_appropriate_unit(false)
+            .to_string();
+
+        f.write_fmt(format_args!("{:>8} ({:>8})", self.bytes, bytes_str,))
+    }
+}
+
 impl std::fmt::Debug for DebugWorkingTreeStatistics {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut blobs_stats = Vec::with_capacity(self.0.blobs_by_length.len());
@@ -18,36 +80,10 @@ impl std::fmt::Debug for DebugWorkingTreeStatistics {
         }
         dir_stats.sort_by_key(|stats| stats.size);
 
-        let hashes = format!(
-            "{{ total: {:>8}, unique: {:>9} }}",
-            &self.0.nhashes,
-            &self.0.unique_hash.len()
-        );
-        let objects = format!(
-            "{{ total: {:>8}, inlined: {:>8}, not inlined: {:>8} }}",
-            &self.0.nobjects,
-            &self.0.nobjects_inlined,
-            self.0.nobjects - self.0.nobjects_inlined
-        );
-
         let total_bytes = self.0.nhashes * std::mem::size_of::<ObjectHash>()
             + self.0.strings_total_bytes
             + self.0.objects_total_bytes
             + self.0.shapes_total_bytes;
-
-        struct BytesDisplay {
-            bytes: usize,
-        }
-
-        impl std::fmt::Debug for BytesDisplay {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                let bytes_str = Byte::from_bytes(self.bytes as u64)
-                    .get_appropriate_unit(false)
-                    .to_string();
-
-                f.write_fmt(format_args!("{:>8} ({:>8})", self.bytes, bytes_str,))
-            }
-        }
 
         f.debug_struct("WorkingTreeStatistics")
             .field("blobs_by_length", &blobs_stats)
@@ -57,9 +93,27 @@ impl std::fmt::Debug for DebugWorkingTreeStatistics {
                 "oldest_reference (offset in data.db file) ",
                 &self.0.lowest_offset,
             )
-            .field("number_of_objects", &objects)
-            .field("number_of_hashes ", &hashes)
-            .field("number_of_shapes ", &self.0.nshapes)
+            .field(
+                "number_of_objects",
+                &Numbers::N2 {
+                    total: self.0.nobjects,
+                    inlined: self.0.nobjects_inlined,
+                    not_inlined: self.0.nobjects - self.0.nobjects_inlined,
+                },
+            )
+            .field(
+                "number_of_hashes ",
+                &Numbers::N3 {
+                    total: self.0.nhashes,
+                    unique: self.0.unique_hash.len(),
+                },
+            )
+            .field(
+                "number_of_shapes ",
+                &Numbers::N4 {
+                    unique: self.0.nshapes,
+                },
+            )
             .field("number_of_directories ", &self.0.ndirectories)
             .field(
                 "hashes_total_bytes (hashes.db file)",
