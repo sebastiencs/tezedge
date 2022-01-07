@@ -43,10 +43,28 @@ impl std::fmt::Debug for Numbers {
                 "{{ total: {:>8}, inlined: {:>8}, not inlined: {:>8} }}",
                 total, inlined, not_inlined,
             )),
-            Numbers::N3 { total, unique } => f.write_fmt(format_args!(
-                "{{ total: {:>8}, unique: {:>8} }}",
-                total, unique,
-            )),
+            Numbers::N3 { total, unique } => {
+                let total_bytes = total * std::mem::size_of::<ObjectHash>();
+                let total_str = Byte::from_bytes(total_bytes as u64)
+                    .get_appropriate_unit(false)
+                    .to_string();
+
+                let unique_bytes = unique * std::mem::size_of::<ObjectHash>();
+                let unique_str = Byte::from_bytes(unique_bytes as u64)
+                    .get_appropriate_unit(false)
+                    .to_string();
+
+                let duplicated = total - unique;
+                let duplicated_bytes = duplicated * std::mem::size_of::<ObjectHash>();
+                let duplicated_str = Byte::from_bytes(duplicated_bytes as u64)
+                    .get_appropriate_unit(false)
+                    .to_string();
+
+                f.write_fmt(format_args!(
+                    "{{ total: {:>8} ({}), unique: {:>8} ({}), duplicate: {:>8} ({}) }}",
+                    total, total_str, unique, unique_str, duplicated, duplicated_str,
+                ))
+            }
             Numbers::N4 { unique } => f.write_fmt(format_args!("{{ unique: {:>8} }}", unique,)),
         }
     }
@@ -94,7 +112,7 @@ impl std::fmt::Debug for DebugWorkingTreeStatistics {
                 &self.0.lowest_offset,
             )
             .field(
-                "number_of_objects",
+                "number_of_objects (directories + blobs)",
                 &Numbers::N2 {
                     total: self.0.nobjects,
                     inlined: self.0.nobjects_inlined,
