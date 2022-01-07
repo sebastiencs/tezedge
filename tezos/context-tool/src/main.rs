@@ -39,6 +39,12 @@ enum Commands {
         #[clap(short, long)]
         context_path: String,
     },
+    /// Display `sizes.db` file
+    DumpChecksums {
+        /// Path of the persistent context
+        #[clap(short, long)]
+        context_path: String,
+    },
     ContextSize {
         /// Path of the persistent context
         #[clap(short, long)]
@@ -76,6 +82,11 @@ fn main() {
     let args = Args::parse();
 
     match args.command {
+        Commands::DumpChecksums { context_path } => {
+            let sizes_file = File::<{ TAG_SIZES }>::try_new(&context_path, true).unwrap();
+            let sizes = FileSizes::make_list_from_file(&sizes_file).unwrap_or(Vec::new());
+            println!("checksums={:#?}", sizes);
+        }
         Commands::BuildIntegrity {
             context_path,
             output_dir,
