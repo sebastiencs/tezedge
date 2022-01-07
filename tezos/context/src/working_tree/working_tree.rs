@@ -1170,6 +1170,9 @@ impl WorkingTree {
                         .index
                         .dir_entry_object(dir_entry_id, storage, strings)?;
 
+                    let dir_entry = storage.get_dir_entry(dir_entry_id)?;
+                    dir_entry.set_offset(None);
+
                     self.traverse_working_tree_recursive(
                         object,
                         object_hash_id,

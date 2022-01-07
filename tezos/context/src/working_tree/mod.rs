@@ -146,9 +146,14 @@ impl DirEntry {
         HashId::new(id)
     }
 
-    pub fn set_offset(&self, offset: AbsoluteOffset) {
-        debug_assert_ne!(offset.as_u64(), 0);
+    pub fn set_offset(&self, offset: impl Into<Option<AbsoluteOffset>>) {
+        let offset = offset.into();
 
+        if let Some(offset) = offset {
+            debug_assert_ne!(offset.as_u64(), 0);
+        };
+
+        let offset = offset.unwrap_or(0.into());
         let inner = self.inner.get().with_file_offset(offset.as_u64());
 
         self.inner.set(inner);

@@ -49,9 +49,20 @@ enum Commands {
         /// Path of the persistent context
         #[clap(short, long)]
         context_path: String,
-        /// Commit to inspect, `None` to inspect the last commit
+        /// Commit to inspect, default to last commit
         #[clap(short, long)]
         context_hash: Option<String>,
+    },
+    MakeSnapshot {
+        /// Path of the persistent context
+        #[clap(short, long)]
+        context_path: String,
+        /// Commit to make the snapshot from, default to last commit
+        #[clap(short, long)]
+        context_hash: Option<String>,
+        /// Path of the result
+        #[clap(short, long)]
+        output: String,
     },
 }
 
@@ -148,6 +159,24 @@ fn main() {
             println!("{:#?}", stats::DebugWorkingTreeStatistics(stats));
             // println!("{:#?}", repo_stats);
             println!("Time {:?}", now.elapsed());
+        }
+        Commands::MakeSnapshot {
+            context_path,
+            context_hash,
+            output,
+        } => {
+            let ctx = reload_context(context_path);
+
+            let context_hash = if let Some(context_hash) = context_hash.as_ref() {
+                ContextHash::from_b58check(&context_hash).unwrap()
+            } else {
+                ctx.get_last_context_hash().unwrap()
+            };
+
+            let index = TezedgeIndex::new(Arc::new(RwLock::new(ctx)), None);
+
+            let context = index.checkout(&context_hash).unwrap().unwrap();
+            context.tree.traverse_working_tree().unwrap();
         }
     }
 }
