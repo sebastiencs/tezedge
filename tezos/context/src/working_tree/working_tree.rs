@@ -915,6 +915,8 @@ impl WorkingTree {
 
         let now = std::time::Instant::now();
 
+        let mut dedup_objects = HashMap::default();
+
         let commit_offset = self.serialize_objects_recursively(
             commit_object,
             commit_hash,
@@ -922,6 +924,7 @@ impl WorkingTree {
             &mut data,
             &storage,
             &strings,
+            &mut dedup_objects,
         )?;
 
         println!("Serialized in {:?}", now.elapsed());
@@ -1230,6 +1233,7 @@ impl WorkingTree {
         data: &mut SerializingData,
         storage: &Storage,
         strings: &StringInterner,
+        dedup_objects: &mut HashMap<HashId, AbsoluteOffset>,
     ) -> Result<Option<AbsoluteOffset>, MerkleError> {
         match &mut object {
             Object::Blob(_blob_id) => {}
@@ -1249,6 +1253,11 @@ impl WorkingTree {
                     }
                     dir_entry.set_commited(true);
 
+                    if let Some(offset) = dedup_objects.get(&object_hash_id).cloned() {
+                        dir_entry.set_offset(offset);
+                        return Ok(());
+                    }
+
                     let offset = match dir_entry.get_object() {
                         None => return Ok(()),
                         Some(object) => self.serialize_objects_recursively(
@@ -1258,11 +1267,13 @@ impl WorkingTree {
                             data,
                             storage,
                             strings,
+                            dedup_objects,
                         )?,
                     };
 
                     if let Some(offset) = offset {
                         dir_entry.set_offset(offset);
+                        dedup_objects.insert(object_hash_id, offset);
                     };
 
                     Ok(())
@@ -1280,6 +1291,7 @@ impl WorkingTree {
                     data,
                     storage,
                     strings,
+                    dedup_objects,
                 )?;
 
                 if let Some(root_offset) = root_offset {
