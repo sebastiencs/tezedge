@@ -168,32 +168,32 @@ fn main() {
             acontext_hash: context_hash,
             output,
         } => {
-            let ((mut tree, storage, string_interner), commit) = {
-                let ctx = reload_context(context_path);
+            let ctx = reload_context(context_path);
 
-                let context_hash = if let Some(context_hash) = context_hash.as_ref() {
-                    ContextHash::from_b58check(&context_hash).unwrap()
-                } else {
-                    ctx.get_last_context_hash().unwrap()
-                };
+            let checkout_context_hash = if let Some(context_hash) = context_hash.as_ref() {
+                ContextHash::from_b58check(&context_hash).unwrap()
+            } else {
+                ctx.get_last_context_hash().unwrap()
+            };
+
+            let ((mut tree, storage, string_interner), parent_hash, commit) = {
+                println!("CHECKOUT={:?}", checkout_context_hash);
 
                 let read_ctx: Arc<RwLock<ContextKeyValueStore>> = Arc::new(RwLock::new(ctx));
 
                 let index = TezedgeIndex::new(Arc::clone(&read_ctx), None);
 
-                let context = index.checkout(&context_hash).unwrap().unwrap();
+                let context = index.checkout(&checkout_context_hash).unwrap().unwrap();
 
-                // let parent_hash = index
-                //     .fetch_parent_from_context_hash(&context_hash)
-                //     .unwrap()
-                //     .unwrap();
-
-                let commit = index
-                    .fetch_commit_from_context_hash(&context_hash)
+                let parent_hash = index
+                    .fetch_parent_from_context_hash(&checkout_context_hash)
                     .unwrap()
                     .unwrap();
 
-                println!("COMMIT={:?}", commit);
+                let commit = index
+                    .fetch_commit_from_context_hash(&checkout_context_hash)
+                    .unwrap()
+                    .unwrap();
 
                 // let parent_commit_hash_id = commit.parent_commit_ref.map(|p| p.hash_id());
                 // let parent_commit_hash =
@@ -201,13 +201,17 @@ fn main() {
                 context.tree.traverse_working_tree().unwrap();
                 // context.tree.forget_references().unwrap();
 
-                (context.take_tree(), commit)
+                (context.take_tree(), parent_hash, commit)
             };
 
-            let write_ctx = Persistent::try_new(Some("/tmp/new_ctx"), false, false).unwrap();
+            let mut write_ctx = Persistent::try_new(Some("/tmp/new_ctx"), false, false).unwrap();
 
-            // WRITE PARENT
-            // write_ctx.get_vacant_object_hash().unwrap().
+            let parent_hash_id = write_ctx
+                .get_vacant_object_hash()
+                .unwrap()
+                .write_with(|entry| {
+                    *entry = parent_hash;
+                });
 
             let write_ctx: Arc<RwLock<ContextKeyValueStore>> = Arc::new(RwLock::new(write_ctx));
 
@@ -215,10 +219,10 @@ fn main() {
             // storage.borrow_mut().offsets_to_hash_id = Default::default();
             let index = TezedgeIndex::with_storage(write_ctx, storage, string_interner);
 
-            tree.index = index.clone();
+            Rc::get_mut(&mut tree).unwrap().index = index.clone();
 
             // TODO: Set parent
-            let context = TezedgeContext::new(index, None, Some(Rc::new(tree)));
+            let context = TezedgeContext::new(index, Some(parent_hash_id.into()), Some(tree));
 
             // let read_ctx = index.replace_repository(Arc::new(RwLock::new(write_ctx)));
 
@@ -229,9 +233,13 @@ fn main() {
             // context.index.repository = Arc::clone(&write_ctx);
             // context.tree.index.repository = write_ctx;
 
-            context
+            let commit_context_hash = context
                 .commit(commit.author, commit.message, commit.time as i64)
                 .unwrap();
+
+            println!("RESULT={:?}", commit_context_hash);
+
+            assert_eq!(checkout_context_hash, commit_context_hash);
         }
     }
 }

@@ -1173,15 +1173,11 @@ impl TezedgeContext {
     pub fn take_tree(
         self,
     ) -> (
-        WorkingTree,
+        Rc<WorkingTree>,
         Rc<RefCell<Storage>>,
         Rc<RefCell<Option<StringInterner>>>,
     ) {
-        (
-            (*self.tree).clone(),
-            Rc::clone(&self.index.storage),
-            Rc::clone(&self.index.string_interner),
-        )
+        (self.tree, self.index.storage, self.index.string_interner)
     }
 
     fn commit_impl(

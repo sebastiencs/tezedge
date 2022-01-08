@@ -113,6 +113,10 @@ impl ObjectReference {
             .expect("ObjectReference::offset called outside of the persistent context")
     }
 
+    pub fn offset_opt(&self) -> Option<AbsoluteOffset> {
+        self.offset
+    }
+
     pub fn hash_id(&self) -> HashId {
         self.hash_id
             .expect("ObjectReference::hash_id called outside of the in-memory context")

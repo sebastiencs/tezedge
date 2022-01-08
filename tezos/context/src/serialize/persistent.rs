@@ -497,7 +497,10 @@ pub fn serialize_object(
 
             let (is_parent_exist, (parent_relative_offset, parent_offset_length)) =
                 match commit.parent_commit_ref {
-                    Some(parent) => (true, get_relative_offset(offset, parent.offset())),
+                    Some(parent) if parent.offset_opt().is_some() => {
+                        (true, get_relative_offset(offset, parent.offset()))
+                    }
+                    Some(_) => (true, (0.into(), RelativeOffsetLength::OneByte)),
                     None => (false, (0.into(), RelativeOffsetLength::OneByte)),
                 };
 
