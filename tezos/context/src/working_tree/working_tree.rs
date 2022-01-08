@@ -885,16 +885,12 @@ impl WorkingTree {
         offset: Option<AbsoluteOffset>,
         keep_older_objects: bool,
     ) -> Result<PostCommitData, MerkleError> {
-        println!("AAAA");
+        let now = std::time::Instant::now();
 
         let root_hash_id = self.get_root_directory_hash(repository)?;
         let root = self.get_root_directory();
 
-        {
-            // let repo = self.index.repository.read().unwrap();
-            let hash = repository.get_hash(root_hash_id.into()).unwrap();
-            println!("HASHED ROOT={:?}", hash);
-        }
+        println!("Root hash computed in {:?}", now.elapsed());
 
         let new_commit = Commit {
             parent_commit_ref,
@@ -917,6 +913,8 @@ impl WorkingTree {
         let storage = self.index.storage.borrow();
         let strings = self.index.get_string_interner()?;
 
+        let now = std::time::Instant::now();
+
         let commit_offset = self.serialize_objects_recursively(
             commit_object,
             commit_hash,
@@ -925,6 +923,8 @@ impl WorkingTree {
             &storage,
             &strings,
         )?;
+
+        println!("Serialized in {:?}", now.elapsed());
 
         Ok(PostCommitData {
             commit_ref: ObjectReference::new(Some(commit_hash), commit_offset),

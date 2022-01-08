@@ -11,7 +11,7 @@ use tezos_context::{
         file::{File, TAG_SIZES},
         KeyValueStoreBackend,
     },
-    working_tree::string_interner::StringId,
+    working_tree::{string_interner::StringId, ObjectReference},
     ContextKeyValueStore, IndexApi, Persistent, ShellContextApi, TezedgeContext, TezedgeIndex,
 };
 
@@ -185,33 +185,39 @@ fn main() {
 
                 let context = index.checkout(&checkout_context_hash).unwrap().unwrap();
 
-                let parent_hash = index
-                    .fetch_parent_from_context_hash(&checkout_context_hash)
-                    .unwrap()
-                    .unwrap();
-
                 let commit = index
                     .fetch_commit_from_context_hash(&checkout_context_hash)
                     .unwrap()
                     .unwrap();
 
-                // let parent_commit_hash_id = commit.parent_commit_ref.map(|p| p.hash_id());
-                // let parent_commit_hash =
+                let parent_hash = match commit.parent_commit_ref {
+                    Some(parent) => Some(
+                        read_ctx
+                            .read()
+                            .unwrap()
+                            .get_hash(parent)
+                            .unwrap()
+                            .into_owned(),
+                    ),
+                    None => None,
+                };
 
                 context.tree.traverse_working_tree().unwrap();
-                // context.tree.forget_references().unwrap();
 
                 (context.take_tree(), parent_hash, commit)
             };
 
             let mut write_ctx = Persistent::try_new(Some("/tmp/new_ctx"), false, false).unwrap();
 
-            let parent_hash_id = write_ctx
-                .get_vacant_object_hash()
-                .unwrap()
-                .write_with(|entry| {
-                    *entry = parent_hash;
-                });
+            let parent_ref: Option<ObjectReference> = match parent_hash {
+                Some(parent_hash) => Some(write_ctx.get_vacant_object_hash().unwrap().write_with(
+                    |entry| {
+                        *entry = parent_hash;
+                    },
+                ))
+                .map(Into::into),
+                None => None,
+            };
 
             let write_ctx: Arc<RwLock<ContextKeyValueStore>> = Arc::new(RwLock::new(write_ctx));
 
@@ -221,8 +227,8 @@ fn main() {
 
             Rc::get_mut(&mut tree).unwrap().index = index.clone();
 
-            // TODO: Set parent
-            let context = TezedgeContext::new(index, Some(parent_hash_id.into()), Some(tree));
+            let context = TezedgeContext::new(index, parent_ref, Some(tree));
+            // let context = TezedgeContext::new(index, Some(parent_hash_id.into()), Some(tree));
 
             // let read_ctx = index.replace_repository(Arc::new(RwLock::new(write_ctx)));
 
@@ -233,11 +239,13 @@ fn main() {
             // context.index.repository = Arc::clone(&write_ctx);
             // context.tree.index.repository = write_ctx;
 
+            let now = std::time::Instant::now();
+
             let commit_context_hash = context
                 .commit(commit.author, commit.message, commit.time as i64)
                 .unwrap();
 
-            println!("RESULT={:?}", commit_context_hash);
+            println!("RESULT={:?} in {:?}", commit_context_hash, now.elapsed());
 
             assert_eq!(checkout_context_hash, commit_context_hash);
         }
