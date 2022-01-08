@@ -17,9 +17,9 @@ use super::index_map::IndexMap;
 /// such as `WorkingTree::hash` and the ones being commited.
 pub struct HashesContainer {
     /// `ObjectHash` created during the working tree manipulation
-    working_tree: IndexMap<HashId, ObjectHash>,
+    pub working_tree: IndexMap<HashId, ObjectHash>,
     /// `ObjectHash` ready to be commited to disk
-    commiting: IndexMap<HashId, ObjectHash>,
+    pub commiting: IndexMap<HashId, ObjectHash>,
     /// `true` when we create `ObjectHash` to must be commited
     is_commiting: bool,
     /// First `HashId` in `Self::working_tree` and `Self::commiting`
