@@ -546,6 +546,11 @@ impl PointerToInode {
         }
     }
 
+    pub fn hash_id_opt(&self) -> Option<HashId> {
+        let inner = self.inner.get();
+        HashId::new(inner.hash_id())
+    }
+
     pub fn is_commited(&self) -> bool {
         let inner = self.inner.get();
         inner.is_commited()
@@ -730,6 +735,25 @@ impl Storage {
             let new_hash_id = unique.entry(hash).or_insert(hash_id).clone();
 
             dir_entry.set_hash_id(new_hash_id);
+        }
+
+        for inode in self.inodes.iter_values() {
+            let pointers = match inode {
+                Inode::Pointers { pointers, .. } => pointers,
+                Inode::Directory(_) => continue,
+            };
+
+            for ptr in pointers.iter().filter_map(|p| p.as_ref()) {
+                let hash_id = match ptr.hash_id_opt() {
+                    Some(hash_id) => hash_id,
+                    None => continue,
+                };
+
+                let hash = repository.get_hash(hash_id.into()).unwrap().into_owned();
+                let new_hash_id = unique.entry(hash).or_insert(hash_id).clone();
+
+                ptr.set_hash_id(Some(new_hash_id));
+            }
         }
     }
 
