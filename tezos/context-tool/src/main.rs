@@ -11,7 +11,9 @@ use tezos_context::{
         file::{File, TAG_SIZES},
         KeyValueStoreBackend,
     },
-    working_tree::{string_interner::StringId, ObjectReference},
+    working_tree::{
+        string_interner::StringId, working_tree::WorkingTreeStatistics, ObjectReference,
+    },
     ContextKeyValueStore, IndexApi, Persistent, ShellContextApi, TezedgeContext, TezedgeIndex,
 };
 
@@ -148,12 +150,15 @@ fn main() {
 
             let now = std::time::Instant::now();
 
+            let mut stats = Some(WorkingTreeStatistics::default());
+
             let context = index.checkout(&context_hash).unwrap().unwrap();
-            let mut stats = context.tree.traverse_working_tree().unwrap();
+            context.tree.traverse_working_tree(&mut stats).unwrap();
 
             let repo = context.index.repository.read().unwrap();
             let repo_stats = repo.get_read_statistics().unwrap().unwrap();
 
+            let mut stats = stats.unwrap();
             stats.objects_total_bytes = repo_stats.objects_total_bytes;
             stats.lowest_offset = repo_stats.lowest_offset;
             stats.nshapes = repo_stats.unique_shapes.len();
@@ -168,6 +173,8 @@ fn main() {
             acontext_hash: context_hash,
             output,
         } => {
+            let start = std::time::Instant::now();
+
             let ctx = reload_context(context_path);
 
             let checkout_context_hash = if let Some(context_hash) = context_hash.as_ref() {
@@ -202,7 +209,7 @@ fn main() {
                     None => None,
                 };
 
-                context.tree.traverse_working_tree().unwrap();
+                context.tree.traverse_working_tree(&mut None).unwrap();
 
                 (context.take_tree(), parent_hash, commit)
             };
@@ -246,6 +253,8 @@ fn main() {
                 .unwrap();
 
             println!("RESULT={:?} in {:?}", commit_context_hash, now.elapsed());
+
+            println!("Total time {:?}", start.elapsed());
 
             assert_eq!(checkout_context_hash, commit_context_hash);
         }

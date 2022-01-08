@@ -1085,30 +1085,33 @@ impl WorkingTree {
         storage: &mut Storage,
         strings: &mut StringInterner,
         depth: usize,
-        stats: &mut WorkingTreeStatistics,
+        stats: &mut Option<WorkingTreeStatistics>,
     ) -> Result<(), MerkleError> {
-        stats.max_depth = depth.max(stats.max_depth);
+        if let Some(stats) = stats.as_mut() {
+            stats.max_depth = depth.max(stats.max_depth);
+        };
 
         match object {
             Object::Blob(blob_id) => {
-                if blob_id.is_inline() {
-                    stats.nobjects_inlined += 1;
-                }
+                if let Some(stats) = stats.as_mut() {
+                    if blob_id.is_inline() {
+                        stats.nobjects_inlined += 1;
+                    }
 
-                let blob = storage.get_blob(blob_id).unwrap();
-                let blob_length = blob.len();
+                    let blob = storage.get_blob(blob_id)?;
+                    let blob_length = blob.len();
 
-                let blob_stats =
-                    stats
-                        .blobs_by_length
-                        .entry(blob_length)
-                        .or_insert_with(|| BlobStatistics {
-                            size: blob_length,
-                            total: 0,
-                            unique: HashSet::default(),
+                    let blob_stats =
+                        stats.blobs_by_length.entry(blob_length).or_insert_with(|| {
+                            BlobStatistics {
+                                size: blob_length,
+                                total: 0,
+                                unique: HashSet::default(),
+                            }
                         });
-                blob_stats.total += 1;
-                blob_stats.unique.insert(blob.to_vec());
+                    blob_stats.total += 1;
+                    blob_stats.unique.insert(blob.to_vec());
+                }
 
                 Ok(())
             }
@@ -1118,39 +1121,44 @@ impl WorkingTree {
                     storage.dir_to_vec_unsorted(dir_id, strings, &*repository)?
                 };
 
-                stats.ndirectories += 1;
+                if let Some(stats) = stats.as_mut() {
+                    stats.ndirectories += 1;
 
-                let dir_hash = object_hash_id.map(|hash_id| {
-                    let repository = self.index.repository.read().unwrap();
-                    repository.get_hash(hash_id.into()).unwrap().to_vec()
-                });
-
-                let dir_stats = stats
-                    .directories_by_length
-                    .entry(dir.len())
-                    .or_insert_with(|| DirectoryStatistics {
-                        size: dir.len(),
-                        total: 0,
-                        unique: HashSet::default(),
+                    let dir_hash = object_hash_id.map(|hash_id| {
+                        let repository = self.index.repository.read().unwrap();
+                        repository.get_hash(hash_id.into()).unwrap().to_vec()
                     });
-                dir_stats.total += 1;
-                if let Some(dir_hash) = dir_hash {
-                    dir_stats.unique.insert(dir_hash);
+
+                    let dir_stats =
+                        stats
+                            .directories_by_length
+                            .entry(dir.len())
+                            .or_insert_with(|| DirectoryStatistics {
+                                size: dir.len(),
+                                total: 0,
+                                unique: HashSet::default(),
+                            });
+                    dir_stats.total += 1;
+                    if let Some(dir_hash) = dir_hash {
+                        dir_stats.unique.insert(dir_hash);
+                    }
+
+                    stats.nobjects += dir.len();
                 }
 
-                stats.nobjects += dir.len();
-
                 for (string_id, dir_entry_id) in dir {
-                    let string = strings.get_str(string_id).unwrap().into_owned();
+                    if let Some(stats) = stats.as_mut() {
+                        let string = strings.get_str(string_id)?.into_owned();
 
-                    let mut length_to_add = 0;
-                    stats
-                        .unique_strings
-                        .entry(string)
-                        .or_insert_with_key(|string| {
-                            length_to_add = string.len();
-                        });
-                    stats.strings_total_bytes += length_to_add;
+                        let mut length_to_add = 0;
+                        stats
+                            .unique_strings
+                            .entry(string)
+                            .or_insert_with_key(|string| {
+                                length_to_add = string.len();
+                            });
+                        stats.strings_total_bytes += length_to_add;
+                    }
 
                     let dir_entry = storage.get_dir_entry(dir_entry_id)?;
 
@@ -1160,10 +1168,11 @@ impl WorkingTree {
                             Some(hash_id) => {
                                 assert!(dir_entry.get_hash_id().is_ok());
 
-                                stats.nhashes += 1;
-                                let hash =
-                                    repository.get_hash(hash_id.into()).unwrap().into_owned();
-                                stats.unique_hash.insert(hash);
+                                if let Some(stats) = stats.as_mut() {
+                                    stats.nhashes += 1;
+                                    let hash = repository.get_hash(hash_id.into())?.into_owned();
+                                    stats.unique_hash.insert(hash);
+                                }
 
                                 Some(hash_id)
                             }
@@ -1177,11 +1186,6 @@ impl WorkingTree {
                     let object = self
                         .index
                         .dir_entry_object(dir_entry_id, storage, strings)?;
-
-                    let dir_entry = storage.get_dir_entry(dir_entry_id)?;
-                    dir_entry.set_offset(None);
-                    dir_entry.set_hash_id(None);
-                    dir_entry.set_commited(false);
 
                     self.traverse_working_tree_recursive(
                         object,
@@ -1201,41 +1205,10 @@ impl WorkingTree {
         }
     }
 
-    fn forget_references_recursive(
+    pub fn traverse_working_tree(
         &self,
-        object: Object,
-        storage: &Storage,
-        strings: &mut StringInterner,
+        stats: &mut Option<WorkingTreeStatistics>,
     ) -> Result<(), MerkleError> {
-        match object {
-            Object::Blob(blob_id) => Ok(()),
-            Object::Directory(dir_id) => {
-                storage.dir_iterate_unsorted(dir_id, |&(_, dir_entry_id)| {
-                    let dir_entry = storage.get_dir_entry(dir_entry_id)?;
-
-                    dir_entry.set_offset(None);
-                    dir_entry.set_hash_id(None);
-                    dir_entry.set_commited(false);
-
-                    let object = dir_entry.get_object().unwrap();
-
-                    // let object = self
-                    //     .index
-                    //     .dir_entry_object(dir_entry_id, storage, strings)?;
-
-                    self.forget_references_recursive(object, storage, strings)?;
-
-                    Ok(())
-                });
-                Ok(())
-            }
-            Object::Commit(commit) => {
-                panic!()
-            }
-        }
-    }
-
-    pub fn forget_references(&self) -> Result<(), MerkleError> {
         let object = match self.root {
             WorkingTreeRoot::Directory(dir_id) => Object::Directory(dir_id),
             WorkingTreeRoot::Value(blob_id) => Object::Blob(blob_id),
@@ -1244,37 +1217,9 @@ impl WorkingTree {
         let mut storage = self.index.storage.borrow_mut();
         let mut strings = self.index.get_string_interner()?;
 
-        self.forget_references_recursive(
-            object,
-            // None,
-            &mut *storage,
-            &mut *strings,
-        )?;
+        self.traverse_working_tree_recursive(object, None, &mut *storage, &mut *strings, 0, stats)?;
 
         Ok(())
-    }
-
-    pub fn traverse_working_tree(&self) -> Result<WorkingTreeStatistics, MerkleError> {
-        let object = match self.root {
-            WorkingTreeRoot::Directory(dir_id) => Object::Directory(dir_id),
-            WorkingTreeRoot::Value(blob_id) => Object::Blob(blob_id),
-        };
-
-        let mut storage = self.index.storage.borrow_mut();
-        let mut strings = self.index.get_string_interner()?;
-
-        let mut stats = WorkingTreeStatistics::default();
-
-        self.traverse_working_tree_recursive(
-            object,
-            None,
-            &mut *storage,
-            &mut *strings,
-            0,
-            &mut stats,
-        )?;
-
-        Ok(stats)
     }
 
     fn serialize_objects_recursively(
