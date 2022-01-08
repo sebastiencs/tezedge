@@ -276,6 +276,10 @@ impl Persistent {
         })
     }
 
+    pub fn enable_hash_dedup(&mut self) {
+        self.hashes.in_memory.dedup_hashes = Some(Default::default());
+    }
+
     pub fn compute_integrity(&mut self, output: &mut File<{ TAG_SIZES }>) -> std::io::Result<()> {
         self.data_file
             .update_checksum_until(self.data_file.offset().as_u64())?;

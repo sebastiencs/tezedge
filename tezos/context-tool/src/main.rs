@@ -216,6 +216,7 @@ fn main() {
             };
 
             let mut write_ctx = Persistent::try_new(Some("/tmp/new_ctx"), false, false).unwrap();
+            write_ctx.enable_hash_dedup();
 
             let parent_ref: Option<ObjectReference> = match parent_hash {
                 Some(parent_hash) => Some(write_ctx.get_vacant_object_hash().unwrap().write_with(
