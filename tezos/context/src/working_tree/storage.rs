@@ -696,8 +696,28 @@ impl Storage {
         }
     }
 
+    pub fn make_string_interner(&mut self, old_strings: &StringInterner) -> StringInterner {
+        let mut new_string_interner = StringInterner::default();
+
+        let new_directories: Vec<_> = self
+            .directories
+            .iter()
+            .map(|(string_id, dir_entry_id)| {
+                let s = old_strings.get_str(*string_id).unwrap();
+                let new_id = new_string_interner.make_string_id(s.as_ref());
+                (new_id, *dir_entry_id)
+            })
+            .collect();
+
+        self.directories = ChunkedVec::with_chunk_capacity(DEFAULT_DIRECTORIES_CAPACITY);
+        self.directories.extend_from_slice(&new_directories);
+
+        new_string_interner
+    }
+
     pub fn forget_references(&mut self) {
         self.offsets_to_hash_id = Default::default();
+
         for (_, dir_entry_id) in self.directories.iter() {
             let dir_entry = self.get_dir_entry(*dir_entry_id).unwrap();
             dir_entry.set_offset(None);

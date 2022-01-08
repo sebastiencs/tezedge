@@ -1,4 +1,5 @@
 use std::{
+    cell::RefCell,
     rc::Rc,
     sync::{Arc, RwLock},
 };
@@ -229,7 +230,13 @@ fn main() {
             let write_ctx: Arc<RwLock<ContextKeyValueStore>> = Arc::new(RwLock::new(write_ctx));
 
             storage.borrow_mut().forget_references();
+
+            let string_interner = string_interner.borrow();
+            let strings = string_interner.as_ref().unwrap();
+            let string_interner = storage.borrow_mut().make_string_interner(strings);
+
             // storage.borrow_mut().offsets_to_hash_id = Default::default();
+            let string_interner = Rc::new(RefCell::new(Some(string_interner)));
             let index = TezedgeIndex::with_storage(write_ctx, storage, string_interner);
 
             Rc::get_mut(&mut tree).unwrap().index = index.clone();
