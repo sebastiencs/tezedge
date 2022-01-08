@@ -237,9 +237,18 @@ fn main() {
 
             // storage.borrow_mut().offsets_to_hash_id = Default::default();
             let string_interner = Rc::new(RefCell::new(Some(string_interner)));
-            let index = TezedgeIndex::with_storage(write_ctx, storage, string_interner);
+            let index = TezedgeIndex::with_storage(write_ctx.clone(), storage, string_interner);
 
             Rc::get_mut(&mut tree).unwrap().index = index.clone();
+
+            {
+                let mut repo = write_ctx.write().unwrap();
+                Rc::get_mut(&mut tree)
+                    .unwrap()
+                    .get_root_directory_hash(&mut *repo)
+                    .unwrap();
+                index.storage.borrow_mut().deduplicate_hashes(&*repo);
+            }
 
             let context = TezedgeContext::new(index, parent_ref, Some(tree));
             // let context = TezedgeContext::new(index, Some(parent_hash_id.into()), Some(tree));

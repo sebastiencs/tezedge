@@ -26,7 +26,7 @@ use crate::{
     hash::HashingError,
     kv_store::{index_map::IndexMap, HashId},
     working_tree::ObjectReference,
-    ContextKeyValueStore,
+    ContextKeyValueStore, ObjectHash,
 };
 use crate::{hash::index as index_of_key, serialize::persistent::AbsoluteOffset};
 
@@ -713,6 +713,24 @@ impl Storage {
         self.directories.extend_from_slice(&new_directories);
 
         new_string_interner
+    }
+
+    pub fn deduplicate_hashes(&mut self, repository: &ContextKeyValueStore) {
+        let mut unique: HashMap<ObjectHash, HashId> = HashMap::default();
+
+        for (_, dir_entry_id) in self.directories.iter() {
+            let dir_entry = self.get_dir_entry(*dir_entry_id).unwrap();
+
+            let hash_id = match dir_entry.hash_id() {
+                Some(hash_id) => hash_id,
+                None => continue,
+            };
+
+            let hash = repository.get_hash(hash_id.into()).unwrap().into_owned();
+            let new_hash_id = unique.entry(hash).or_insert(hash_id).clone();
+
+            dir_entry.set_hash_id(new_hash_id);
+        }
     }
 
     pub fn forget_references(&mut self) {

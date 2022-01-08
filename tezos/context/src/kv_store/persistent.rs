@@ -1060,8 +1060,14 @@ impl KeyValueStoreBackend for Persistent {
     ) -> Result<(ContextHash, Box<SerializeStats>), DBError> {
         let offset = self.data_file.offset();
 
-        println!("BEFORE COMMIT working tree nhashes={:?}", self.hashes.in_memory.working_tree.len());
-        println!("BEFORE COMMIT commiting nhashes={:?}", self.hashes.in_memory.commiting.len());
+        println!(
+            "BEFORE COMMIT working tree nhashes={:?}",
+            self.hashes.in_memory.working_tree.len()
+        );
+        println!(
+            "BEFORE COMMIT commiting nhashes={:?}",
+            self.hashes.in_memory.commiting.len()
+        );
 
         self.hashes.in_memory.set_is_commiting();
 
