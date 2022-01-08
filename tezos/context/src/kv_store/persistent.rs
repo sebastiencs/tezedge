@@ -210,11 +210,18 @@ impl Hashes {
 
         let in_memory = self.in_memory.get_commiting();
 
+        let mut nhashes = 0;
+        let mut nbytes = 0;
+
         // Copy all hashes into the flat vector `Self::in_memory_bytes`
         self.in_memory_bytes.clear();
         for hash in in_memory {
+            nhashes += 1;
+            nbytes += hash.len();
             self.in_memory_bytes.extend_from_slice(hash);
         }
+
+        println!("COMMITING HASH nhashes={:?} nbytes={:?}", nhashes, nbytes);
 
         self.hashes_file.append(&self.in_memory_bytes)?;
 
