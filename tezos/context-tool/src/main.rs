@@ -1,6 +1,5 @@
 use std::{
     cell::RefCell,
-    fmt::format,
     path::PathBuf,
     rc::Rc,
     sync::{Arc, RwLock},
@@ -11,13 +10,8 @@ use clap::{Parser, Subcommand};
 use crypto::hash::{ContextHash, HashTrait};
 use tezos_context::{
     kv_store::persistent::FileSizes,
-    persistent::{
-        file::{File, TAG_SIZES},
-        KeyValueStoreBackend,
-    },
-    working_tree::{
-        string_interner::StringId, working_tree::WorkingTreeStatistics, Commit, ObjectReference,
-    },
+    persistent::file::{File, TAG_SIZES},
+    working_tree::{string_interner::StringId, Commit, ObjectReference},
     ContextKeyValueStore, IndexApi, ObjectHash, Persistent, ShellContextApi, TezedgeContext,
     TezedgeIndex,
 };
@@ -79,7 +73,7 @@ enum Commands {
 }
 
 fn reload_context_readonly(context_path: String) -> Persistent {
-    log!("Validating context {:?}...", context_path);
+    log!(" Validating context {:?}...", context_path);
 
     let now = std::time::Instant::now();
 
@@ -90,7 +84,7 @@ fn reload_context_readonly(context_path: String) -> Persistent {
     let mut ctx = Persistent::try_new(Some(context_path.as_str()), true, true).unwrap();
     ctx.reload_database().unwrap();
 
-    log!("Context validated in {:?}", now.elapsed());
+    log!(" Validating context ok {:?}", now.elapsed());
 
     ctx
 }
@@ -186,9 +180,12 @@ fn main() {
             stats.nshapes = repo_stats.unique_shapes.len();
             stats.shapes_total_bytes = repo_stats.shapes_length * std::mem::size_of::<StringId>();
 
-            log!("{:#?}", stats::DebugWorkingTreeStatistics(stats));
+            log!(
+                "Context size: {:#?}",
+                stats::DebugWorkingTreeStatistics(stats)
+            );
             // log!("{:#?}", repo_stats);
-            log!("Time {:?}", now.elapsed());
+            log!("Total Time {:?}", now.elapsed());
         }
         Commands::MakeSnapshot {
             context_path,
@@ -199,6 +196,8 @@ fn main() {
 
             let snapshot_path = create_snapshot_path(output);
 
+            log!("Start creating snapshot at {:?}", snapshot_path,);
+
             let ctx = reload_context_readonly(context_path);
 
             let checkout_context_hash: ContextHash =
@@ -208,7 +207,7 @@ fn main() {
                     ctx.get_last_context_hash().unwrap()
                 };
 
-            // log!("CHECKOUT={:?}", checkout_context_hash);
+            log!("Using {:?}", checkout_context_hash);
 
             let (mut tree, mut storage, string_interner, parent_hash, commit) = {
                 // This block reads the whole tree of the commit, to extract `Storage`, that's
@@ -292,13 +291,13 @@ fn main() {
 
                 {
                     let now = std::time::Instant::now();
-                    log!("Computing context hash...");
+                    log!(" Computing context hash...");
 
                     // Compute the hashes of the whole tree and remove the duplicate ones
                     let mut repo = write_repo.write().unwrap();
                     tree.get_root_directory_hash(&mut *repo).unwrap();
                     index.storage.borrow_mut().deduplicate_hashes(&*repo);
-                    log!("Computing context hash ok {:?}", now.elapsed());
+                    log!(" Computing context hash ok {:?}", now.elapsed());
                     // log!("Tree's hashes computed in {:?}", now.elapsed());
                 }
 
@@ -325,7 +324,7 @@ fn main() {
                 // Fully read the new snapshot and re-compute all the hashes, to
                 // be 100% sure that we have a valid snapshot
 
-                let now = std::time::Instant::now();
+                let start = std::time::Instant::now();
                 log!("Loading snapshot & re-compute hashes...");
 
                 let read_ctx = reload_context_readonly(snapshot_path.clone());
@@ -340,28 +339,38 @@ fn main() {
                     .unwrap();
                 context.parent_commit_ref = commit.parent_commit_ref;
 
+                let now = std::time::Instant::now();
+                log!(" Loading in memory...");
+
                 // Fetch all objects into `Storage`
                 context.tree.traverse_working_tree(false).unwrap();
 
+                log!(" Loading in memory ok {:?}", now.elapsed());
+
                 // Remove all `HashId` to re-compute them
                 context.index.storage.borrow_mut().forget_references();
+
+                let now = std::time::Instant::now();
+                log!(" Recomputing hashes...");
 
                 let context_hash = context
                     .hash(commit.author, commit.message, commit.time as i64)
                     .unwrap();
 
+                log!(" Recomputing hashes ok {:?}", now.elapsed());
+
                 assert_eq!(checkout_context_hash, context_hash);
 
                 log!(
                     "Loading snapshot & re-compute hashes ok {:?}",
-                    now.elapsed()
+                    start.elapsed()
                 );
             }
 
             log!(
-                "Snapshot created in {:?} at {:?}",
+                "Snapshot {:?} created in {:?}",
+                snapshot_path,
                 start.elapsed(),
-                snapshot_path
             );
         }
     }
