@@ -889,18 +889,10 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
         let object_ref = {
             let repository = self.repository.read()?;
 
-            let obj = match repository.get_context_hash(context_hash)? {
+            match repository.get_context_hash(context_hash)? {
                 Some(hash_id) => hash_id,
                 None => return Ok(None),
-            };
-
-            println!(
-                "GET CONTEXT HASH {:?} {:?}",
-                obj,
-                repository.get_hash(obj).unwrap()
-            );
-
-            obj
+            }
         };
 
         // TODO: should we always be copying this value? is it possibe
@@ -915,12 +907,6 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
                 Some(commit) => commit,
                 None => return Ok(None),
             };
-
-            {
-                let repository = self.repository.read()?;
-                let hash = repository.get_hash(commit.root_ref).unwrap();
-                println!("CHECKOUT ROOT={:?}", hash);
-            }
 
             match self.fetch_directory(commit.root_ref, &mut storage, &mut strings)? {
                 Some(dir_id) => dir_id,
@@ -1080,6 +1066,7 @@ impl ShellContextApi for TezedgeContext {
             None,
             None,
             false,
+            false,
         )?;
 
         get_commit_hash(commit_ref, &*repository)
@@ -1143,12 +1130,6 @@ impl TezedgeContext {
         parent_commit_ref: Option<ObjectReference>,
         tree: Option<Rc<WorkingTree>>,
     ) -> Self {
-        println!(
-            "TezedgeContext::new parent={:?} {:?}",
-            parent_commit_ref,
-            index.repository.read().unwrap().get_hash(parent_commit_ref.unwrap()),
-        );
-
         let tree = if let Some(tree) = tree {
             tree
         } else {

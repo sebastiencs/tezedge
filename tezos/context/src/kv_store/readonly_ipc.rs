@@ -235,6 +235,7 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
                 None,
                 None,
                 false,
+                false,
             )
             .map_err(Box::new)?;
 

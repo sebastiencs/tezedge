@@ -478,6 +478,7 @@ struct SerializingData<'a> {
     offset: Option<AbsoluteOffset>,
     serialize_function: SerializeObjectSignature,
     keep_older_objects: bool,
+    dedup_objects: Option<HashMap<HashId, AbsoluteOffset>>,
 }
 
 impl<'a> SerializingData<'a> {
@@ -486,6 +487,7 @@ impl<'a> SerializingData<'a> {
         offset: Option<AbsoluteOffset>,
         serialize_function: SerializeObjectSignature,
         keep_older_objects: bool,
+        enable_dedup_object: bool,
     ) -> Self {
         Self {
             batch: Vec::with_capacity(2048),
@@ -496,7 +498,28 @@ impl<'a> SerializingData<'a> {
             offset,
             serialize_function,
             keep_older_objects,
+            dedup_objects: if enable_dedup_object {
+                Some(Default::default())
+            } else {
+                None
+            },
         }
+    }
+
+    fn get_dedup_object(&self, hash_id: HashId) -> Option<AbsoluteOffset> {
+        self.dedup_objects
+            .as_ref()
+            .and_then(|d| d.get(&hash_id))
+            .copied()
+    }
+
+    fn add_dedup_object(&mut self, hash_id: HashId, offset: AbsoluteOffset) {
+        let dedup = match self.dedup_objects.as_mut() {
+            Some(dedup) => dedup,
+            None => return,
+        };
+
+        dedup.insert(hash_id, offset);
     }
 
     fn add_serialized_object(
@@ -884,21 +907,10 @@ impl WorkingTree {
         serialize_function: Option<SerializeObjectSignature>,
         offset: Option<AbsoluteOffset>,
         keep_older_objects: bool,
+        enable_dedup_objects: bool,
     ) -> Result<PostCommitData, MerkleError> {
-        let now = std::time::Instant::now();
-
         let root_hash_id = self.get_root_directory_hash(repository)?;
         let root = self.get_root_directory();
-
-        let root_hash = repository.get_hash(root_hash_id.into()).unwrap();
-        println!("Root hash computed in {:?} {:?}", now.elapsed(), root_hash);
-        println!(
-            "TIME={:?} AUTHOR={:?} MSG={:?} PARENT={:?}",
-            time,
-            author,
-            message,
-            repository.get_hash(parent_commit_ref.unwrap()),
-        );
 
         let new_commit = Commit {
             parent_commit_ref,
@@ -915,15 +927,16 @@ impl WorkingTree {
             None => return Ok(PostCommitData::empty_with_commit(commit_hash)),
         };
 
-        let mut data =
-            SerializingData::new(repository, offset, serialize_function, keep_older_objects);
+        let mut data = SerializingData::new(
+            repository,
+            offset,
+            serialize_function,
+            keep_older_objects,
+            enable_dedup_objects,
+        );
 
         let storage = self.index.storage.borrow();
         let strings = self.index.get_string_interner()?;
-
-        let now = std::time::Instant::now();
-
-        let mut dedup_objects = HashMap::default();
 
         let commit_offset = self.serialize_objects_recursively(
             commit_object,
@@ -932,10 +945,7 @@ impl WorkingTree {
             &mut data,
             &storage,
             &strings,
-            &mut dedup_objects,
         )?;
-
-        println!("Serialized in {:?}", now.elapsed());
 
         Ok(PostCommitData {
             commit_ref: ObjectReference::new(Some(commit_hash), commit_offset),
@@ -1241,7 +1251,6 @@ impl WorkingTree {
         data: &mut SerializingData,
         storage: &Storage,
         strings: &StringInterner,
-        dedup_objects: &mut HashMap<HashId, AbsoluteOffset>,
     ) -> Result<Option<AbsoluteOffset>, MerkleError> {
         match &mut object {
             Object::Blob(_blob_id) => {}
@@ -1261,7 +1270,7 @@ impl WorkingTree {
                     }
                     dir_entry.set_commited(true);
 
-                    if let Some(offset) = dedup_objects.get(&object_hash_id).cloned() {
+                    if let Some(offset) = data.get_dedup_object(object_hash_id) {
                         dir_entry.set_offset(offset);
                         return Ok(());
                     }
@@ -1275,13 +1284,12 @@ impl WorkingTree {
                             data,
                             storage,
                             strings,
-                            dedup_objects,
                         )?,
                     };
 
                     if let Some(offset) = offset {
                         dir_entry.set_offset(offset);
-                        dedup_objects.insert(object_hash_id, offset);
+                        data.add_dedup_object(object_hash_id, offset);
                     };
 
                     Ok(())
@@ -1299,7 +1307,6 @@ impl WorkingTree {
                     data,
                     storage,
                     strings,
-                    dedup_objects,
                 )?;
 
                 if let Some(root_offset) = root_offset {

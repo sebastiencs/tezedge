@@ -1087,6 +1087,8 @@ impl KeyValueStoreBackend for Persistent {
 
         self.hashes.in_memory.set_is_commiting();
 
+        let enable_dedub_objects = self.hashes.in_memory.dedup_hashes.is_some();
+
         let PostCommitData {
             commit_ref,
             serialize_stats,
@@ -1102,6 +1104,7 @@ impl KeyValueStoreBackend for Persistent {
                 Some(persistent::serialize_object),
                 Some(offset),
                 false,
+                enable_dedub_objects,
             )
             .map_err(Box::new)?;
 

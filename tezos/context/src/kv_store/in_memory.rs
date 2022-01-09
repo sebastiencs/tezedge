@@ -324,6 +324,7 @@ impl KeyValueStoreBackend for InMemory {
                 Some(in_memory::serialize_object),
                 None,
                 true,
+                false,
             )
             .map_err(Box::new)?;
 
