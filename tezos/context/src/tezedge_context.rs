@@ -1143,6 +1143,12 @@ impl TezedgeContext {
         parent_commit_ref: Option<ObjectReference>,
         tree: Option<Rc<WorkingTree>>,
     ) -> Self {
+        println!(
+            "TezedgeContext::new parent={:?} {:?}",
+            parent_commit_ref,
+            index.repository.read().unwrap().get_hash(parent_commit_ref.unwrap()),
+        );
+
         let tree = if let Some(tree) = tree {
             tree
         } else {
