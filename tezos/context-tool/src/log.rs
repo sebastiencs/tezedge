@@ -1,8 +1,13 @@
 use std::io::Write;
 use termcolor::{BufferWriter, Color, ColorChoice, ColorSpec, WriteColor};
 
-pub fn print(prefix: &str, s: Option<String>) {
-    let bufwtr = BufferWriter::stdout(ColorChoice::Always);
+pub fn print(is_stdout: bool, prefix: &str, s: Option<String>) {
+    let bufwtr = if is_stdout {
+        BufferWriter::stdout(ColorChoice::Always)
+    } else {
+        BufferWriter::stderr(ColorChoice::Always)
+    };
+
     let mut buffer = bufwtr.buffer();
     buffer
         .set_color(ColorSpec::new().set_fg(Some(Color::Green)))
@@ -22,8 +27,16 @@ pub fn print(prefix: &str, s: Option<String>) {
 
 /// Print logs on stdout with the prefix `[tezedge.tool]`
 macro_rules! log {
-    () => (print("[tezedge.tool]", None));
+    () => (print(true, "[tezedge.tool]", None));
     ($($arg:tt)*) => ({
-        print("[tezedge.tool] ", Some(format!("{}", format_args!($($arg)*))))
+        print(true, "[tezedge.tool] ", Some(format!("{}", format_args!($($arg)*))))
+    })
+}
+
+/// Print logs on stdout with the prefix `[tezedge.tool]`
+macro_rules! elog {
+    () => (print(false, "[tezedge.tool]", None));
+    ($($arg:tt)*) => ({
+        print(false, "[tezedge.tool] ", Some(format!("{}", format_args!($($arg)*))))
     })
 }

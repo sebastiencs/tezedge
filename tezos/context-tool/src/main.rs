@@ -1,5 +1,7 @@
 use std::{
     cell::RefCell,
+    fmt::format,
+    path::PathBuf,
     rc::Rc,
     sync::{Arc, RwLock},
 };
@@ -72,7 +74,7 @@ enum Commands {
         acontext_hash: Option<String>,
         /// Path of the result
         #[clap(short, long)]
-        output: String,
+        output: Option<String>,
     },
 }
 
@@ -91,6 +93,29 @@ fn reload_context_readonly(context_path: String) -> Persistent {
     log!("Context validated in {:?}", now.elapsed());
 
     ctx
+}
+
+fn create_snapshot_path(base_path: Option<String>) -> String {
+    match base_path {
+        Some(path_str) => {
+            let path = PathBuf::from(&path_str);
+            if path.exists() {
+                elog!("{:?} already exist", path);
+            }
+            path_str
+        }
+        None => {
+            for index in 0.. {
+                let path_str = format!("/tmp/tezedge_snapshot_{}", index);
+                let path = PathBuf::from(&path_str);
+                if path.exists() {
+                    continue;
+                }
+                return path_str;
+            }
+            unreachable!()
+        }
+    }
 }
 
 fn main() {
@@ -172,6 +197,8 @@ fn main() {
         } => {
             let start = std::time::Instant::now();
 
+            let snapshot_path = create_snapshot_path(output);
+
             let ctx = reload_context_readonly(context_path);
 
             let checkout_context_hash: ContextHash =
@@ -245,7 +272,7 @@ fn main() {
 
                 // Create the new writable repository at the `output` path
                 let mut write_repo =
-                    Persistent::try_new(Some("/tmp/new_ctx"), false, false).unwrap();
+                    Persistent::try_new(Some(snapshot_path.as_str()), false, false).unwrap();
                 write_repo.enable_hash_dedup();
 
                 // Put the parent hash in the new repository
@@ -285,16 +312,13 @@ fn main() {
                     )
                     .unwrap();
 
-                // log!("RESULT={:?} in {:?}", commit_context_hash, now.elapsed());
+                // Make sure our new context hash is the same
+                assert_eq!(checkout_context_hash, commit_context_hash);
 
-                // log!("Total time {:?}", start.elapsed());
                 log!(
                     "Creating snapshot from context in memory ok {:?}",
                     now.elapsed()
                 );
-
-                // Make sure our new context hash is the same
-                assert_eq!(checkout_context_hash, commit_context_hash);
             }
 
             {
@@ -304,7 +328,7 @@ fn main() {
                 let now = std::time::Instant::now();
                 log!("Loading snapshot & re-compute hashes...");
 
-                let read_ctx = reload_context_readonly("/tmp/new_ctx".to_string());
+                let read_ctx = reload_context_readonly(snapshot_path.clone());
                 let read_repo: Arc<RwLock<ContextKeyValueStore>> = Arc::new(RwLock::new(read_ctx));
 
                 let index = TezedgeIndex::new(Arc::clone(&read_repo), None);
@@ -326,13 +350,19 @@ fn main() {
                     .hash(commit.author, commit.message, commit.time as i64)
                     .unwrap();
 
+                assert_eq!(checkout_context_hash, context_hash);
+
                 log!(
                     "Loading snapshot & re-compute hashes ok {:?}",
                     now.elapsed()
                 );
-
-                assert_eq!(checkout_context_hash, context_hash);
             }
+
+            log!(
+                "Snapshot created in {:?} at {:?}",
+                start.elapsed(),
+                snapshot_path
+            );
         }
     }
 }
