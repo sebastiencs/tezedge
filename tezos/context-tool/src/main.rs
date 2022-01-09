@@ -295,7 +295,13 @@ fn main() {
                 let read_repo: Arc<RwLock<ContextKeyValueStore>> = Arc::new(RwLock::new(read_ctx));
 
                 let index = TezedgeIndex::new(Arc::clone(&read_repo), None);
-                let context = index.checkout(&checkout_context_hash).unwrap().unwrap();
+                let mut context = index.checkout(&checkout_context_hash).unwrap().unwrap();
+
+                let commit: Commit = index
+                    .fetch_commit_from_context_hash(&checkout_context_hash)
+                    .unwrap()
+                    .unwrap();
+                context.parent_commit_ref = commit.parent_commit_ref;
 
                 // Fetch all objects into `Storage`
                 context.tree.traverse_working_tree(&mut None).unwrap();
