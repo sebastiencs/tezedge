@@ -909,6 +909,8 @@ impl KeyValueStoreBackend for Persistent {
     fn put_context_hash(&mut self, object_ref: ObjectReference) -> Result<(), DBError> {
         let commit_hash = self.get_hash(object_ref)?;
 
+        println!("PUT CONTEXT HASH {:?} {:?}", object_ref, commit_hash);
+
         let mut hasher = DefaultHasher::new();
         hasher.write(&commit_hash[..]);
         let hashed = hasher.finish();
