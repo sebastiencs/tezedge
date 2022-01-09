@@ -890,7 +890,8 @@ impl WorkingTree {
         let root_hash_id = self.get_root_directory_hash(repository)?;
         let root = self.get_root_directory();
 
-        println!("Root hash computed in {:?}", now.elapsed());
+        let root_hash = repository.get_hash(root_hash_id.into()).unwrap();
+        println!("Root hash computed in {:?} {:?}", now.elapsed(), root_hash);
 
         let new_commit = Commit {
             parent_commit_ref,
