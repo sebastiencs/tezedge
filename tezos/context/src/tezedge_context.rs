@@ -204,45 +204,6 @@ impl TezedgeIndex {
         }
     }
 
-    // pub fn fetch_parent_from_context_hash(
-    //     &self,
-    //     context_hash: &ContextHash,
-    // ) -> Result<Option<ObjectHash>, ContextError> {
-    //     let object_ref = {
-    //         let repository = self.repository.read()?;
-
-    //         match repository.get_context_hash(context_hash)? {
-    //             Some(hash_id) => hash_id,
-    //             None => return Ok(None),
-    //         }
-    //     };
-
-    //     let mut storage = self.storage.borrow_mut();
-    //     let mut strings = self.get_string_interner()?;
-
-    //     let commit = match self.fetch_commit(object_ref, &mut storage, &mut strings)? {
-    //         Some(commit) => commit,
-    //         None => return Ok(None),
-    //     };
-
-    //     let parent = match commit.parent_commit_ref {
-    //         Some(parent) => parent,
-    //         None => return Ok(None),
-    //     };
-
-    //     let repository = self.repository.read()?;
-
-    //     repository
-    //         .get_hash(parent)
-    //         .map(|hash| Some(hash.into_owned()))
-    //         .map_err(Into::into)
-
-    //     // match repository.get_hash(parent.hash_id())? {
-    //     //     Ok(hash) => hash,
-    //     //     None => return Ok(None),
-    //     // }
-    // }
-
     fn with_deallocation(&self) -> TezedgeIndexWithDeallocation {
         TezedgeIndexWithDeallocation { index: self }
     }

@@ -210,18 +210,11 @@ impl Hashes {
 
         let in_memory = self.in_memory.get_commiting();
 
-        let mut nhashes = 0;
-        let mut nbytes = 0;
-
         // Copy all hashes into the flat vector `Self::in_memory_bytes`
         self.in_memory_bytes.clear();
         for hash in in_memory {
-            nhashes += 1;
-            nbytes += hash.len();
             self.in_memory_bytes.extend_from_slice(hash);
         }
-
-        println!("COMMITING HASH nhashes={:?} nbytes={:?}", nhashes, nbytes);
 
         self.hashes_file.append(&self.in_memory_bytes)?;
 
@@ -330,8 +323,6 @@ impl Persistent {
                 return Ok(0);
             }
         };
-
-        println!("SIZES={:#?}", list_sizes);
 
         // We take the last valid in `list_sizes`
         let mut last_valid = Option::<FileSizes>::None;
@@ -473,8 +464,6 @@ hashes_file={:?}, in sizes.db={:?}",
 
             last_valid = Some(sizes.clone());
         }
-
-        println!("LAST_VALID={:?}", last_valid);
 
         let sizes = match last_valid {
             Some(valid) => valid,
@@ -912,8 +901,6 @@ impl KeyValueStoreBackend for Persistent {
     fn put_context_hash(&mut self, object_ref: ObjectReference) -> Result<(), DBError> {
         let commit_hash = self.get_hash(object_ref)?;
 
-        println!("PUT CONTEXT HASH {:?} {:?}", object_ref, commit_hash);
-
         let mut hasher = DefaultHasher::new();
         hasher.write(&commit_hash[..]);
         let hashed = hasher.finish();
@@ -1075,15 +1062,6 @@ impl KeyValueStoreBackend for Persistent {
         date: u64,
     ) -> Result<(ContextHash, Box<SerializeStats>), DBError> {
         let offset = self.data_file.offset();
-
-        println!(
-            "BEFORE COMMIT working tree nhashes={:?}",
-            self.hashes.in_memory.working_tree.len()
-        );
-        println!(
-            "BEFORE COMMIT commiting nhashes={:?}",
-            self.hashes.in_memory.commiting.len()
-        );
 
         self.hashes.in_memory.set_is_commiting();
 

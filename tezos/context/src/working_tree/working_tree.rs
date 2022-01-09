@@ -1220,7 +1220,7 @@ impl WorkingTree {
 
                 Ok(())
             }
-            Object::Commit(commit) => {
+            Object::Commit(_commit) => {
                 panic!()
             }
         }
@@ -1228,8 +1228,8 @@ impl WorkingTree {
 
     pub fn traverse_working_tree(
         &self,
-        stats: &mut Option<WorkingTreeStatistics>,
-    ) -> Result<(), MerkleError> {
+        enable_stats: bool,
+    ) -> Result<Option<WorkingTreeStatistics>, MerkleError> {
         let object = match self.root {
             WorkingTreeRoot::Directory(dir_id) => Object::Directory(dir_id),
             WorkingTreeRoot::Value(blob_id) => Object::Blob(blob_id),
@@ -1238,9 +1238,22 @@ impl WorkingTree {
         let mut storage = self.index.storage.borrow_mut();
         let mut strings = self.index.get_string_interner()?;
 
-        self.traverse_working_tree_recursive(object, None, &mut *storage, &mut *strings, 0, stats)?;
+        let mut stats = if enable_stats {
+            Some(WorkingTreeStatistics::default())
+        } else {
+            None
+        };
 
-        Ok(())
+        self.traverse_working_tree_recursive(
+            object,
+            None,
+            &mut *storage,
+            &mut *strings,
+            0,
+            &mut stats,
+        )?;
+
+        Ok(stats)
     }
 
     fn serialize_objects_recursively(

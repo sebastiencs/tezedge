@@ -4,6 +4,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+use crate::log::print;
 use clap::{Parser, Subcommand};
 use crypto::hash::{ContextHash, HashTrait};
 use tezos_context::{
@@ -19,6 +20,8 @@ use tezos_context::{
     TezedgeIndex,
 };
 
+#[macro_use]
+mod log;
 mod stats;
 
 /// Simple program to greet a person
@@ -74,7 +77,7 @@ enum Commands {
 }
 
 fn reload_context_readonly(context_path: String) -> Persistent {
-    println!("Reading context...");
+    log!("Validating context {:?}...", context_path);
 
     let now = std::time::Instant::now();
 
@@ -85,13 +88,7 @@ fn reload_context_readonly(context_path: String) -> Persistent {
     let mut ctx = Persistent::try_new(Some(context_path.as_str()), true, true).unwrap();
     ctx.reload_database().unwrap();
 
-    println!("{:?}", ctx.memory_usage());
-
-    println!(
-        "Context at {:?} is valid in {:?}",
-        context_path,
-        now.elapsed()
-    );
+    log!("Context validated in {:?}", now.elapsed());
 
     ctx
 }
@@ -103,7 +100,7 @@ fn main() {
         Commands::DumpChecksums { context_path } => {
             let sizes_file = File::<{ TAG_SIZES }>::try_new(&context_path, true).unwrap();
             let sizes = FileSizes::make_list_from_file(&sizes_file).unwrap_or(Vec::new());
-            println!("checksums={:#?}", sizes);
+            log!("checksums={:#?}", sizes);
         }
         Commands::BuildIntegrity {
             context_path,
@@ -129,7 +126,7 @@ fn main() {
             ctx.compute_integrity(&mut output_file).unwrap();
 
             let sizes = ctx.get_file_sizes();
-            println!("Result={:#?}", sizes);
+            log!("Result={:#?}", sizes);
         }
         Commands::IsValidContext { context_path } => {
             reload_context_readonly(context_path);
@@ -146,16 +143,14 @@ fn main() {
                 ctx.get_last_context_hash().unwrap()
             };
 
-            println!("Computing size for {:?}", context_hash.to_base58_check());
+            log!("Computing size for {:?}", context_hash.to_base58_check());
 
             let index = TezedgeIndex::new(Arc::new(RwLock::new(ctx)), None);
 
             let now = std::time::Instant::now();
 
-            let mut stats = Some(WorkingTreeStatistics::default());
-
             let context = index.checkout(&context_hash).unwrap().unwrap();
-            context.tree.traverse_working_tree(&mut stats).unwrap();
+            let stats = context.tree.traverse_working_tree(true).unwrap();
 
             let repo = context.index.repository.read().unwrap();
             let repo_stats = repo.get_read_statistics().unwrap().unwrap();
@@ -166,9 +161,9 @@ fn main() {
             stats.nshapes = repo_stats.unique_shapes.len();
             stats.shapes_total_bytes = repo_stats.shapes_length * std::mem::size_of::<StringId>();
 
-            println!("{:#?}", stats::DebugWorkingTreeStatistics(stats));
-            // println!("{:#?}", repo_stats);
-            println!("Time {:?}", now.elapsed());
+            log!("{:#?}", stats::DebugWorkingTreeStatistics(stats));
+            // log!("{:#?}", repo_stats);
+            log!("Time {:?}", now.elapsed());
         }
         Commands::MakeSnapshot {
             context_path,
@@ -186,11 +181,14 @@ fn main() {
                     ctx.get_last_context_hash().unwrap()
                 };
 
-            println!("CHECKOUT={:?}", checkout_context_hash);
+            // log!("CHECKOUT={:?}", checkout_context_hash);
 
             let (mut tree, mut storage, string_interner, parent_hash, commit) = {
                 // This block reads the whole tree of the commit, to extract `Storage`, that's
                 // where all the objects (directories and blobs) are stored
+
+                let now = std::time::Instant::now();
+                log!("Loading context in memory...");
 
                 let read_repo: Arc<RwLock<ContextKeyValueStore>> = Arc::new(RwLock::new(ctx));
                 let index = TezedgeIndex::new(Arc::clone(&read_repo), None);
@@ -213,7 +211,9 @@ fn main() {
                 };
 
                 // Traverse the tree, to store it in the `Storage`
-                context.tree.traverse_working_tree(&mut None).unwrap();
+                context.tree.traverse_working_tree(false).unwrap();
+
+                log!("Loading context in memory ok {:?}", now.elapsed());
 
                 // Extract the `Storage`, `StringInterner` and `WorkingTree` from
                 // the index
@@ -229,13 +229,16 @@ fn main() {
             {
                 // This block creates the new database
 
+                let now = std::time::Instant::now();
+                log!("Creating snapshot from context in memory...");
+
                 // Remove all `HashId` and `AbsoluteOffset` from the `Storage`
                 // They will be recomputed
                 storage.forget_references();
 
                 // Create a new `StringInterner` that contains only the strings used
                 // for this commit
-                let string_interner = storage.make_string_interner(string_interner);
+                let string_interner = storage.strip_string_interner(string_interner);
 
                 let storage = Rc::new(RefCell::new(storage));
                 let string_interner = Rc::new(RefCell::new(Some(string_interner)));
@@ -261,15 +264,18 @@ fn main() {
                 tree.index = index.clone();
 
                 {
+                    let now = std::time::Instant::now();
+                    log!("Computing context hash...");
+
                     // Compute the hashes of the whole tree and remove the duplicate ones
                     let mut repo = write_repo.write().unwrap();
                     tree.get_root_directory_hash(&mut *repo).unwrap();
                     index.storage.borrow_mut().deduplicate_hashes(&*repo);
+                    log!("Computing context hash ok {:?}", now.elapsed());
+                    // log!("Tree's hashes computed in {:?}", now.elapsed());
                 }
 
                 let context = TezedgeContext::new(index, parent_ref, Some(Rc::new(tree)));
-
-                let now = std::time::Instant::now();
 
                 let commit_context_hash = context
                     .commit(
@@ -279,9 +285,13 @@ fn main() {
                     )
                     .unwrap();
 
-                println!("RESULT={:?} in {:?}", commit_context_hash, now.elapsed());
+                // log!("RESULT={:?} in {:?}", commit_context_hash, now.elapsed());
 
-                println!("Total time {:?}", start.elapsed());
+                // log!("Total time {:?}", start.elapsed());
+                log!(
+                    "Creating snapshot from context in memory ok {:?}",
+                    now.elapsed()
+                );
 
                 // Make sure our new context hash is the same
                 assert_eq!(checkout_context_hash, commit_context_hash);
@@ -290,6 +300,9 @@ fn main() {
             {
                 // Fully read the new snapshot and re-compute all the hashes, to
                 // be 100% sure that we have a valid snapshot
+
+                let now = std::time::Instant::now();
+                log!("Loading snapshot & re-compute hashes...");
 
                 let read_ctx = reload_context_readonly("/tmp/new_ctx".to_string());
                 let read_repo: Arc<RwLock<ContextKeyValueStore>> = Arc::new(RwLock::new(read_ctx));
@@ -304,7 +317,7 @@ fn main() {
                 context.parent_commit_ref = commit.parent_commit_ref;
 
                 // Fetch all objects into `Storage`
-                context.tree.traverse_working_tree(&mut None).unwrap();
+                context.tree.traverse_working_tree(false).unwrap();
 
                 // Remove all `HashId` to re-compute them
                 context.index.storage.borrow_mut().forget_references();
@@ -312,6 +325,11 @@ fn main() {
                 let context_hash = context
                     .hash(commit.author, commit.message, commit.time as i64)
                     .unwrap();
+
+                log!(
+                    "Loading snapshot & re-compute hashes ok {:?}",
+                    now.elapsed()
+                );
 
                 assert_eq!(checkout_context_hash, context_hash);
             }

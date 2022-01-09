@@ -649,6 +649,7 @@ dependencies = [
  "byte-unit",
  "clap 3.0.0",
  "crypto",
+ "termcolor",
  "tezos_context",
 ]
 

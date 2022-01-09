@@ -192,9 +192,6 @@ impl BigStrings {
 
         let mut big_strings_file = big_strings_file.buffered()?;
 
-        let mut nstrings = 0;
-        let mut nbytes = 0;
-
         while offset < end {
             big_strings_file.read_exact(&mut length_bytes)?;
 
@@ -206,12 +203,7 @@ impl BigStrings {
 
             let s = std::str::from_utf8(&string_bytes[..length])?;
             result.push_str(s);
-
-            nstrings += 1;
-            nbytes += s.len();
         }
-
-        println!("BIG STRINGS nstrings={:?} nbytes={:?}", nstrings, nbytes);
 
         result.to_serialize_index = result.offsets.len();
 
@@ -408,9 +400,6 @@ impl StringInterner {
 
         let mut strings_file = strings_file.buffered()?;
 
-        let mut nstrings = 0;
-        let mut nbytes = 0;
-
         while offset < end {
             strings_file.read_exact(&mut length_byte)?;
             offset += length_byte.len() as u64;
@@ -425,12 +414,7 @@ impl StringInterner {
 
             // Need to keep this clear, everything being added has been serialized already
             result.all_strings_to_serialize.clear();
-
-            nstrings += 1;
-            nbytes += s.len();
         }
-
-        println!("STRINGS nstrings={:?} nbytes={:?}", nstrings, nbytes);
 
         // Deserialize big strings
 
