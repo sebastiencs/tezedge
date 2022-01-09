@@ -500,7 +500,6 @@ impl PointerToInode {
             Some(hash_id) => *hash_id,
             None => {
                 let object_ref = ObjectReference::new(None, Some(offset));
-                println!("LAAA {:?}", object_ref);
                 repository.get_hash_id(object_ref)?
             }
         };
