@@ -892,6 +892,13 @@ impl WorkingTree {
 
         let root_hash = repository.get_hash(root_hash_id.into()).unwrap();
         println!("Root hash computed in {:?} {:?}", now.elapsed(), root_hash);
+        println!(
+            "TIME={:?} AUTHOR={:?} MSG={:?} PARENT={:?}",
+            time,
+            author,
+            message,
+            repository.get_hash(parent_commit_ref.unwrap()),
+        );
 
         let new_commit = Commit {
             parent_commit_ref,
