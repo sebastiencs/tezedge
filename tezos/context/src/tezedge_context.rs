@@ -889,10 +889,18 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
         let object_ref = {
             let repository = self.repository.read()?;
 
-            match repository.get_context_hash(context_hash)? {
+            let obj = match repository.get_context_hash(context_hash)? {
                 Some(hash_id) => hash_id,
                 None => return Ok(None),
-            }
+            };
+
+            println!(
+                "GET CONTEXT HASH {:?} {:?}",
+                obj,
+                repository.get_hash(obj).unwrap()
+            );
+
+            obj
         };
 
         // TODO: should we always be copying this value? is it possibe
