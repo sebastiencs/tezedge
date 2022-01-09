@@ -112,8 +112,9 @@ pub struct Persistent {
     pub context_hashes: Map<u64, ObjectReference>,
 
     // We keep the lock file here to invoke its destructor
+    // We don't use a lock file when the repository is opened in read mode
     #[allow(dead_code)]
-    lock_file: Lock,
+    lock_file: Option<Lock>,
     /// Counter incrementing on every commit
     commit_counter: u64,
     /// Store all the other files sizes
@@ -232,7 +233,11 @@ impl Persistent {
     ) -> Result<Persistent, IndexInitializationError> {
         let base_path = get_persistent_base_path(db_path);
 
-        let lock_file = Lock::try_lock(&base_path)?;
+        let lock_file = if !read_mode {
+            Some(Lock::try_lock(&base_path)?)
+        } else {
+            None
+        };
 
         let sizes_file = File::<{ TAG_SIZES }>::try_new(&base_path, read_mode)?;
         let data_file = File::<{ TAG_DATA }>::try_new(&base_path, read_mode)?;

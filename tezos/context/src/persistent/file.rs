@@ -167,14 +167,25 @@ impl<const T: TaggedFile> File<T> {
         let file_type: FileType = T.into();
         let append_mode = !matches!(file_type, FileType::Sizes);
 
-        let mut file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .truncate(false)
-            .append(append_mode)
-            .create(true)
-            .custom_flags(get_custom_flags())
-            .open(PathBuf::from(base_path).join(file_type.get_path()))?;
+        let mut options = OpenOptions::new();
+
+        if read_only {
+            options
+                .read(true)
+                .write(false)
+                .create(false)
+                .custom_flags(get_custom_flags());
+        } else {
+            options
+                .read(true)
+                .write(true)
+                .truncate(false)
+                .append(append_mode)
+                .create(true)
+                .custom_flags(get_custom_flags());
+        }
+
+        let mut file = options.open(PathBuf::from(base_path).join(file_type.get_path()))?;
 
         // We use seek, in cases metadatas were not synchronized
         let offset = file.seek(SeekFrom::End(0))?;
