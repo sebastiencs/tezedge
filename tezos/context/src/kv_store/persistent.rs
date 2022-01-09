@@ -313,6 +313,9 @@ impl Persistent {
         hashes_file: &mut File<{ TAG_HASHES }>,
         startup_check: bool,
     ) -> Result<u64, IndexInitializationError> {
+        // TODO: Remove this
+        let startup_check = false;
+
         let list_sizes = match list_sizes {
             Some(list) if !list.is_empty() => list,
             _ => {
