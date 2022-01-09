@@ -13,9 +13,10 @@ use tezos_context::{
         KeyValueStoreBackend,
     },
     working_tree::{
-        string_interner::StringId, working_tree::WorkingTreeStatistics, ObjectReference,
+        string_interner::StringId, working_tree::WorkingTreeStatistics, Commit, ObjectReference,
     },
-    ContextKeyValueStore, IndexApi, Persistent, ShellContextApi, TezedgeContext, TezedgeIndex,
+    ContextKeyValueStore, IndexApi, ObjectHash, Persistent, ShellContextApi, TezedgeContext,
+    TezedgeIndex,
 };
 
 mod stats;
@@ -72,7 +73,7 @@ enum Commands {
     },
 }
 
-fn reload_context(context_path: String) -> Persistent {
+fn reload_context_readonly(context_path: String) -> Persistent {
     println!("Reading context...");
 
     let now = std::time::Instant::now();
@@ -131,13 +132,13 @@ fn main() {
             println!("Result={:#?}", sizes);
         }
         Commands::IsValidContext { context_path } => {
-            reload_context(context_path);
+            reload_context_readonly(context_path);
         }
         Commands::ContextSize {
             context_path,
             context_hash,
         } => {
-            let ctx = reload_context(context_path);
+            let ctx = reload_context_readonly(context_path);
 
             let context_hash = if let Some(context_hash) = context_hash.as_ref() {
                 ContextHash::from_b58check(&context_hash).unwrap()
@@ -176,104 +177,138 @@ fn main() {
         } => {
             let start = std::time::Instant::now();
 
-            let ctx = reload_context(context_path);
+            let ctx = reload_context_readonly(context_path);
 
-            let checkout_context_hash = if let Some(context_hash) = context_hash.as_ref() {
-                ContextHash::from_b58check(&context_hash).unwrap()
-            } else {
-                ctx.get_last_context_hash().unwrap()
-            };
+            let checkout_context_hash: ContextHash =
+                if let Some(context_hash) = context_hash.as_ref() {
+                    ContextHash::from_b58check(context_hash).unwrap()
+                } else {
+                    ctx.get_last_context_hash().unwrap()
+                };
 
-            let ((mut tree, storage, string_interner), parent_hash, commit) = {
-                println!("CHECKOUT={:?}", checkout_context_hash);
+            println!("CHECKOUT={:?}", checkout_context_hash);
 
-                let read_ctx: Arc<RwLock<ContextKeyValueStore>> = Arc::new(RwLock::new(ctx));
+            let (mut tree, mut storage, string_interner, parent_hash, commit) = {
+                // This block reads the whole tree of the commit, to extract `Storage`, that's
+                // where all the objects (directories and blobs) are stored
 
-                let index = TezedgeIndex::new(Arc::clone(&read_ctx), None);
-
+                let read_repo: Arc<RwLock<ContextKeyValueStore>> = Arc::new(RwLock::new(ctx));
+                let index = TezedgeIndex::new(Arc::clone(&read_repo), None);
                 let context = index.checkout(&checkout_context_hash).unwrap().unwrap();
 
-                let commit = index
+                // Take the commit from repository
+                let commit: Commit = index
                     .fetch_commit_from_context_hash(&checkout_context_hash)
                     .unwrap()
                     .unwrap();
 
-                let parent_hash = match commit.parent_commit_ref {
-                    Some(parent) => Some(
-                        read_ctx
-                            .read()
-                            .unwrap()
-                            .get_hash(parent)
-                            .unwrap()
-                            .into_owned(),
-                    ),
+                // If the commit has a parent, fetch it
+                // It is necessary for the snapshot to have it in its db
+                let parent_hash: Option<ObjectHash> = match commit.parent_commit_ref {
+                    Some(parent) => {
+                        let repo = read_repo.read().unwrap();
+                        Some(repo.get_hash(parent).unwrap().into_owned())
+                    }
                     None => None,
                 };
 
+                // Traverse the tree, to store it in the `Storage`
                 context.tree.traverse_working_tree(&mut None).unwrap();
 
-                (context.take_tree(), parent_hash, commit)
+                // Extract the `Storage`, `StringInterner` and `WorkingTree` from
+                // the index
+                (
+                    Rc::try_unwrap(context.tree).ok().unwrap(),
+                    context.index.storage.take(),
+                    context.index.string_interner.take().unwrap(),
+                    parent_hash,
+                    commit,
+                )
             };
-
-            let mut write_ctx = Persistent::try_new(Some("/tmp/new_ctx"), false, false).unwrap();
-            write_ctx.enable_hash_dedup();
-
-            let parent_ref: Option<ObjectReference> = match parent_hash {
-                Some(parent_hash) => Some(write_ctx.get_vacant_object_hash().unwrap().write_with(
-                    |entry| {
-                        *entry = parent_hash;
-                    },
-                ))
-                .map(Into::into),
-                None => None,
-            };
-
-            let write_ctx: Arc<RwLock<ContextKeyValueStore>> = Arc::new(RwLock::new(write_ctx));
-
-            storage.borrow_mut().forget_references();
-
-            let string_interner = string_interner.borrow();
-            let strings = string_interner.as_ref().unwrap();
-            let string_interner = storage.borrow_mut().make_string_interner(strings);
-
-            // storage.borrow_mut().offsets_to_hash_id = Default::default();
-            let string_interner = Rc::new(RefCell::new(Some(string_interner)));
-            let index = TezedgeIndex::with_storage(write_ctx.clone(), storage, string_interner);
-
-            Rc::get_mut(&mut tree).unwrap().index = index.clone();
 
             {
-                let mut repo = write_ctx.write().unwrap();
-                Rc::get_mut(&mut tree)
-                    .unwrap()
-                    .get_root_directory_hash(&mut *repo)
+                // This block creates the new database
+
+                // Remove all `HashId` and `AbsoluteOffset` from the `Storage`
+                // They will be recomputed
+                storage.forget_references();
+
+                // Create a new `StringInterner` that contains only the strings used
+                // for this commit
+                let string_interner = storage.make_string_interner(string_interner);
+
+                let storage = Rc::new(RefCell::new(storage));
+                let string_interner = Rc::new(RefCell::new(Some(string_interner)));
+
+                // Create the new writable repository at the `output` path
+                let mut write_repo =
+                    Persistent::try_new(Some("/tmp/new_ctx"), false, false).unwrap();
+                write_repo.enable_hash_dedup();
+
+                // Put the parent hash in the new repository
+                let parent_ref: Option<ObjectReference> = match parent_hash {
+                    Some(parent_hash) => Some(write_repo.put_hash(parent_hash).unwrap().into()),
+                    None => None,
+                };
+
+                let write_repo: Arc<RwLock<ContextKeyValueStore>> =
+                    Arc::new(RwLock::new(write_repo));
+
+                let index =
+                    TezedgeIndex::with_storage(write_repo.clone(), storage, string_interner);
+
+                // Make the `WorkingTree` use our new index
+                tree.index = index.clone();
+
+                {
+                    // Compute the hashes of the whole tree and remove the duplicate ones
+                    let mut repo = write_repo.write().unwrap();
+                    tree.get_root_directory_hash(&mut *repo).unwrap();
+                    index.storage.borrow_mut().deduplicate_hashes(&*repo);
+                }
+
+                let context = TezedgeContext::new(index, parent_ref, Some(Rc::new(tree)));
+
+                let now = std::time::Instant::now();
+
+                let commit_context_hash = context
+                    .commit(
+                        commit.author.clone(),
+                        commit.message.clone(),
+                        commit.time as i64,
+                    )
                     .unwrap();
-                index.storage.borrow_mut().deduplicate_hashes(&*repo);
+
+                println!("RESULT={:?} in {:?}", commit_context_hash, now.elapsed());
+
+                println!("Total time {:?}", start.elapsed());
+
+                // Make sure our new context hash is the same
+                assert_eq!(checkout_context_hash, commit_context_hash);
             }
 
-            let context = TezedgeContext::new(index, parent_ref, Some(tree));
-            // let context = TezedgeContext::new(index, Some(parent_hash_id.into()), Some(tree));
+            {
+                // Fully read the new snapshot and re-compute all the hashes, to
+                // be 100% sure that we have a valid snapshot
 
-            // let read_ctx = index.replace_repository(Arc::new(RwLock::new(write_ctx)));
+                let read_ctx = reload_context_readonly("/tmp/new_ctx".to_string());
+                let read_repo: Arc<RwLock<ContextKeyValueStore>> = Arc::new(RwLock::new(read_ctx));
 
-            // context.index. = index;
+                let index = TezedgeIndex::new(Arc::clone(&read_repo), None);
+                let context = index.checkout(&checkout_context_hash).unwrap().unwrap();
 
-            // println!("PARENT={:?}", context.parent_commit_ref);
+                // Fetch all objects into `Storage`
+                context.tree.traverse_working_tree(&mut None).unwrap();
 
-            // context.index.repository = Arc::clone(&write_ctx);
-            // context.tree.index.repository = write_ctx;
+                // Remove all `HashId` to re-compute them
+                context.index.storage.borrow_mut().forget_references();
 
-            let now = std::time::Instant::now();
+                let context_hash = context
+                    .hash(commit.author, commit.message, commit.time as i64)
+                    .unwrap();
 
-            let commit_context_hash = context
-                .commit(commit.author, commit.message, commit.time as i64)
-                .unwrap();
-
-            println!("RESULT={:?} in {:?}", commit_context_hash, now.elapsed());
-
-            println!("Total time {:?}", start.elapsed());
-
-            assert_eq!(checkout_context_hash, commit_context_hash);
+                assert_eq!(checkout_context_hash, context_hash);
+            }
         }
     }
 }

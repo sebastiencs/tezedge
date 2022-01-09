@@ -701,7 +701,7 @@ impl Storage {
         }
     }
 
-    pub fn make_string_interner(&mut self, old_strings: &StringInterner) -> StringInterner {
+    pub fn make_string_interner(&mut self, old_strings: StringInterner) -> StringInterner {
         let mut new_string_interner = StringInterner::default();
 
         let new_directories: Vec<_> = self
