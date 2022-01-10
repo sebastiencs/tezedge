@@ -119,6 +119,10 @@ impl<'a> ShapeStrings<'a> {
             ShapeStrings::Owned(owned) => owned.len(),
         }
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 impl DirectoryShapes {

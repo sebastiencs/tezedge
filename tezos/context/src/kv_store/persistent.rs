@@ -307,6 +307,7 @@ impl Persistent {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn truncate_files_with_correct_sizes(
         list_sizes: Option<&[FileSizes]>,
         data_file: &mut File<{ TAG_DATA }>,

@@ -179,6 +179,7 @@ fn serialize_offset(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn serialize_shaped_directory(
     shape_id: DirectoryShapeId,
     dir: &[(StringId, DirEntryId)],
@@ -596,7 +597,7 @@ impl PointersOffsetsHeader {
     /// Sets bits to zero at `index`
     #[cfg(test)]
     fn clear(&mut self, index: usize) {
-        self.bitfield = self.bitfield & !(0b11 << (index * 2));
+        self.bitfield &= !(0b11 << (index * 2));
     }
 
     fn from_pointers(
@@ -1503,7 +1504,7 @@ mod tests {
 
         let mut pointers: [Option<PointerToInode>; 32] = Default::default();
 
-        for index in 0..pointers.len() {
+        for (index, pointer) in pointers.iter_mut().enumerate() {
             let inode_value = Inode::Directory(DirectoryId::empty());
             let inode_value_id = storage.add_inode(inode_value).unwrap();
 
@@ -1523,7 +1524,7 @@ mod tests {
 
             offsets.push(offset);
 
-            pointers[index] = Some(PointerToInode::new_commited(
+            *pointer = Some(PointerToInode::new_commited(
                 Some(hash_id),
                 Some(inode_value_id),
                 Some(offset),
@@ -1560,7 +1561,7 @@ mod tests {
             .unwrap();
 
         let new_inode_id =
-            deserialize_inode(&inode_bytes, offset, &mut storage, &repo, &mut strings).unwrap();
+            deserialize_inode(inode_bytes, offset, &mut storage, &repo, &mut strings).unwrap();
         let new_inode = storage.get_inode(new_inode_id).unwrap();
 
         if let Inode::Pointers {
@@ -1628,7 +1629,7 @@ mod tests {
             .unwrap();
 
         let new_inode_id =
-            deserialize_inode(&inode_bytes, offset, &mut storage, &repo, &mut strings).unwrap();
+            deserialize_inode(inode_bytes, offset, &mut storage, &repo, &mut strings).unwrap();
         let new_inode = storage.get_inode(new_inode_id).unwrap().clone();
 
         if let Inode::Directory(new_dir_id) = new_inode {

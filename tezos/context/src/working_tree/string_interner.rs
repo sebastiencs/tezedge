@@ -288,6 +288,10 @@ impl StringInterner {
         self.all_strings.len() + self.big_strings.strings.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn make_string_id(&mut self, s: &str) -> StringId {
         if s.len() >= STRING_INTERN_THRESHOLD {
             let index = self.big_strings.push_str(s);

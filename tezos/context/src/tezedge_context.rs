@@ -1151,7 +1151,7 @@ mod tests {
 
         let context2 = context.delete(&["m", "n", "o"]).unwrap();
         assert!(context.mem(&["m", "n", "o"]).unwrap());
-        assert!(context2.mem(&["m", "n", "o"]).unwrap() == false);
+        assert!(!context2.mem(&["m", "n", "o"]).unwrap());
 
         assert!(context.mem_tree(&["a"]));
 

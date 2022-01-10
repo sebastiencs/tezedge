@@ -1153,6 +1153,7 @@ impl Storage {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn insert_inode(
         &mut self,
         depth: u32,

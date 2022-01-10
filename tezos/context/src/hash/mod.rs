@@ -380,7 +380,6 @@ pub(crate) fn hash_object(
 #[cfg(test)]
 #[allow(unused_must_use)]
 mod tests {
-    use std::convert::TryInto;
     use std::{collections::HashSet, env, fs::File, io::Read, path::Path};
 
     use flate2::read::GzDecoder;
@@ -475,14 +474,14 @@ mod tests {
         println!("[hex] commit_message_length : {}", commit_message_length);
         println!("[hex] commit_message : {}", commit_message);
 
-        bytes += &hash_length;
-        bytes += &dir_hash;
-        bytes += &parents_count;
-        bytes += &commit_time;
-        bytes += &commit_author_name_length;
-        bytes += &commit_author_name;
-        bytes += &commit_message_length;
-        bytes += &commit_message;
+        bytes += hash_length;
+        bytes += dir_hash;
+        bytes += parents_count;
+        bytes += commit_time;
+        bytes += commit_author_name_length;
+        bytes += commit_author_name;
+        bytes += commit_message_length;
+        bytes += commit_message;
 
         println!(
             "manually calculated haxedemical representation of commit: {}",
@@ -575,12 +574,12 @@ mod tests {
         println!("[hex] hash_length      : {}", hash_length);
         println!("[hex] hash             : {}", hash);
 
-        bytes += &child_dir_entries;
-        bytes += &blob_dir_entry;
-        bytes += &string_length;
-        bytes += &string_value;
-        bytes += &hash_length;
-        bytes += &hash;
+        bytes += child_dir_entries;
+        bytes += blob_dir_entry;
+        bytes += string_length;
+        bytes += string_value;
+        bytes += hash_length;
+        bytes += hash;
 
         println!(
             "manually calculated haxedemical representation of directory: {}",
@@ -596,7 +595,7 @@ mod tests {
             hex::encode(calculated_dir_hash.as_ref())
         );
 
-        let hash_id = hash_directory(dummy_dir, repo, &mut storage, &strings).unwrap();
+        let hash_id = hash_directory(dummy_dir, repo, &storage, &strings).unwrap();
         let object_ref = ObjectReference::new(Some(hash_id), None);
 
         assert_eq!(
@@ -698,9 +697,10 @@ mod tests {
                 };
                 let object_hash = ContextHash::from_base58_check(&binding.hash).unwrap();
 
-                let hash_id = repo.get_vacant_object_hash().unwrap().write_with(|bytes| {
-                    bytes.copy_from_slice(object_hash.as_ref().as_slice().try_into().unwrap())
-                });
+                let hash_id = repo
+                    .get_vacant_object_hash()
+                    .unwrap()
+                    .write_with(|bytes| bytes.copy_from_slice(object_hash.as_ref()));
 
                 let object = match dir_entry_kind {
                     DirEntryKind::Blob => Object::Blob(
@@ -783,7 +783,7 @@ mod tests {
             }
 
             let expected_hash = ContextHash::from_base58_check(&test_case.hash).unwrap();
-            let computed_hash_id = hash_directory(dir_id, repo, &mut storage, &strings).unwrap();
+            let computed_hash_id = hash_directory(dir_id, repo, &storage, &strings).unwrap();
             let computed_hash_ref = ObjectReference::new(Some(computed_hash_id), None);
             let computed_hash = repo.get_hash(computed_hash_ref).unwrap();
             let computed_hash = ContextHash::try_from_bytes(computed_hash.as_ref()).unwrap();
@@ -862,7 +862,7 @@ mod tests {
                         }
 
                         let new_computed_hash_id =
-                            hash_directory(new_dir, repo, &mut storage, &strings).unwrap();
+                            hash_directory(new_dir, repo, &storage, &strings).unwrap();
                         let new_computed_hash_ref =
                             ObjectReference::new(Some(new_computed_hash_id), None);
                         let new_computed_hash = repo.get_hash(new_computed_hash_ref).unwrap();
