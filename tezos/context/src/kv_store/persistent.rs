@@ -58,6 +58,7 @@ const SIZES_HASH_BYTES_LENGTH: usize = 32;
 const SIZES_REST_BYTES_LENGTH: usize = 92;
 const SIZES_BYTES_PER_LINE: usize = SIZES_HASH_BYTES_LENGTH + SIZES_REST_BYTES_LENGTH;
 
+#[derive(Debug)]
 pub struct PersistentConfiguration {
     pub db_path: Option<String>,
     pub startup_check: bool,
@@ -232,12 +233,16 @@ impl Hashes {
 
 impl Persistent {
     pub fn try_new(
-        PersistentConfiguration {
+        configuration: PersistentConfiguration,
+    ) -> Result<Persistent, IndexInitializationError> {
+        log!("Opening persistent context {:?}", configuration);
+
+        let PersistentConfiguration {
             db_path,
             startup_check,
             read_mode,
-        }: PersistentConfiguration,
-    ) -> Result<Persistent, IndexInitializationError> {
+        } = configuration;
+
         let base_path = get_persistent_base_path(db_path.as_deref());
 
         let lock_file = if !read_mode {

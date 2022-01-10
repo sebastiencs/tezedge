@@ -213,7 +213,7 @@ fn main() {
 
             log!("Start creating snapshot at {:?}", snapshot_path,);
 
-            let ctx = reload_context_readonly(context_path.clone());
+            let ctx = reload_context_readonly(context_path);
 
             let checkout_context_hash: ContextHash =
                 if let Some(context_hash) = context_hash.as_ref() {
@@ -286,7 +286,7 @@ fn main() {
 
                 // Create the new writable repository at `snapshot_path`
                 let mut write_repo = Persistent::try_new(PersistentConfiguration {
-                    db_path: Some(context_path),
+                    db_path: Some(snapshot_path.clone()),
                     startup_check: false,
                     read_mode: false,
                 })
