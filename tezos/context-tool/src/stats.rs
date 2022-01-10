@@ -1,3 +1,6 @@
+// Copyright (c) SimpleStaking, Viable Systems and Tezedge Contributors
+// SPDX-License-Identifier: MIT
+
 use byte_unit::Byte;
 
 use tezos_context::{working_tree::working_tree::WorkingTreeStatistics, ObjectHash};
