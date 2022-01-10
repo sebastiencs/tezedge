@@ -60,8 +60,8 @@ enum Commands {
         #[clap(short, long)]
         hash: Option<String>,
     },
-    /// Create a snapshot from a commit
-    /// This will remove all unused objects
+    /// Create a snapshot from a commit.
+    /// This will create a new context with all unused objects removed
     MakeSnapshot {
         /// Path of the persistent context
         #[clap(short, long)]
@@ -81,11 +81,11 @@ fn reload_context_readonly(context_path: String) -> Persistent {
     let now = std::time::Instant::now();
 
     let sizes_file = File::<{ TAG_SIZES }>::try_new(&context_path, true).unwrap();
-    let sizes = FileSizes::make_list_from_file(&sizes_file).unwrap_or(Vec::new());
+    let sizes = FileSizes::make_list_from_file(&sizes_file).unwrap_or_default();
     assert!(!sizes.is_empty(), "sizes.db is invalid: {:?}", sizes);
 
     let mut repo = Persistent::try_new(PersistentConfiguration {
-        db_path: Some(context_path.clone()),
+        db_path: Some(context_path),
         startup_check: true,
         read_mode: true,
     })
@@ -126,14 +126,14 @@ fn main() {
     match args.command {
         Commands::DumpChecksums { context_path } => {
             let sizes_file = File::<{ TAG_SIZES }>::try_new(&context_path, true).unwrap();
-            let sizes = FileSizes::make_list_from_file(&sizes_file).unwrap_or(Vec::new());
+            let sizes = FileSizes::make_list_from_file(&sizes_file).unwrap_or_default();
             log!("checksums={:#?}", sizes);
         }
         Commands::BuildIntegrity {
             context_path,
             output_dir,
         } => {
-            let output_dir = output_dir.unwrap_or("".to_string());
+            let output_dir = output_dir.unwrap_or_else(|| "".to_string());
 
             // Make sure `sizes.db` doesn't already exist
             match File::<{ TAG_SIZES }>::create_new_file(&output_dir) {
@@ -148,7 +148,7 @@ fn main() {
             };
 
             let mut ctx = Persistent::try_new(PersistentConfiguration {
-                db_path: Some(context_path.clone()),
+                db_path: Some(context_path),
                 startup_check: true,
                 read_mode: true,
             })
@@ -170,7 +170,7 @@ fn main() {
             let ctx = reload_context_readonly(context_path);
 
             let context_hash = if let Some(context_hash) = context_hash.as_ref() {
-                ContextHash::from_b58check(&context_hash).unwrap()
+                ContextHash::from_b58check(context_hash).unwrap()
             } else {
                 ctx.get_last_context_hash().unwrap()
             };
@@ -283,7 +283,7 @@ fn main() {
 
                 // Create the new writable repository at `snapshot_path`
                 let mut write_repo = Persistent::try_new(PersistentConfiguration {
-                    db_path: Some(context_path.clone()),
+                    db_path: Some(context_path),
                     startup_check: false,
                     read_mode: false,
                 })
@@ -291,10 +291,8 @@ fn main() {
                 write_repo.enable_hash_dedup();
 
                 // Put the parent hash in the new repository
-                let parent_ref: Option<ObjectReference> = match parent_hash {
-                    Some(parent_hash) => Some(write_repo.put_hash(parent_hash).unwrap().into()),
-                    None => None,
-                };
+                let parent_ref: Option<ObjectReference> =
+                    parent_hash.map(|parent_hash| write_repo.put_hash(parent_hash).unwrap().into());
 
                 let write_repo: Arc<RwLock<ContextKeyValueStore>> =
                     Arc::new(RwLock::new(write_repo));
