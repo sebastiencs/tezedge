@@ -135,27 +135,6 @@ impl TezedgeIndex {
         }
     }
 
-    // pub fn replace_repository(
-    //     &mut self,
-    //     new_repository: ContextKeyValueStore,
-    //     // new_repository: Arc<RwLock<ContextKeyValueStore>>,
-    // ) -> Arc<RwLock<ContextKeyValueStore>> {
-    //     let old = self.repository.write().unwrap();
-
-    //     std::mem::replace(&mut *old, 1);
-    //     // std::mem::replace(&mut *old, new_repository);
-
-    //     todo!()
-    // }
-
-    // pub fn replace_repository(
-    //     &mut self,
-    //     new_repository: Arc<RwLock<ContextKeyValueStore>>,
-    // ) -> Arc<RwLock<ContextKeyValueStore>> {
-    //     // let old = self.repository.write().unwrap();
-    //     std::mem::replace(&mut self.repository, new_repository)
-    // }
-
     pub fn get_string_interner(&self) -> Result<RefMut<StringInterner>, DBError> {
         // When the context is reloaded/restarted, the existings strings (found the the db file)
         // are in the repository.
@@ -1124,16 +1103,6 @@ impl TezedgeContext {
 
     fn with_deallocation(&self) -> TezedgeContextWithDeallocation<'_> {
         TezedgeContextWithDeallocation { ctx: self }
-    }
-
-    pub fn take_tree(
-        self,
-    ) -> (
-        Rc<WorkingTree>,
-        Rc<RefCell<Storage>>,
-        Rc<RefCell<Option<StringInterner>>>,
-    ) {
-        (self.tree, self.index.storage, self.index.string_interner)
     }
 
     fn commit_impl(

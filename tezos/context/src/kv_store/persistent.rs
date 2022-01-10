@@ -58,6 +58,12 @@ const SIZES_HASH_BYTES_LENGTH: usize = 32;
 const SIZES_REST_BYTES_LENGTH: usize = 92;
 const SIZES_BYTES_PER_LINE: usize = SIZES_HASH_BYTES_LENGTH + SIZES_REST_BYTES_LENGTH;
 
+pub struct PersistentConfiguration {
+    pub db_path: Option<String>,
+    pub startup_check: bool,
+    pub read_mode: bool,
+}
+
 pub struct Persistent {
     /// Concatenation of all objects
     ///
@@ -125,7 +131,6 @@ pub struct Persistent {
     sizes_file: File<{ TAG_SIZES }>,
     startup_check: bool,
     last_commit_on_startup: Option<ObjectReference>,
-
     read_statistics: Option<Mutex<ReadStatistics>>,
 }
 
@@ -227,11 +232,13 @@ impl Hashes {
 
 impl Persistent {
     pub fn try_new(
-        db_path: Option<&str>,
-        startup_check: bool,
-        read_mode: bool,
+        PersistentConfiguration {
+            db_path,
+            startup_check,
+            read_mode,
+        }: PersistentConfiguration,
     ) -> Result<Persistent, IndexInitializationError> {
-        let base_path = get_persistent_base_path(db_path);
+        let base_path = get_persistent_base_path(db_path.as_ref().map(|s| s.as_str()));
 
         let lock_file = if !read_mode {
             Some(Lock::try_lock(&base_path)?)
@@ -311,9 +318,6 @@ impl Persistent {
         hashes_file: &mut File<{ TAG_HASHES }>,
         startup_check: bool,
     ) -> Result<u64, IndexInitializationError> {
-        // TODO: Remove this
-        let startup_check = false;
-
         let list_sizes = match list_sizes {
             Some(list) if !list.is_empty() => list,
             _ => {
@@ -386,7 +390,7 @@ hashes_file={:?}, in sizes.db={:?}",
                     );
                     break;
                 }
-                println!("string crc computed in {:?}", now.elapsed());
+                log!("string crc computed in {:?}", now.elapsed());
 
                 let now = std::time::Instant::now();
                 if commit_index_file.update_checksum_until(sizes.commit_index_size)?
@@ -400,7 +404,7 @@ hashes_file={:?}, in sizes.db={:?}",
                     );
                     break;
                 }
-                println!("commit index crc computed in {:?}", now.elapsed());
+                log!("commit index crc computed in {:?}", now.elapsed());
 
                 let now = std::time::Instant::now();
                 if shape_index_file.update_checksum_until(sizes.shape_index_size)?
@@ -414,7 +418,7 @@ hashes_file={:?}, in sizes.db={:?}",
                     );
                     break;
                 }
-                println!("shape index crc computed in {:?}", now.elapsed());
+                log!("shape index crc computed in {:?}", now.elapsed());
 
                 let now = std::time::Instant::now();
                 if big_strings_file.update_checksum_until(sizes.big_strings_size)?
@@ -428,7 +432,7 @@ hashes_file={:?}, in sizes.db={:?}",
                     );
                     break;
                 }
-                println!("big string crc computed in {:?}", now.elapsed());
+                log!("big string crc computed in {:?}", now.elapsed());
 
                 let now = std::time::Instant::now();
                 if shape_file.update_checksum_until(sizes.shape_size)? != sizes.shape_checksum {
@@ -440,7 +444,7 @@ hashes_file={:?}, in sizes.db={:?}",
                     );
                     break;
                 }
-                println!("shape crc computed in {:?}", now.elapsed());
+                log!("shape crc computed in {:?}", now.elapsed());
 
                 let now = std::time::Instant::now();
                 if hashes_file.update_checksum_until(sizes.hashes_size)? != sizes.hashes_checksum {
@@ -452,7 +456,7 @@ hashes_file={:?}, in sizes.db={:?}",
                     );
                     break;
                 }
-                println!("hashes crc computed in {:?}", now.elapsed());
+                log!("hashes crc computed in {:?}", now.elapsed());
 
                 let now = std::time::Instant::now();
                 if data_file.update_checksum_until(sizes.data_size)? != sizes.data_checksum {
@@ -464,7 +468,7 @@ hashes_file={:?}, in sizes.db={:?}",
                     );
                     break;
                 }
-                println!("data crc computed in {:?}", now.elapsed());
+                log!("data crc computed in {:?}", now.elapsed());
             }
 
             last_valid = Some(sizes.clone());

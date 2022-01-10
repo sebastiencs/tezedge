@@ -9,7 +9,7 @@ use crate::log::print;
 use clap::{Parser, Subcommand};
 use crypto::hash::{ContextHash, HashTrait};
 use tezos_context::{
-    kv_store::persistent::FileSizes,
+    kv_store::persistent::{FileSizes, PersistentConfiguration},
     persistent::file::{File, TAG_SIZES},
     working_tree::{string_interner::StringId, Commit, ObjectReference},
     ContextKeyValueStore, IndexApi, ObjectHash, Persistent, ShellContextApi, TezedgeContext,
@@ -36,7 +36,7 @@ enum Commands {
         #[clap(short, long)]
         context_path: String,
         #[clap(short, long)]
-        /// Path to write the resulting `sizes.db`
+        /// Path to write the resulting `sizes.db`, default to current directory
         output_dir: Option<String>,
     },
     /// Check if the context match its `sizes.db`
@@ -51,22 +51,25 @@ enum Commands {
         #[clap(short, long)]
         context_path: String,
     },
+    /// Display sizes of the different objects for the selected commit
     ContextSize {
         /// Path of the persistent context
         #[clap(short, long)]
         context_path: String,
-        /// Commit to inspect, default to last commit
+        /// Context hash to inspect, default to last commit
         #[clap(short, long)]
-        context_hash: Option<String>,
+        hash: Option<String>,
     },
+    /// Create a snapshot from a commit
+    /// This will remove all unused objects
     MakeSnapshot {
         /// Path of the persistent context
         #[clap(short, long)]
         context_path: String,
-        /// Commit to make the snapshot from, default to last commit
+        /// Context hash to make the snapshot from, default to last commit
         #[clap(short, long)]
-        acontext_hash: Option<String>,
-        /// Path of the result
+        hash: Option<String>,
+        /// Path of the result, default to `/tmp/tezedge_snapshot_XXX`
         #[clap(short, long)]
         output: Option<String>,
     },
@@ -79,14 +82,19 @@ fn reload_context_readonly(context_path: String) -> Persistent {
 
     let sizes_file = File::<{ TAG_SIZES }>::try_new(&context_path, true).unwrap();
     let sizes = FileSizes::make_list_from_file(&sizes_file).unwrap_or(Vec::new());
-    assert!(!sizes.is_empty(), "sizes.db is invalid");
+    assert!(!sizes.is_empty(), "sizes.db is invalid: {:?}", sizes);
 
-    let mut ctx = Persistent::try_new(Some(context_path.as_str()), true, true).unwrap();
-    ctx.reload_database().unwrap();
+    let mut repo = Persistent::try_new(PersistentConfiguration {
+        db_path: Some(context_path.clone()),
+        startup_check: true,
+        read_mode: true,
+    })
+    .unwrap();
+    repo.reload_database().unwrap();
 
     log!(" Validating context ok {:?}", now.elapsed());
 
-    ctx
+    repo
 }
 
 fn create_snapshot_path(base_path: Option<String>) -> String {
@@ -139,7 +147,12 @@ fn main() {
                 Err(e) => panic!("{:?}", e),
             };
 
-            let mut ctx = Persistent::try_new(Some(context_path.as_str()), true, true).unwrap();
+            let mut ctx = Persistent::try_new(PersistentConfiguration {
+                db_path: Some(context_path.clone()),
+                startup_check: true,
+                read_mode: true,
+            })
+            .unwrap();
             let mut output_file = File::<{ TAG_SIZES }>::try_new(&output_dir, false).unwrap();
 
             ctx.compute_integrity(&mut output_file).unwrap();
@@ -152,7 +165,7 @@ fn main() {
         }
         Commands::ContextSize {
             context_path,
-            context_hash,
+            hash: context_hash,
         } => {
             let ctx = reload_context_readonly(context_path);
 
@@ -184,12 +197,11 @@ fn main() {
                 "Context size: {:#?}",
                 stats::DebugWorkingTreeStatistics(stats)
             );
-            // log!("{:#?}", repo_stats);
             log!("Total Time {:?}", now.elapsed());
         }
         Commands::MakeSnapshot {
             context_path,
-            acontext_hash: context_hash,
+            hash: context_hash,
             output,
         } => {
             let start = std::time::Instant::now();
@@ -198,7 +210,7 @@ fn main() {
 
             log!("Start creating snapshot at {:?}", snapshot_path,);
 
-            let ctx = reload_context_readonly(context_path);
+            let ctx = reload_context_readonly(context_path.clone());
 
             let checkout_context_hash: ContextHash =
                 if let Some(context_hash) = context_hash.as_ref() {
@@ -269,9 +281,13 @@ fn main() {
                 let storage = Rc::new(RefCell::new(storage));
                 let string_interner = Rc::new(RefCell::new(Some(string_interner)));
 
-                // Create the new writable repository at the `output` path
-                let mut write_repo =
-                    Persistent::try_new(Some(snapshot_path.as_str()), false, false).unwrap();
+                // Create the new writable repository at `snapshot_path`
+                let mut write_repo = Persistent::try_new(PersistentConfiguration {
+                    db_path: Some(context_path.clone()),
+                    startup_check: false,
+                    read_mode: false,
+                })
+                .unwrap();
                 write_repo.enable_hash_dedup();
 
                 // Put the parent hash in the new repository
@@ -297,8 +313,8 @@ fn main() {
                     let mut repo = write_repo.write().unwrap();
                     tree.get_root_directory_hash(&mut *repo).unwrap();
                     index.storage.borrow_mut().deduplicate_hashes(&*repo);
+
                     log!(" Computing context hash ok {:?}", now.elapsed());
-                    // log!("Tree's hashes computed in {:?}", now.elapsed());
                 }
 
                 let context = TezedgeContext::new(index, parent_ref, Some(Rc::new(tree)));

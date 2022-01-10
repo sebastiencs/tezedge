@@ -389,7 +389,7 @@ mod tests {
     use tezos_timing::SerializeStats;
 
     use crate::kv_store::in_memory::InMemory;
-    use crate::kv_store::persistent::Persistent;
+    use crate::kv_store::persistent::{Persistent, PersistentConfiguration};
     use crate::serialize::{in_memory, persistent, SerializeObjectSignature};
     use crate::working_tree::ObjectReference;
     use crate::working_tree::{DirEntry, DirEntryKind};
@@ -398,8 +398,12 @@ mod tests {
 
     #[test]
     fn test_hash_of_commit_persistent() {
-        let mut repo =
-            Persistent::try_new(None, true, false).expect("failed to create persistent context");
+        let mut repo = Persistent::try_new(PersistentConfiguration {
+            db_path: None,
+            startup_check: true,
+            read_mode: false,
+        })
+        .expect("failed to create persistent context");
         hash_of_commit(&mut repo);
     }
 
@@ -509,8 +513,12 @@ mod tests {
 
     #[test]
     fn test_hash_of_small_dir_persistent() {
-        let mut repo =
-            Persistent::try_new(None, true, false).expect("failed to create persistent context");
+        let mut repo = Persistent::try_new(PersistentConfiguration {
+            db_path: None,
+            startup_check: true,
+            read_mode: false,
+        })
+        .expect("failed to create persistent context");
         hash_of_small_dir(&mut repo);
     }
 
@@ -618,15 +626,23 @@ mod tests {
 
     #[test]
     fn test_dir_entry_hashes_persistent() {
-        let mut repo =
-            Persistent::try_new(None, true, false).expect("failed to create persistent context");
+        let mut repo = Persistent::try_new(PersistentConfiguration {
+            db_path: None,
+            startup_check: true,
+            read_mode: false,
+        })
+        .expect("failed to create persistent context");
         test_type_hashes("nodes.json.gz", &mut repo, persistent::serialize_object);
     }
 
     #[test]
     fn test_inode_hashes_persistent() {
-        let mut repo =
-            Persistent::try_new(None, true, false).expect("failed to create persistent context");
+        let mut repo = Persistent::try_new(PersistentConfiguration {
+            db_path: None,
+            startup_check: true,
+            read_mode: false,
+        })
+        .expect("failed to create persistent context");
         test_type_hashes("inodes.json.gz", &mut repo, persistent::serialize_object);
     }
 

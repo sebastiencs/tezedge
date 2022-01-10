@@ -20,14 +20,15 @@ use super::index_map::IndexMap;
 /// such as `WorkingTree::hash` and the ones being commited.
 pub struct HashesContainer {
     /// `ObjectHash` created during the working tree manipulation
-    pub working_tree: IndexMap<HashId, ObjectHash>,
+    working_tree: IndexMap<HashId, ObjectHash>,
     /// `ObjectHash` ready to be commited to disk
-    pub commiting: IndexMap<HashId, ObjectHash>,
+    commiting: IndexMap<HashId, ObjectHash>,
     /// `true` when we create `ObjectHash` to must be commited
     is_commiting: bool,
     /// First `HashId` in `Self::working_tree` and `Self::commiting`
     first_index: usize,
-
+    /// Keep an index on duplicate hashes
+    /// old HashId to new HashId (before and during commit)
     pub dedup_hashes: Option<HashMap<HashId, HashId>>,
 }
 

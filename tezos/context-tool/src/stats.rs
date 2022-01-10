@@ -5,37 +5,24 @@ use tezos_context::{working_tree::working_tree::WorkingTreeStatistics, ObjectHas
 pub struct DebugWorkingTreeStatistics(pub WorkingTreeStatistics);
 
 enum Numbers {
-    N2 {
+    TotalInlined {
         total: usize,
         inlined: usize,
         not_inlined: usize,
     },
-    N3 {
+    TotalUnique {
         total: usize,
         unique: usize,
     },
-    N4 {
+    Unique {
         unique: usize,
     },
 }
 
-// struct Numbers {
-//     name: Option<String>,
-//     total: Option<usize>,
-//     unique: Option<usize>,
-//     inlined: Option<usize>,
-//     not_inlined: Option<usize>,
-// }
-
-// { dir_length:     2302, total:        1, unique:        1 },
-// { blob_length: 14332, total:        1, unique:        1 },
-// { total: 40906723, inlined: 20570881, not inlined: 20335842 },
-// { total: 20335842, unique:   9960098 },
-
 impl std::fmt::Debug for Numbers {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Numbers::N2 {
+            Numbers::TotalInlined {
                 total,
                 inlined,
                 not_inlined,
@@ -43,7 +30,7 @@ impl std::fmt::Debug for Numbers {
                 "{{ total: {:>8}, inlined: {:>8}, not inlined: {:>8} }}",
                 total, inlined, not_inlined,
             )),
-            Numbers::N3 { total, unique } => {
+            Numbers::TotalUnique { total, unique } => {
                 let total_bytes = total * std::mem::size_of::<ObjectHash>();
                 let total_str = Byte::from_bytes(total_bytes as u64)
                     .get_appropriate_unit(false)
@@ -65,7 +52,7 @@ impl std::fmt::Debug for Numbers {
                     total, total_str, unique, unique_str, duplicated, duplicated_str,
                 ))
             }
-            Numbers::N4 { unique } => f.write_fmt(format_args!("{{ unique: {:>8} }}", unique,)),
+            Numbers::Unique { unique } => f.write_fmt(format_args!("{{ unique: {:>8} }}", unique,)),
         }
     }
 }
@@ -113,7 +100,7 @@ impl std::fmt::Debug for DebugWorkingTreeStatistics {
             )
             .field(
                 "number_of_objects (directories + blobs)",
-                &Numbers::N2 {
+                &Numbers::TotalInlined {
                     total: self.0.nobjects,
                     inlined: self.0.nobjects_inlined,
                     not_inlined: self.0.nobjects - self.0.nobjects_inlined,
@@ -121,14 +108,14 @@ impl std::fmt::Debug for DebugWorkingTreeStatistics {
             )
             .field(
                 "number_of_hashes ",
-                &Numbers::N3 {
+                &Numbers::TotalUnique {
                     total: self.0.nhashes,
                     unique: self.0.unique_hash.len(),
                 },
             )
             .field(
                 "number_of_shapes ",
-                &Numbers::N4 {
+                &Numbers::Unique {
                     unique: self.0.nshapes,
                 },
             )

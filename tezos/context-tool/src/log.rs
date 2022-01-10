@@ -21,7 +21,6 @@ pub fn print(is_stdout: bool, prefix: &str, s: Option<String>) {
 
     buffer.write_all("\n".as_bytes()).unwrap();
 
-    // writeln!(&mut buffer, prefix).unwrap();
     bufwtr.print(&buffer).unwrap();
 }
 

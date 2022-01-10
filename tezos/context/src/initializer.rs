@@ -12,7 +12,7 @@ use tezos_context_api::TezosContextTezEdgeStorageConfiguration;
 use thiserror::Error;
 
 use crate::kv_store::in_memory::InMemory;
-use crate::kv_store::persistent::Persistent;
+use crate::kv_store::persistent::{Persistent, PersistentConfiguration};
 use crate::kv_store::readonly_ipc::ReadonlyIpcBackend;
 use crate::persistent::file::OpenFileError;
 use crate::persistent::lock::LockDatabaseError;
@@ -108,11 +108,11 @@ pub fn initialize_tezedge_index(
         },
         ContextKvStoreConfiguration::InMem => Arc::new(RwLock::new(InMemory::try_new()?)),
         ContextKvStoreConfiguration::OnDisk(ref options) => {
-            Arc::new(RwLock::new(Persistent::try_new(
-                Some(options.base_path.as_str()),
-                options.startup_check,
-                false,
-            )?))
+            Arc::new(RwLock::new(Persistent::try_new(PersistentConfiguration {
+                db_path: Some(options.base_path.clone()),
+                startup_check: options.startup_check,
+                read_mode: false,
+            })?))
         }
     };
 

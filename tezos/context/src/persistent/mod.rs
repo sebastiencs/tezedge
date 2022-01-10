@@ -137,7 +137,9 @@ pub trait KeyValueStoreBackend {
     fn make_hash_id_ready_for_commit(&mut self, hash_id: HashId) -> Result<HashId, DBError>;
     /// Reload the persistent database and verify its integrity
     fn reload_database(&mut self) -> Result<(), DBError>;
+    /// Return the file's statistics
     ///
+    /// `Self::try_new` needs to be called with `read_mode=true`
     fn get_read_statistics(&self) -> Result<Option<ReadStatistics>, DBError>;
     /// Simulate a `commit`, by writing data to disk/memory, without computing hash
     #[cfg(test)]
