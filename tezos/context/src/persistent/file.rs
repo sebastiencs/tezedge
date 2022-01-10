@@ -241,7 +241,7 @@ impl<const T: TaggedFile> File<T> {
         let version_bytes = CURRENT_VERSION.to_le_bytes();
         bytes.extend_from_slice(&version_bytes[..]);
 
-        let file_type: u64 = T.into();
+        let file_type: u64 = T;
         let file_type_bytes = file_type.to_le_bytes();
         bytes.extend_from_slice(&file_type_bytes[..]);
 
@@ -253,7 +253,7 @@ impl<const T: TaggedFile> File<T> {
     }
 
     fn check_header(&self) -> Result<(), OpenFileError> {
-        let current_file_type: u64 = T.into();
+        let current_file_type: u64 = T;
 
         let mut bytes: [u8; 16] = Default::default();
         self.read_exact_at(&mut bytes, 0.into())?;
@@ -299,7 +299,7 @@ impl<const T: TaggedFile> File<T> {
             offset += buffer.len() as u64;
             self.crc32.update(buffer);
 
-            assert!(buffer.len() > 0);
+            assert!(!buffer.is_empty());
         }
 
         self.checksum_computed_until = end;

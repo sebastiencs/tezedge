@@ -731,7 +731,7 @@ impl Storage {
             };
 
             let hash = repository.get_hash(hash_id.into()).unwrap().into_owned();
-            let new_hash_id = unique.entry(hash).or_insert(hash_id).clone();
+            let new_hash_id = *unique.entry(hash).or_insert(hash_id);
 
             dir_entry.set_hash_id(new_hash_id);
         }
@@ -749,7 +749,7 @@ impl Storage {
                 };
 
                 let hash = repository.get_hash(hash_id.into()).unwrap().into_owned();
-                let new_hash_id = unique.entry(hash).or_insert(hash_id).clone();
+                let new_hash_id = *unique.entry(hash).or_insert(hash_id);
 
                 ptr.set_hash_id(Some(new_hash_id));
             }
@@ -1778,8 +1778,8 @@ mod tests {
         let blob2_id = storage.add_blob_by_ref(&[2]).unwrap();
         let object2 = Object::Blob(blob2_id);
 
-        let dir_entry1 = DirEntry::new(Blob, object.clone());
-        let dir_entry2 = DirEntry::new(Blob, object2.clone());
+        let dir_entry1 = DirEntry::new(Blob, object);
+        let dir_entry2 = DirEntry::new(Blob, object2);
 
         let dir_id = DirectoryId::empty();
         let dir_id = storage
@@ -1796,8 +1796,8 @@ mod tests {
             storage.get_owned_dir(dir_id, &mut strings, &repo).unwrap(),
             &[
                 ("0".to_string(), dir_entry1.clone()),
-                ("a".to_string(), dir_entry1.clone()),
-                ("b".to_string(), dir_entry2.clone()),
+                ("a".to_string(), dir_entry1),
+                ("b".to_string(), dir_entry2),
             ]
         );
     }

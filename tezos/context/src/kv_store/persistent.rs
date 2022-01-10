@@ -238,7 +238,7 @@ impl Persistent {
             read_mode,
         }: PersistentConfiguration,
     ) -> Result<Persistent, IndexInitializationError> {
-        let base_path = get_persistent_base_path(db_path.as_ref().map(|s| s.as_str()));
+        let base_path = get_persistent_base_path(db_path.as_deref());
 
         let lock_file = if !read_mode {
             Some(Lock::try_lock(&base_path)?)
@@ -859,7 +859,7 @@ fn deserialize_commit_index(
         offset += commit_hash.len() as u64;
 
         let object_reference = ObjectReference::new(HashId::new(hash_id), Some(hash_offset.into()));
-        last_commit = Some(object_reference.clone());
+        last_commit = Some(object_reference);
 
         let mut hasher = DefaultHasher::new();
         hasher.write(&commit_hash);
@@ -1161,7 +1161,7 @@ mod tests {
             File::<{ TAG_COMMIT_INDEX }>::try_new("test_commit_index", false).unwrap();
 
         let bytes =
-            serialize_context_hash(HashId::new(101).unwrap(), 102.into(), &vec![3; 32]).unwrap();
+            serialize_context_hash(HashId::new(101).unwrap(), 102.into(), &[3; 32]).unwrap();
         commit_index_file.append(bytes).unwrap();
 
         let bytes = serialize_context_hash(

@@ -165,7 +165,7 @@ impl DirEntry {
             debug_assert_ne!(offset.as_u64(), 0);
         };
 
-        let offset = offset.unwrap_or(0.into());
+        let offset = offset.unwrap_or_else(|| 0.into());
         let inner = self.inner.get().with_file_offset(offset.as_u64());
 
         self.inner.set(inner);
