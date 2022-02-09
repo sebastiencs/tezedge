@@ -17,7 +17,7 @@ use tezos_spsc::Producer;
 
 use super::sorted_map::SortedMap;
 
-pub(crate) const PRESERVE_CYCLE_COUNT: usize = 5;
+pub(crate) const PRESERVE_CYCLE_COUNT: usize = 1;
 
 /// Used for statistics
 ///
