@@ -484,6 +484,8 @@ impl InMemory {
             .take()
             .ok_or(ReloadError::StringInternerNotFound)?;
 
+        println!("AFTER_RELOAD MEMORY_USAGE={:#?}", self.memory_usage());
+
         Ok(())
     }
 

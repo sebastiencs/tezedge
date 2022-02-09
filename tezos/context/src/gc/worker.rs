@@ -241,17 +241,32 @@ impl GCThread {
 
         GC_PENDING_HASHIDS.store(self.pending.len(), Ordering::Release);
 
+        let param = reused.len();
         let mut none = 0;
+        let mut moved = 0;
+        let mut last_cycle = 0;
         let mut total = 0;
 
         while let Some(hash_id) = reused.pop() {
             total += 1;
 
             let value = match self.cycles.move_to_last_cycle(hash_id) {
-                Some(v) => v,
+                Some(v) => {
+                    moved += 1;
+                    v
+                }
                 None => {
                     let last = self.cycles.list.back().unwrap();
-                    last.get(&hash_id).cloned().unwrap()
+                    match last.get(&hash_id).cloned() {
+                        Some(v) => {
+                            last_cycle += 1;
+                            v
+                        }
+                        None => {
+                            none += 1;
+                            continue;
+                        }
+                    }
                 }
             };
 
@@ -262,10 +277,12 @@ impl GCThread {
 
         if self.debug {
             log!(
-                "MARK_REUSED NONE_VALUES={:?} TOTAL={:?} MOVED={:?} {:?}",
-                none,
+                "MARK_REUSED PARAM={:?} TOTAL={:?} MOVED={:?} LAST_CYCLE={:?} NONE_VALUES={:?} {:?}",
+                param,
                 total,
-                total - none,
+                moved,
+                last_cycle,
+                none,
                 now.elapsed(),
             );
         }
