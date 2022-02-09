@@ -152,7 +152,7 @@ impl GCThread {
         let mut total = 0;
 
         for (index, c) in self.cycles.list.iter().enumerate() {
-            log!("CYCLE[{:?}]_LENGTH={:?}", index, c);
+            log!("CYCLE[{:?}]_LENGTH={:?}", index, c.len());
             total += c.len();
         }
         log!(
