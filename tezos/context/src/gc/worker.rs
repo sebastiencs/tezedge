@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -44,7 +44,7 @@ pub(crate) enum Command {
 }
 
 pub(crate) struct Cycles {
-    list: VecDeque<SortedMap<HashId, Arc<[u8]>>>,
+    list: VecDeque<HashMap<HashId, Arc<[u8]>>>,
 }
 
 impl Default for Cycles {
@@ -80,7 +80,7 @@ impl Cycles {
         Some(value)
     }
 
-    fn roll(&mut self, new_cycle: SortedMap<HashId, Arc<[u8]>>) -> Vec<HashId> {
+    fn roll(&mut self, new_cycle: HashMap<HashId, Arc<[u8]>>) -> Vec<HashId> {
         let unused = self.list.pop_front().unwrap_or_default();
         self.list.push_back(new_cycle);
 
@@ -88,7 +88,9 @@ impl Cycles {
             store.shrink_to_fit();
         }
 
-        unused.keys_to_vec()
+        unused.into_iter().map(|v| v.0).collect()
+
+        // unused.keys_to_vec()
     }
 }
 
@@ -171,7 +173,7 @@ impl GCThread {
         // We send them back to the main thread, they can be reused
         let mut hashid_without_value = Vec::with_capacity(1024);
 
-        let new_cycle = new_cycle.into_sorted_map();
+        let new_cycle = new_cycle.into_hash_map();
 
         for hash_id in new_ids.iter() {
             if !new_cycle.contains_key(hash_id) {
