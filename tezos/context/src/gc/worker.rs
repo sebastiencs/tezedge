@@ -17,7 +17,7 @@ use tezos_spsc::Producer;
 
 use super::sorted_map::SortedMap;
 
-pub(crate) const PRESERVE_CYCLE_COUNT: usize = 7;
+pub(crate) const PRESERVE_CYCLE_COUNT: usize = 5;
 
 /// Used for statistics
 ///
@@ -237,6 +237,8 @@ impl GCThread {
     }
 
     fn mark_reused(&mut self, mut reused: ChunkedVec<HashId>) {
+        let now = std::time::Instant::now();
+
         GC_PENDING_HASHIDS.store(self.pending.len(), Ordering::Release);
 
         let mut none = 0;
@@ -248,8 +250,8 @@ impl GCThread {
             let value = match self.cycles.move_to_last_cycle(hash_id) {
                 Some(v) => v,
                 None => {
-                    none += 1;
-                    continue;
+                    let last = self.cycles.list.back().unwrap();
+                    last.get(&hash_id).cloned().unwrap()
                 }
             };
 
@@ -260,10 +262,11 @@ impl GCThread {
 
         if self.debug {
             log!(
-                "MARK_REUSED NONE_VALUES={:?} TOTAL={:?} MOVED={:?}",
+                "MARK_REUSED NONE_VALUES={:?} TOTAL={:?} MOVED={:?} {:?}",
                 none,
                 total,
-                total - none
+                total - none,
+                now.elapsed(),
             );
         }
 
