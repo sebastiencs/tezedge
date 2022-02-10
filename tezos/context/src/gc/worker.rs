@@ -160,23 +160,32 @@ impl GCThread {
             Err(_) => "ERR".to_owned(),
         };
 
-        log!(
-            "CYCLES_LENGTH={:?} NMSG={:?} MSG={:?}",
-            self.cycles.list.len(),
-            self.recv.len(),
-            msg
-        );
+        // log!(
+        //     "CYCLES_LENGTH={:?} NMSG={:?} MSG={:?}",
+        //     self.cycles.list.len(),
+        //     self.recv.len(),
+        //     msg
+        // );
 
-        let mut total = 0;
+        // let mut total = 0;
 
         // for (index, c) in self.cycles.list.iter().enumerate() {
         //     log!("CYCLE[{:?}]_LENGTH={:?}", index, c.len());
         //     total += c.len();
         // }
+        // log!(
+        //     "PENDING={:?} TOTAL_IN_CYCLES={:?}",
+        //     self.pending.len(),
+        //     total
+        // );
+
         log!(
-            "PENDING={:?} TOTAL_IN_CYCLES={:?}",
+            "GC_DEBUG NMSG={:?} MSG={:?} PENDING={:?} GLOBAL_LEN={:?} GLOBAL_CAP={:?}",
+            self.recv.len(),
+            msg,
             self.pending.len(),
-            total
+            self.global.len(),
+            self.global.capacity(),
         );
     }
 
@@ -261,7 +270,7 @@ impl GCThread {
         global_counter: &mut IndexMap<HashId, Option<u8>>,
         hash_id: HashId,
         counter: u8,
-        traversed: &mut usize
+        traversed: &mut usize,
     ) {
         *traversed += 1;
 
@@ -292,7 +301,7 @@ impl GCThread {
     }
 
     fn take_unused(&mut self) -> Vec<HashId> {
-        let unused_at = self.counter.wrapping_sub(10);
+        let unused_at = self.counter.wrapping_sub(3);
 
         let mut unused = Vec::with_capacity(2048);
 
@@ -331,7 +340,9 @@ impl GCThread {
         }
 
         for hash_id in new_ids.iter() {
-            self.global_counter.insert_at(*hash_id, Some(self.counter)).unwrap();
+            self.global_counter
+                .insert_at(*hash_id, Some(self.counter))
+                .unwrap();
         }
 
         // // Gather `HashId` created before a commit.
