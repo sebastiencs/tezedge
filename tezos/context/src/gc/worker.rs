@@ -256,17 +256,22 @@ impl GCThread {
         GC_PENDING_HASHIDS.store(self.pending.len(), Ordering::Release);
     }
 
-    fn traverse_mark(&mut self, hash_id: HashId, counter: u8, traversed: &mut usize) {
+    fn traverse_mark_impl(
+        &self,
+        global_counter: &mut IndexMap<HashId, Option<u8>>,
+        hash_id: HashId,
+        counter: u8,
+        traversed: &mut usize
+    ) {
         *traversed += 1;
 
         let value = {
             let value = self.global.get(hash_id).unwrap().unwrap().as_ref().unwrap();
-            Arc::clone(value)
+            value
         };
 
         {
-            let value_counter = self
-                .global_counter
+            let value_counter = global_counter
                 .get_mut(hash_id)
                 .unwrap()
                 .unwrap()
@@ -276,8 +281,14 @@ impl GCThread {
         }
 
         for hash_id in iter_hash_ids(&value) {
-            self.traverse_mark(hash_id, counter, traversed);
+            self.traverse_mark_impl(global_counter, hash_id, counter, traversed);
         }
+    }
+
+    fn traverse_mark(&mut self, hash_id: HashId, counter: u8, traversed: &mut usize) {
+        let mut global_counter = std::mem::replace(&mut self.global_counter, IndexMap::empty());
+        self.traverse_mark_impl(&mut global_counter, hash_id, counter, traversed);
+        self.global_counter = global_counter;
     }
 
     fn take_unused(&mut self) -> Vec<HashId> {
