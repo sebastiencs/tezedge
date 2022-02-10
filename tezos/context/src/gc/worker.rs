@@ -324,30 +324,34 @@ impl GCThread {
         while let Some(chunk) = values_in_blocks.pop_first_chunk() {
             for (hash_id, value) in chunk.into_iter() {
                 self.global.insert_at(hash_id, Some(value)).unwrap();
-                self.global_counter
-                    .insert_at(hash_id, Some(self.counter))
-                    .unwrap();
+                // self.global_counter
+                //     .insert_at(hash_id, Some(self.counter))
+                //     .unwrap();
             }
         }
-
-        // Gather `HashId` created before a commit.
-        // We send them back to the main thread, they can be reused
-        let mut hashid_without_value = Vec::with_capacity(1024);
 
         for hash_id in new_ids.iter() {
-            if self
-                .global
-                .get(*hash_id)
-                .map(|v| v.is_none())
-                .unwrap_or(true)
-            {
-                hashid_without_value.push(*hash_id);
-            }
+            self.global_counter.insert_at(*hash_id, Some(self.counter)).unwrap();
         }
+
+        // // Gather `HashId` created before a commit.
+        // // We send them back to the main thread, they can be reused
+        // let mut hashid_without_value = Vec::with_capacity(1024);
+
+        // for hash_id in new_ids.iter() {
+        //     if self
+        //         .global
+        //         .get(*hash_id)
+        //         .map(|v| v.is_none())
+        //         .unwrap_or(true)
+        //     {
+        //         hashid_without_value.push(*hash_id);
+        //     }
+        // }
 
         if !self.recv.is_empty() {
             println!("DONT MARK");
-            self.send_unused(hashid_without_value);
+            // self.send_unused(hashid_without_value);
             return;
         }
 
@@ -356,10 +360,10 @@ impl GCThread {
 
         let unused = self.take_unused();
 
-        let mut sent = hashid_without_value.len();
-        sent += unused.len();
+        // let mut sent = hashid_without_value.len();
+        let sent = unused.len();
 
-        self.send_unused(hashid_without_value);
+        // self.send_unused(hashid_without_value);
         self.send_unused(unused);
 
         log!(
