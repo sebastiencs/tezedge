@@ -192,8 +192,9 @@ impl GarbageCollector for InMemory {
         &mut self,
         referenced_older_objects: ChunkedVec<HashId>,
     ) -> Result<(), GarbageCollectionError> {
-        self.block_applied(referenced_older_objects);
-        Ok(())
+        panic!()
+        // self.block_applied(referenced_older_objects);
+        // Ok(())
     }
 }
 
@@ -381,6 +382,9 @@ impl InMemory {
                         free_ids: prod,
                         pending: Vec::new(),
                         debug: false,
+                        global: IndexMap::with_chunk_capacity(10_000_000),
+                        global_counter: IndexMap::with_chunk_capacity(10_000_000),
+                        counter: 0,
                     }
                     .run()
                 })?;
@@ -520,9 +524,10 @@ impl InMemory {
 
         self.write_batch(batch)?;
         self.put_context_hash(commit_ref)?;
-        if mark_as_applied {
-            self.block_applied(reused);
-        }
+        // if mark_as_applied {
+        let commit_hash_id = commit_ref.hash_id();
+        self.block_applied(reused, commit_hash_id);
+        // }
 
         let commit_hash = get_commit_hash(commit_ref, self).map_err(Box::new)?;
         Ok((commit_hash, serialize_stats))
@@ -570,18 +575,18 @@ impl InMemory {
 
     pub fn new_cycle_started(&mut self) {
         if let Some(sender) = &self.sender {
-            let values_in_cycle = std::mem::replace(
-                &mut self.current_cycle,
-                ChunkedVec::with_chunk_capacity(512 * 1024),
-            );
-            let new_ids = self.hashes.take_new_ids();
+            // let values_in_cycle = std::mem::replace(
+            //     &mut self.current_cycle,
+            //     ChunkedVec::with_chunk_capacity(512 * 1024),
+            // );
+            // let new_ids = self.hashes.take_new_ids();
 
-            if let Err(e) = sender.try_send(Command::StartNewCycle {
-                values_in_cycle,
-                new_ids,
-            }) {
-                eprintln!("Fail to send Command::StartNewCycle to GC worker: {:?}", e);
-            }
+            // if let Err(e) = sender.try_send(Command::StartNewCycle {
+            //     values_in_cycle,
+            //     new_ids,
+            // }) {
+            //     eprintln!("Fail to send Command::StartNewCycle to GC worker: {:?}", e);
+            // }
 
             if let Some(unused) = self.context_hashes_cycles.pop_front() {
                 for hash in unused {
@@ -592,11 +597,25 @@ impl InMemory {
         }
     }
 
-    pub fn block_applied(&mut self, reused: ChunkedVec<HashId>) {
-        if let Some(sender) = &self.sender {
-            if let Err(e) = sender.send(Command::MarkReused { reused }) {
-                eprintln!("Fail to send Command::MarkReused to GC worker: {:?}", e);
-            }
+    pub fn block_applied(&mut self, reused: ChunkedVec<HashId>, commit_hash_id: HashId) {
+        let sender = match self.sender.as_ref() {
+            Some(sender) => sender,
+            None => return,
+        };
+
+        let values_in_block = std::mem::replace(
+            &mut self.current_cycle,
+            ChunkedVec::with_chunk_capacity(512 * 1024),
+        );
+        let new_ids = self.hashes.take_new_ids();
+
+        if let Err(e) = sender.send(Command::MarkReused {
+            reused,
+            values_in_block,
+            new_ids,
+            commit_hash_id,
+        }) {
+            eprintln!("Fail to send Command::MarkReused to GC worker: {:?}", e);
         }
     }
 

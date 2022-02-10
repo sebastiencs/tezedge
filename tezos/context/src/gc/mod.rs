@@ -15,6 +15,22 @@ use crate::chunks::ChunkedVec;
 use crate::persistent::DBError;
 use crate::{hash::HashingError, kv_store::HashId};
 
+/// Print logs on stdout with the prefix `[tezedge.gc]`
+macro_rules! log {
+    () => (println!("[tezedge.gc]"));
+    ($($arg:tt)*) => ({
+        println!("[tezedge.gc] {}", format_args!($($arg)*))
+    })
+}
+
+/// Print logs on stderr with the prefix `[tezedge.gc]`
+macro_rules! elog {
+    () => (eprintln!("[tezedge.gc]"));
+    ($($arg:tt)*) => ({
+        eprintln!("[tezedge.gc] {}", format_args!($($arg)*));
+    })
+}
+
 pub(crate) mod sorted_map;
 pub(crate) mod worker;
 

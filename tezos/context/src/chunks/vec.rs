@@ -51,7 +51,7 @@ impl<T> IndexMut<usize> for ChunkedVec<T> {
 
 pub struct ChunkedVecIter<'a, T> {
     chunks: &'a ChunkedVec<T>,
-    index: usize,
+    pub index: usize,
 }
 
 impl<'a, T> Iterator for ChunkedVecIter<'a, T> {

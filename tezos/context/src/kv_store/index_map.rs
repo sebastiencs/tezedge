@@ -6,7 +6,7 @@ use std::{
     marker::PhantomData,
 };
 
-use crate::chunks::ChunkedVec;
+use crate::chunks::{ChunkedVec, ChunkedVecIter};
 
 /// A container mapping a typed ID to a value.
 ///
@@ -56,6 +56,13 @@ impl<K, V> IndexMap<K, V> {
 
     pub fn iter_values(&self) -> impl Iterator<Item = &V> {
         self.entries.iter()
+    }
+
+    pub fn iter_with_keys(&self) -> IndexMapIter<'_, K, V> {
+        IndexMapIter {
+            chunks: self.entries.iter(),
+            _phantom: PhantomData,
+        }
     }
 
     pub fn clear(&mut self) {
@@ -109,5 +116,24 @@ where
         }
 
         Ok(std::mem::replace(&mut self.entries[index], value))
+    }
+}
+
+pub struct IndexMapIter<'a, K, V> {
+    chunks: ChunkedVecIter<'a, V>,
+    _phantom: PhantomData<K>,
+}
+
+impl<'a, K, V> Iterator for IndexMapIter<'a, K, V>
+where
+    K: TryFrom<usize>,
+{
+    type Item = (K, &'a V);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let index = self.chunks.index;
+        let index: K = index.try_into().ok()?;
+
+        self.chunks.next().map(|v| (index, v))
     }
 }
