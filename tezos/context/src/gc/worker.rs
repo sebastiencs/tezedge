@@ -280,7 +280,7 @@ impl GCThread {
             *value_counter = counter;
         }
 
-        for hash_id in iter_hash_ids(&value) {
+        for hash_id in iter_hash_ids(value) {
             self.traverse_mark_impl(global_counter, hash_id, counter, traversed);
         }
     }
@@ -292,20 +292,17 @@ impl GCThread {
     }
 
     fn take_unused(&mut self) -> Vec<HashId> {
-        let current_counter = self.counter;
+        let unused_at = self.counter.wrapping_sub(10);
 
         let mut unused = Vec::with_capacity(2048);
 
-        for (hash_id, value) in self.global_counter.iter_with_keys() {
-            let value = match value {
-                Some(value) => value,
-                None => continue,
-            };
-
-            if *value == current_counter.wrapping_sub(10) {
-                self.global.insert_at(hash_id, None).unwrap();
-                unused.push(hash_id);
+        for (hash_id, hash_id_counter) in self.global_counter.iter_with_keys() {
+            if !matches!(hash_id_counter, Some(counter) if *counter == unused_at) {
+                continue;
             }
+
+            self.global.insert_at(hash_id, None).unwrap();
+            unused.push(hash_id);
         }
 
         for hash_id in &unused {
