@@ -345,6 +345,12 @@ impl GCThread {
             }
         }
 
+        if !self.recv.is_empty() {
+            println!("DONT MARK");
+            self.send_unused(hashid_without_value);
+            return;
+        }
+
         let mut traversed = 0;
         self.traverse_mark(commit_hash_id, self.counter, &mut traversed);
 
