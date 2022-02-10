@@ -315,6 +315,7 @@ impl<T> ChunkedVec<T> {
         if self.list_of_chunks.is_empty() {
             None
         } else {
+            self.nelems -= self.list_of_chunks[0].len();
             Some(self.list_of_chunks.remove(0))
         }
     }
