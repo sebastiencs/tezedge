@@ -291,14 +291,14 @@ impl GCThread {
                 None => continue,
             };
 
-            if current_counter < 5 {
-                continue;
-            }
-
-            if *value < current_counter - 3 {
+            if *value == current_counter.wrapping_sub(10) {
                 self.global.insert_at(hash_id, None).unwrap();
                 unused.push(hash_id);
             }
+        }
+
+        for hash_id in &unused {
+            self.global_counter.insert_at(*hash_id, None).unwrap();
         }
 
         unused
