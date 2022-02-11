@@ -10,6 +10,7 @@ use std::{
 };
 
 use crossbeam_channel::{Receiver, RecvError};
+use static_assertions::assert_eq_size;
 
 use crate::{
     chunks::ChunkedVec,
@@ -39,6 +40,8 @@ pub(crate) struct GCThread {
     pub(crate) global_counter: IndexMap<HashId, Option<u8>>,
     pub(crate) counter: u8,
 }
+
+assert_eq_size!([u8; 16], Option<Arc<[u8]>>);
 
 pub(crate) enum Command {
     StartNewCycle {
