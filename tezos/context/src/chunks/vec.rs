@@ -25,7 +25,7 @@ use super::{Chunk, DEFAULT_LIST_LENGTH};
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChunkedVec<T> {
-    list_of_chunks: Vec<Chunk<T>>,
+    pub list_of_chunks: Vec<Chunk<T>>,
     chunk_capacity: usize,
     /// Number of elements in the chunks
     nelems: usize,
