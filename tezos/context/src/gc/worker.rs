@@ -171,7 +171,16 @@ impl GCThread {
                 values_in_cycle.len(),
                 new_ids.len()
             ),
-            Ok(Command::MarkReused { new_ids, .. }) => format!("REUSED {:?}", new_ids.len()),
+            Ok(Command::MarkReused {
+                new_ids,
+                commit_hash_id,
+            }) => {
+                format!(
+                    "REUSED NEWS={:?} COMMIT_HASH_ID={:?}",
+                    new_ids.len(),
+                    commit_hash_id
+                )
+            }
             Ok(Command::NewChunks { chunks }) => format!("NEW_CHUNKS {:?}", chunks.len()),
             Ok(Command::Close { .. }) => "CLOSE".to_owned(),
             Err(_) => "ERR".to_owned(),
@@ -198,10 +207,13 @@ impl GCThread {
 
         log!(
             // "GC_DEBUG NMSG={:?} MSG={:?} PENDING={:?} GLOBAL_LEN={:?} GLOBAL_CAP={:?}",
-            "GC_DEBUG NMSG={:?} MSG={:?} PENDING={:?}",
+            "GC_DEBUG NMSG={:?} MSG={:?} PENDING={:?} VALUES={:?} VALUES_LIST={:?} COUNTER_LIST={:?}",
             self.recv.len(),
             msg,
             self.pending.len(),
+            self.values_map.len(),
+            self.values_map.entries.list_of_chunks.len(),
+            self.global_counter.entries.list_of_chunks.len(),
             // self.global.len(),
             // self.global.capacity(),
         );
