@@ -183,7 +183,7 @@ pub fn serialize_object(
     storage: &Storage,
     strings: &StringInterner,
     stats: &mut SerializeStats,
-    batch: &mut ChunkedVec<(HashId, Arc<[u8]>)>,
+    batch: &mut ChunkedVec<(HashId, Box<[u8]>)>,
     referenced_older_objects: &mut ChunkedVec<HashId>,
     repository: &mut ContextKeyValueStore,
     _object_offset: Option<AbsoluteOffset>,
@@ -209,7 +209,7 @@ pub fn serialize_object(
 
                 serialize_directory(dir.as_ref(), output, storage, strings, repository, stats)?;
 
-                batch.push((object_hash_id, Arc::from(output.as_slice())));
+                batch.push((object_hash_id, Box::from(output.as_slice())));
             }
         }
         Object::Blob(blob_id) => {
@@ -227,7 +227,7 @@ pub fn serialize_object(
 
             stats.add_blob(blob.len());
 
-            batch.push((object_hash_id, Arc::from(output.as_slice())));
+            batch.push((object_hash_id, Box::from(output.as_slice())));
         }
         Object::Commit(commit) => {
             let header: [u8; 1] = ObjectHeader::new()
@@ -252,7 +252,7 @@ pub fn serialize_object(
             // It's until the end of the slice
             output.write_all(commit.message.as_bytes())?;
 
-            batch.push((object_hash_id, Arc::from(output.as_slice())));
+            batch.push((object_hash_id, Box::from(output.as_slice())));
         }
     }
 
@@ -269,7 +269,7 @@ fn serialize_inode(
     storage: &Storage,
     strings: &StringInterner,
     stats: &mut SerializeStats,
-    batch: &mut ChunkedVec<(HashId, Arc<[u8]>)>,
+    batch: &mut ChunkedVec<(HashId, Box<[u8]>)>,
     referenced_older_objects: &mut ChunkedVec<HashId>,
     repository: &mut ContextKeyValueStore,
 ) -> Result<(), SerializationError> {
@@ -314,7 +314,7 @@ fn serialize_inode(
                 serialize_hash_id(hash_id, output, repository, stats)?;
             }
 
-            batch.push((hash_id, Arc::from(output.as_slice())));
+            batch.push((hash_id, Box::from(output.as_slice())));
 
             // Recursively serialize all children
             for (_, thin_pointer_id) in pointers.iter() {
@@ -355,7 +355,7 @@ fn serialize_inode(
             let dir = storage.get_small_dir(dir_id)?;
             serialize_directory(dir.as_ref(), output, storage, strings, repository, stats)?;
 
-            batch.push((hash_id, Arc::from(output.as_slice())));
+            batch.push((hash_id, Box::from(output.as_slice())));
         }
     };
 
@@ -988,8 +988,8 @@ mod tests {
 
             let hash_id = HashId::new((index + 1) as u64).unwrap();
 
-            let mut vec = ChunkedVec::<(HashId, Arc<[u8]>)>::with_chunk_capacity(2);
-            vec.push((hash_id, Arc::new(ObjectHeader::new().into_bytes())));
+            let mut vec = ChunkedVec::<(HashId, Box<[u8]>)>::with_chunk_capacity(2);
+            vec.push((hash_id, Box::new(ObjectHeader::new().into_bytes())));
 
             repo.write_batch(vec).unwrap();
 
