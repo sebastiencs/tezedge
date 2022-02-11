@@ -13,7 +13,7 @@ use crate::chunks::{ChunkedVec, ChunkedVecIter};
 /// The underlying container is a `Vec` and the id is its index.
 #[derive(Debug)]
 pub struct IndexMap<K, V> {
-    entries: ChunkedVec<V>,
+    pub entries: ChunkedVec<V>,
     _phantom: PhantomData<K>,
 }
 

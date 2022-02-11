@@ -292,7 +292,14 @@ impl KeyValueStoreBackend for InMemory {
         self.with_value(object_ref.hash_id(), |value| {
             let object_bytes = match value {
                 Some(Some(value)) => value,
-                _ => todo!(),
+                _ => {
+                    println!(
+                        "OBJECT NOT FOUND HASH_ID={:?} VALUE={:?}",
+                        object_ref, value
+                    );
+                    println!("VALUES_LEN={:?}", self.hashes.values.len());
+                    todo!();
+                }
             };
             in_memory::deserialize_object(object_bytes, storage, strings, self).map_err(Into::into)
         })?
@@ -562,6 +569,9 @@ impl InMemory {
             .map_err(Box::new)?;
 
         self.write_batch(batch)?;
+
+        println!("AFTER_BATCH={:?}", self.hashes.values.len());
+
         self.put_context_hash(commit_ref)?;
         // if mark_as_applied {
         let commit_hash_id = commit_ref.hash_id();
