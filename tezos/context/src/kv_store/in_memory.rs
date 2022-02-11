@@ -535,6 +535,14 @@ impl InMemory {
         Ok(())
     }
 
+    fn maybe_send_new_chunks_to_gc(&mut self) {
+        if let Some(chunks) = self.hashes.values.clone_new_chunks() {
+            self.sender
+                .as_mut()
+                .map(|s| s.send(Command::NewChunks { chunks }).unwrap());
+        };
+    }
+
     fn commit_impl(
         &mut self,
         working_tree: &WorkingTree,
@@ -544,11 +552,7 @@ impl InMemory {
         date: u64,
         mark_as_applied: bool,
     ) -> Result<(ContextHash, Box<SerializeStats>), DBError> {
-        if let Some(chunks) = self.hashes.values.clone_new_chunks() {
-            self.sender
-                .as_mut()
-                .map(|s| s.send(Command::NewChunks { chunks }).unwrap());
-        };
+        self.maybe_send_new_chunks_to_gc();
 
         let PostCommitData {
             commit_ref,
@@ -569,6 +573,7 @@ impl InMemory {
             .map_err(Box::new)?;
 
         self.write_batch(batch)?;
+        self.maybe_send_new_chunks_to_gc();
 
         println!("AFTER_BATCH={:?}", self.hashes.values.len());
 
