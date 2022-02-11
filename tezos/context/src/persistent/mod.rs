@@ -145,7 +145,7 @@ pub trait KeyValueStoreBackend {
     #[cfg(test)]
     fn synchronize_data(
         &mut self,
-        batch: &[(HashId, Arc<[u8]>)],
+        batch: &[(HashId, Box<[u8]>)],
         output: &[u8],
     ) -> Result<Option<AbsoluteOffset>, DBError>;
 }
