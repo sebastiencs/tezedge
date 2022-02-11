@@ -1,12 +1,9 @@
 // Copyright (c) SimpleStaking, Viable Systems and Tezedge Contributors
 // SPDX-License-Identifier: MIT
 
-use std::{
-    // collections::{HashMap, VecDeque},
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
 };
 
 use crossbeam_channel::{Receiver, RecvError};
@@ -60,7 +57,7 @@ pub(crate) enum Command {
         commit_hash_id: HashId,
     },
     NewChunks {
-        chunks: Vec<SharedChunk<Option<Box<[u8]>>>>
+        chunks: Vec<SharedChunk<Option<Box<[u8]>>>>,
     },
     Close,
 }
@@ -292,12 +289,28 @@ impl GCThread {
         hash_id: HashId,
         counter: u8,
         traversed: &mut usize,
+        depth: usize,
+        max_depth: &mut usize,
     ) {
         *traversed += 1;
+        *max_depth = depth.max(*max_depth);
 
-        let value = {
-            self.values_map.get(hash_id).unwrap().unwrap().unwrap()
-        };
+        let mut hash_ids: [Option<HashId>; 256] = [None; 256];
+
+        self.values_map.with(hash_id, |object_bytes| {
+            let object_bytes = match object_bytes {
+                Some(Some(object_bytes)) => object_bytes,
+                _ => return,
+            };
+
+            for (index, hash_id) in iter_hash_ids(object_bytes).enumerate() {
+                hash_ids[index] = Some(hash_id);
+            }
+        });
+
+        // let value = {
+        //     self.values_map.get(hash_id).unwrap().unwrap().unwrap()
+        // };
 
         {
             let value_counter = global_counter
@@ -309,14 +322,42 @@ impl GCThread {
             *value_counter = counter;
         }
 
-        for hash_id in iter_hash_ids(&value) {
-            self.traverse_mark_impl(global_counter, hash_id, counter, traversed);
+        for hash_id in hash_ids {
+            let hash_id = match hash_id {
+                Some(hash_id) => hash_id,
+                None => break,
+            };
+            self.traverse_mark_impl(
+                global_counter,
+                hash_id,
+                counter,
+                traversed,
+                depth + 1,
+                max_depth,
+            );
         }
+
+        // for hash_id in iter_hash_ids(&value) {
+        //     self.traverse_mark_impl(global_counter, hash_id, counter, traversed);
+        // }
     }
 
-    fn traverse_mark(&mut self, hash_id: HashId, counter: u8, traversed: &mut usize) {
+    fn traverse_mark(
+        &mut self,
+        hash_id: HashId,
+        counter: u8,
+        traversed: &mut usize,
+        max_depth: &mut usize,
+    ) {
         let mut global_counter = std::mem::replace(&mut self.global_counter, IndexMap::empty());
-        self.traverse_mark_impl(&mut global_counter, hash_id, counter, traversed);
+        self.traverse_mark_impl(
+            &mut global_counter,
+            hash_id,
+            counter,
+            traversed,
+            1,
+            max_depth,
+        );
         self.global_counter = global_counter;
     }
 
@@ -388,7 +429,8 @@ impl GCThread {
         }
 
         let mut traversed = 0;
-        self.traverse_mark(commit_hash_id, self.counter, &mut traversed);
+        let mut max_depth = 0;
+        self.traverse_mark(commit_hash_id, self.counter, &mut traversed, &mut max_depth);
 
         let unused = self.take_unused();
 
@@ -399,9 +441,10 @@ impl GCThread {
         self.send_unused(unused);
 
         log!(
-            "MARK_REUSED SENT={:?} TRAVERSED={:?} TIME={:?}",
+            "MARK_REUSED SENT={:?} TRAVERSED={:?} MAX_DEPTH={:?} TIME={:?}",
             sent,
             traversed,
+            max_depth,
             now.elapsed(),
         );
 
