@@ -117,12 +117,19 @@ impl<T> SharedChunkedVec<T> {
     }
 
     pub fn clone_new_chunks(&mut self) -> Option<Vec<SharedChunk<T>>> {
-        let new_chunks = self
-            .list_of_chunks
-            .get(self.sync_at..)
-            .map(|chunk| chunk.to_vec())?;
+        let new_chunks = self.list_of_chunks.get(self.sync_at..)?;
 
-        self.sync_at += self.list_of_chunks.len();
+        if new_chunks.is_empty() {
+            return None;
+        }
+
+        let new_chunks: Vec<_> = new_chunks.iter().cloned().collect();
+        // let new_chunks: Vec<_> = new_chunks.iter().map(|chunk| chunk.clone()).collect();
+
+        // let old = self.sync_at;
+        self.sync_at = self.list_of_chunks.len();
+
+        // println!("OLD SYNC_AT={:?} NEW={:?}", old, self.sync_at);
         Some(new_chunks)
     }
 
@@ -307,7 +314,7 @@ impl<K, V> SharedIndexMap<K, V>
 where
     K: TryInto<usize>,
 {
-    pub fn contains_key(&mut self, key: K) -> Result<bool, K::Error> {
+    pub fn contains_key(&self, key: K) -> Result<bool, K::Error> {
         let index = key.try_into()?;
         Ok(index < self.entries.len())
     }
