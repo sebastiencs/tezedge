@@ -4262,6 +4262,7 @@ dependencies = [
  "libc",
  "modular-bitfield",
  "ocaml-interop",
+ "parking_lot 0.12.0",
  "rand 0.8.5",
  "serde 1.0.136",
  "serde_json",

@@ -21,7 +21,7 @@ use crypto::hash::ContextHash;
 use tezos_timing::{RepositoryMemoryUsage, SerializeStats};
 
 use crate::{
-    chunks::ChunkedVec,
+    chunks::{ChunkedVec, SharedIndexMap},
     gc::{
         worker::{Command, Cycles, GCThread, GC_PENDING_HASHIDS, PRESERVE_CYCLE_COUNT},
         GarbageCollectionError, GarbageCollector,
@@ -49,7 +49,7 @@ use super::{HashId, VacantObjectHash};
 #[derive(Debug)]
 pub struct HashValueStore {
     hashes: IndexMap<HashId, ObjectHash>,
-    values: IndexMap<HashId, Option<Arc<[u8]>>>,
+    values: SharedIndexMap<HashId, Option<Arc<[u8]>>>,
     free_ids: Option<Consumer<HashId>>,
     new_ids: ChunkedVec<HashId>,
     values_bytes: usize,
@@ -62,7 +62,7 @@ impl HashValueStore {
     {
         Self {
             hashes: IndexMap::with_chunk_capacity(10_000_000), // ~320MB
-            values: IndexMap::with_chunk_capacity(10_000_000), // ~80MB
+            values: SharedIndexMap::with_chunk_capacity(10_000_000), // ~80MB
             free_ids: consumer.into(),
             new_ids: ChunkedVec::with_chunk_capacity(512 * 1024), // ~8KB
             values_bytes: 0,
@@ -108,7 +108,7 @@ impl HashValueStore {
     pub(crate) fn clear(&mut self) {
         *self = Self {
             hashes: IndexMap::empty(),
-            values: IndexMap::empty(),
+            values: SharedIndexMap::empty(),
             free_ids: self.free_ids.take(),
             new_ids: ChunkedVec::empty(),
             values_bytes: 0,
@@ -154,15 +154,22 @@ impl HashValueStore {
         self.hashes.get(hash_id)
     }
 
-    pub(crate) fn get_value(&self, hash_id: HashId) -> Result<Option<&[u8]>, HashIdError> {
-        match self.values.get(hash_id)? {
-            Some(value) => Ok(value.as_ref().map(|v| v.as_ref())),
-            None => Ok(None),
-        }
+    pub(crate) fn with_value<F, R>(&self, hash_id: HashId, fun: F) -> Result<R, DBError>
+    where
+        F: FnOnce(Option<&Option<Arc<[u8]>>>) -> R,
+    {
+        Ok(self.values.with(hash_id, fun)?)
     }
 
+    // pub(crate) fn get_value(&self, hash_id: HashId) -> Result<Option<&[u8]>, HashIdError> {
+    //     match self.values.get(hash_id)? {
+    //         Some(value) => Ok(value.as_ref().map(|v| v.as_ref())),
+    //         None => Ok(None),
+    //     }
+    // }
+
     pub(crate) fn contains(&self, hash_id: HashId) -> Result<bool, HashIdError> {
-        Ok(self.values.get(hash_id)?.unwrap_or(&None).is_some())
+        Ok(self.values.with(hash_id, |v| v.is_some())?)
     }
 
     fn take_new_ids(&mut self) -> ChunkedVec<HashId> {
@@ -282,8 +289,16 @@ impl KeyValueStoreBackend for InMemory {
         storage: &mut Storage,
         strings: &mut StringInterner,
     ) -> Result<Object, DBError> {
-        let object_bytes = self.get_value(object_ref.hash_id())?.unwrap_or(&[]);
-        in_memory::deserialize_object(object_bytes, storage, strings, self).map_err(Into::into)
+        self.with_value(object_ref.hash_id(), |value| {
+            let object_bytes = match value {
+                Some(Some(value)) => value,
+                _ => todo!(),
+            };
+            in_memory::deserialize_object(object_bytes, storage, strings, self).map_err(Into::into)
+        })?
+
+        // let object_bytes = self.get_value(object_ref.hash_id())?.unwrap_or(&[]);
+        // in_memory::deserialize_object(object_bytes, storage, strings, self).map_err(Into::into)
     }
 
     fn get_inode(
@@ -292,8 +307,16 @@ impl KeyValueStoreBackend for InMemory {
         storage: &mut Storage,
         strings: &mut StringInterner,
     ) -> Result<DirectoryOrInodeId, DBError> {
-        let object_bytes = self.get_value(object_ref.hash_id())?.unwrap_or(&[]);
-        in_memory::deserialize_inode(object_bytes, storage, strings, self).map_err(Into::into)
+        self.with_value(object_ref.hash_id(), |value| {
+            let object_bytes = match value {
+                Some(Some(value)) => value,
+                _ => todo!(),
+            };
+            in_memory::deserialize_inode(object_bytes, storage, strings, self).map_err(Into::into)
+        })?
+
+        // let object_bytes = self.get_value(object_ref.hash_id())?.unwrap_or(&[]);
+        // in_memory::deserialize_inode(object_bytes, storage, strings, self).map_err(Into::into)
     }
 
     fn get_object_bytes<'a>(
@@ -301,10 +324,18 @@ impl KeyValueStoreBackend for InMemory {
         object_ref: ObjectReference,
         buffer: &'a mut Vec<u8>,
     ) -> Result<&'a [u8], DBError> {
-        let slice = self.get_value(object_ref.hash_id())?.unwrap_or(&[]);
-
         buffer.clear();
-        buffer.extend_from_slice(slice);
+
+        self.with_value(object_ref.hash_id(), |value| {
+            if let Some(Some(value)) = value {
+                buffer.extend_from_slice(value)
+            };
+        });
+
+        // let slice = self.get_value(object_ref.hash_id())?.unwrap_or(&[]);
+
+        // buffer.clear();
+        // buffer.extend_from_slice(slice);
 
         Ok(buffer)
     }
@@ -554,9 +585,16 @@ impl InMemory {
             })
     }
 
-    pub(crate) fn get_value(&self, hash_id: HashId) -> Result<Option<&[u8]>, DBError> {
-        self.hashes.get_value(hash_id).map_err(Into::into)
+    pub(crate) fn with_value<F, R>(&self, hash_id: HashId, fun: F) -> Result<R, DBError>
+    where
+        F: FnOnce(Option<&Option<Arc<[u8]>>>) -> R,
+    {
+        Ok(self.hashes.values.with(hash_id, fun)?)
     }
+
+    // pub(crate) fn get_value(&self, hash_id: HashId) -> Result<Option<&[u8]>, DBError> {
+    //     self.hashes.get_value(hash_id).map_err(Into::into)
+    // }
 
     fn contains(&self, hash_id: HashId) -> Result<bool, DBError> {
         self.hashes.contains(hash_id).map_err(Into::into)
