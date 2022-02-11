@@ -39,7 +39,7 @@ pub trait GarbageCollector {
 
     fn block_applied(
         &mut self,
-        referenced_older_objects: ChunkedVec<HashId>,
+        // referenced_older_objects: ChunkedVec<HashId>,
     ) -> Result<(), GarbageCollectionError>;
 }
 
@@ -52,7 +52,7 @@ impl<T: NotGarbageCollected> GarbageCollector for T {
 
     fn block_applied(
         &mut self,
-        _referenced_older_objects: ChunkedVec<HashId>,
+        // _referenced_older_objects: ChunkedVec<HashId>,
     ) -> Result<(), GarbageCollectionError> {
         Ok(())
     }

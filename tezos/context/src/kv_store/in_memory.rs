@@ -199,7 +199,7 @@ impl GarbageCollector for InMemory {
 
     fn block_applied(
         &mut self,
-        referenced_older_objects: ChunkedVec<HashId>,
+        // referenced_older_objects: ChunkedVec<HashId>,
     ) -> Result<(), GarbageCollectionError> {
         panic!()
         // self.block_applied(referenced_older_objects);
@@ -330,7 +330,8 @@ impl KeyValueStoreBackend for InMemory {
             if let Some(Some(value)) = value {
                 buffer.extend_from_slice(value)
             };
-        });
+        })
+        .unwrap();
 
         // let slice = self.get_value(object_ref.hash_id())?.unwrap_or(&[]);
 
@@ -545,7 +546,6 @@ impl InMemory {
         let PostCommitData {
             commit_ref,
             batch,
-            reused,
             serialize_stats,
             ..
         } = working_tree
@@ -557,7 +557,6 @@ impl InMemory {
                 self,
                 Some(in_memory::serialize_object),
                 None,
-                true,
                 false,
             )
             .map_err(Box::new)?;
@@ -566,7 +565,7 @@ impl InMemory {
         self.put_context_hash(commit_ref)?;
         // if mark_as_applied {
         let commit_hash_id = commit_ref.hash_id();
-        self.block_applied(reused, commit_hash_id);
+        self.block_applied(commit_hash_id);
         // }
 
         let commit_hash = get_commit_hash(commit_ref, self).map_err(Box::new)?;
@@ -644,7 +643,7 @@ impl InMemory {
         }
     }
 
-    pub fn block_applied(&mut self, reused: ChunkedVec<HashId>, commit_hash_id: HashId) {
+    pub fn block_applied(&mut self, commit_hash_id: HashId) {
         let sender = match self.sender.as_ref() {
             Some(sender) => sender,
             None => return,
@@ -657,7 +656,7 @@ impl InMemory {
         let new_ids = self.hashes.take_new_ids();
 
         if let Err(e) = sender.send(Command::MarkReused {
-            reused,
+            // reused,
             // values_in_block,
             new_ids,
             commit_hash_id,

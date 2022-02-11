@@ -89,7 +89,6 @@ use super::{
 pub struct PostCommitData {
     pub commit_ref: ObjectReference,
     pub batch: ChunkedVec<(HashId, Box<[u8]>)>,
-    pub reused: ChunkedVec<HashId>,
     pub serialize_stats: Box<SerializeStats>,
     pub output: Vec<u8>,
 }
@@ -156,7 +155,6 @@ impl PostCommitData {
         Self {
             commit_ref: ObjectReference::new(Some(commit_hash), None),
             batch: ChunkedVec::empty(),
-            reused: ChunkedVec::empty(),
             serialize_stats: Default::default(),
             output: Default::default(),
         }
@@ -472,13 +470,11 @@ pub enum CheckObjectHashError {
 
 struct SerializingData<'a> {
     batch: ChunkedVec<(HashId, Box<[u8]>)>,
-    referenced_older_objects: ChunkedVec<HashId>,
     repository: &'a mut ContextKeyValueStore,
     serialized: Vec<u8>,
     stats: Box<SerializeStats>,
     offset: Option<AbsoluteOffset>,
     serialize_function: SerializeObjectSignature,
-    keep_older_objects: bool,
     dedup_objects: Option<HashMap<HashId, AbsoluteOffset>>,
 }
 
@@ -487,18 +483,15 @@ impl<'a> SerializingData<'a> {
         repository: &'a mut ContextKeyValueStore,
         offset: Option<AbsoluteOffset>,
         serialize_function: SerializeObjectSignature,
-        keep_older_objects: bool,
         enable_dedup_object: bool,
     ) -> Self {
         Self {
             batch: ChunkedVec::with_chunk_capacity(8 * 1024),
-            referenced_older_objects: ChunkedVec::with_chunk_capacity(4096),
             repository,
             serialized: Vec::with_capacity(2048),
             stats: Default::default(),
             offset,
             serialize_function,
-            keep_older_objects,
             dedup_objects: if enable_dedup_object {
                 Some(Default::default())
             } else {
@@ -538,30 +531,10 @@ impl<'a> SerializingData<'a> {
             strings,
             &mut self.stats,
             &mut self.batch,
-            &mut self.referenced_older_objects,
             self.repository,
             self.offset,
         )
         .map_err(Into::into)
-    }
-
-    fn add_older_object(
-        &mut self,
-        dir_entry: &DirEntry,
-        storage: &Storage,
-        strings: &StringInterner,
-    ) -> Result<(), MerkleError> {
-        if !self.keep_older_objects {
-            return Ok(());
-        }
-
-        let hash_id = dir_entry.object_hash_id(self.repository, storage, strings)?;
-
-        if let Some(hash_id) = hash_id {
-            self.referenced_older_objects.push(hash_id);
-        };
-
-        Ok(())
     }
 }
 
@@ -907,7 +880,6 @@ impl WorkingTree {
         repository: &mut ContextKeyValueStore,
         serialize_function: Option<SerializeObjectSignature>,
         offset: Option<AbsoluteOffset>,
-        keep_older_objects: bool,
         enable_dedup_objects: bool,
     ) -> Result<PostCommitData, MerkleError> {
         let root_hash_id = self.get_root_directory_hash(repository)?;
@@ -928,13 +900,8 @@ impl WorkingTree {
             None => return Ok(PostCommitData::empty_with_commit(commit_hash)),
         };
 
-        let mut data = SerializingData::new(
-            repository,
-            offset,
-            serialize_function,
-            keep_older_objects,
-            enable_dedup_objects,
-        );
+        let mut data =
+            SerializingData::new(repository, offset, serialize_function, enable_dedup_objects);
 
         let storage = self.index.storage.borrow();
         let strings = self.index.get_string_interner()?;
@@ -951,7 +918,6 @@ impl WorkingTree {
         Ok(PostCommitData {
             commit_ref: ObjectReference::new(Some(commit_hash), commit_offset),
             batch: data.batch,
-            reused: data.referenced_older_objects,
             serialize_stats: data.stats,
             output: data.serialized,
         })
@@ -1122,7 +1088,6 @@ impl WorkingTree {
                         };
 
                     if dir_entry.is_commited() {
-                        data.add_older_object(dir_entry, storage, strings)?;
                         return Ok(());
                     }
                     // dir_entry.set_commited(true);

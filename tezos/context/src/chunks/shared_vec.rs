@@ -54,14 +54,14 @@ impl<T> SharedChunk<T> {
     }
 }
 
-impl<T> SharedChunk<T>
-where
-    T: Clone,
-{
-    fn get(&self, index: usize) -> Option<T> {
-        self.inner.read().get(index).cloned()
-    }
-}
+// impl<T> SharedChunk<T>
+// where
+//     T: Clone,
+// {
+//     fn get(&self, index: usize) -> Option<T> {
+//         self.inner.read().get(index).cloned()
+//     }
+// }
 
 #[derive(Debug)]
 pub struct SharedChunkedVec<T> {
@@ -259,7 +259,7 @@ impl<K, V> SharedIndexMap<K, V> {
         }
     }
 
-    pub fn append_chunks(&mut self, mut chunks: Vec<SharedChunk<V>>) {
+    pub fn append_chunks(&mut self, chunks: Vec<SharedChunk<V>>) {
         self.entries.append_chunks(chunks)
     }
 
