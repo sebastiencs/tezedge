@@ -55,6 +55,9 @@ pub struct HashValueStore {
     values_bytes: usize,
 }
 
+const VALUES_LENGTH: usize = 10_000_000;
+// const VALUES_LENGTH: usize = 10_000;
+
 impl HashValueStore {
     pub(crate) fn new<T>(consumer: T) -> Self
     where
@@ -62,7 +65,7 @@ impl HashValueStore {
     {
         Self {
             hashes: IndexMap::with_chunk_capacity(10_000_000), // ~320MB
-            values: SharedIndexMap::with_chunk_capacity(10_000_000), // ~80MB
+            values: SharedIndexMap::with_chunk_capacity(VALUES_LENGTH), // ~80MB
             free_ids: consumer.into(),
             new_ids: ChunkedVec::with_chunk_capacity(512 * 1024), // ~8KB
             values_bytes: 0,
@@ -293,9 +296,10 @@ impl KeyValueStoreBackend for InMemory {
             let object_bytes = match value {
                 Some(Some(value)) => value,
                 _ => {
+                    let got_key = self.hashes.values.contains_key(object_ref.hash_id());
                     println!(
-                        "OBJECT NOT FOUND HASH_ID={:?} VALUE={:?}",
-                        object_ref, value
+                        "OBJECT NOT FOUND HASH_ID={:?} VALUE={:?} GOT_KEY={:?}",
+                        object_ref, value, got_key,
                     );
                     println!("VALUES_LEN={:?}", self.hashes.values.len());
                     todo!();
@@ -424,9 +428,9 @@ impl InMemory {
                         pending: Vec::new(),
                         debug: false,
                         // global: IndexMap::with_chunk_capacity(10_000_000),
-                        global_counter: IndexMap::with_chunk_capacity(10_000_000),
+                        global_counter: IndexMap::with_chunk_capacity(VALUES_LENGTH),
                         counter: 0,
-                        values_map: SharedIndexMap::with_chunk_capacity_empty(10_000_000),
+                        values_map: SharedIndexMap::with_chunk_capacity_empty(VALUES_LENGTH),
                     }
                     .run()
                 })?;
@@ -537,6 +541,7 @@ impl InMemory {
 
     fn maybe_send_new_chunks_to_gc(&mut self) {
         if let Some(chunks) = self.hashes.values.clone_new_chunks() {
+            // println!("MAIN THREAD LIST={:?}", self.hashes.values.entries.list_of_chunks.len());
             self.sender
                 .as_mut()
                 .map(|s| s.send(Command::NewChunks { chunks }).unwrap());
