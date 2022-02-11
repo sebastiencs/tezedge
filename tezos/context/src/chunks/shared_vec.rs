@@ -220,16 +220,16 @@ impl<T> SharedChunkedVec<T> {
     // }
 }
 
-impl<T> SharedChunkedVec<T>
-where
-    T: Clone,
-{
-    pub fn get(&self, index: usize) -> Option<T> {
-        let (list_index, chunk_index) = self.get_indexes_at(index);
+// impl<T> SharedChunkedVec<T>
+// where
+//     T: Clone,
+// {
+//     pub fn get(&self, index: usize) -> Option<T> {
+//         let (list_index, chunk_index) = self.get_indexes_at(index);
 
-        self.list_of_chunks.get(list_index)?.get(chunk_index)
-    }
-}
+//         self.list_of_chunks.get(list_index)?.get(chunk_index)
+//     }
+// }
 
 #[derive(Debug)]
 pub struct SharedIndexMap<K, V> {
@@ -347,15 +347,15 @@ where
     // }
 }
 
-impl<K, V> SharedIndexMap<K, V>
-where
-    K: TryInto<usize>,
-    V: Clone,
-{
-    pub fn get(&self, key: K) -> Result<Option<V>, K::Error> {
-        Ok(self.entries.get(key.try_into()?))
-    }
-}
+// impl<K, V> SharedIndexMap<K, V>
+// where
+//     K: TryInto<usize>,
+//     V: Clone,
+// {
+//     pub fn get(&self, key: K) -> Result<Option<V>, K::Error> {
+//         Ok(self.entries.get(key.try_into()?))
+//     }
+// }
 
 impl<K, V> SharedIndexMap<K, V>
 where
