@@ -52,8 +52,15 @@ impl NonZero6Bytes {
     }
 }
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct HashId(NonZero6Bytes);
+
+impl std::fmt::Debug for HashId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let hash_id = self.as_u64();
+        f.debug_tuple("HashId").field(&hash_id).finish()
+    }
+}
 
 #[derive(Debug)]
 pub struct HashIdError;

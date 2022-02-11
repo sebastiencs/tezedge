@@ -385,7 +385,9 @@ impl GCThread {
                 continue;
             }
 
-            self.values_map.insert_at(hash_id, None).unwrap();
+            self.values_map.set(hash_id, None).unwrap();
+
+            // self.values_map.insert_at(hash_id, None).unwrap();
             // self.global.insert_at(hash_id, None).unwrap();
             unused.push(hash_id);
         }
