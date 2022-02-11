@@ -432,7 +432,7 @@ pub fn serialize_object(
     storage: &Storage,
     strings: &StringInterner,
     stats: &mut SerializeStats,
-    _batch: &mut ChunkedVec<(HashId, Arc<[u8]>)>,
+    _batch: &mut ChunkedVec<(HashId, Box<[u8]>)>,
     _referenced_older_objects: &mut ChunkedVec<HashId>,
     repository: &mut ContextKeyValueStore,
     file_offset: Option<AbsoluteOffset>,

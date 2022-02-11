@@ -49,7 +49,7 @@ use super::{HashId, VacantObjectHash};
 #[derive(Debug)]
 pub struct HashValueStore {
     hashes: IndexMap<HashId, ObjectHash>,
-    values: SharedIndexMap<HashId, Option<Arc<[u8]>>>,
+    values: SharedIndexMap<HashId, Option<Box<[u8]>>>,
     free_ids: Option<Consumer<HashId>>,
     new_ids: ChunkedVec<HashId>,
     values_bytes: usize,
@@ -141,7 +141,7 @@ impl HashValueStore {
     pub(crate) fn insert_value_at(
         &mut self,
         hash_id: HashId,
-        value: Arc<[u8]>,
+        value: Box<[u8]>,
     ) -> Result<(), HashIdError> {
         self.values_bytes = self.values_bytes.saturating_add(value.len());
         if let Some(old) = self.values.insert_at(hash_id, Some(value))? {
@@ -156,7 +156,7 @@ impl HashValueStore {
 
     pub(crate) fn with_value<F, R>(&self, hash_id: HashId, fun: F) -> Result<R, DBError>
     where
-        F: FnOnce(Option<&Option<Arc<[u8]>>>) -> R,
+        F: FnOnce(Option<&Option<Box<[u8]>>>) -> R,
     {
         Ok(self.values.with(hash_id, fun)?)
     }
@@ -593,7 +593,7 @@ impl InMemory {
 
     pub(crate) fn with_value<F, R>(&self, hash_id: HashId, fun: F) -> Result<R, DBError>
     where
-        F: FnOnce(Option<&Option<Arc<[u8]>>>) -> R,
+        F: FnOnce(Option<&Option<Box<[u8]>>>) -> R,
     {
         Ok(self.hashes.values.with(hash_id, fun)?)
     }
@@ -608,12 +608,12 @@ impl InMemory {
 
     pub fn write_batch(
         &mut self,
-        mut batch: ChunkedVec<(HashId, Arc<[u8]>)>,
+        mut batch: ChunkedVec<(HashId, Box<[u8]>)>,
     ) -> Result<(), DBError> {
         while let Some(chunk) = batch.pop_first_chunk() {
             for (hash_id, value) in chunk.into_iter() {
-                self.hashes.insert_value_at(hash_id, Arc::clone(&value))?;
-                self.current_cycle.push((hash_id, value));
+                self.hashes.insert_value_at(hash_id, value)?;
+                // self.current_cycle.push((hash_id, value));
             }
         }
         Ok(())
@@ -649,15 +649,15 @@ impl InMemory {
             None => return,
         };
 
-        let values_in_block = std::mem::replace(
-            &mut self.current_cycle,
-            ChunkedVec::with_chunk_capacity(512 * 1024),
-        );
+        // let values_in_block = std::mem::replace(
+        //     &mut self.current_cycle,
+        //     ChunkedVec::with_chunk_capacity(512 * 1024),
+        // );
         let new_ids = self.hashes.take_new_ids();
 
         if let Err(e) = sender.send(Command::MarkReused {
             reused,
-            values_in_block,
+            // values_in_block,
             new_ids,
             commit_hash_id,
         }) {

@@ -41,7 +41,7 @@ pub type SerializeObjectSignature = fn(
     &Storage,                             // storage
     &StringInterner,                      // strings
     &mut SerializeStats,                  // statistics
-    &mut ChunkedVec<(HashId, Arc<[u8]>)>, // batch
+    &mut ChunkedVec<(HashId, Box<[u8]>)>, // batch
     &mut ChunkedVec<HashId>,              // referenced_older_objects
     &mut ContextKeyValueStore,            // repository
     Option<AbsoluteOffset>,               // offset
