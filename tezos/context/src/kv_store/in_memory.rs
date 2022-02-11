@@ -536,9 +536,10 @@ impl InMemory {
         date: u64,
         mark_as_applied: bool,
     ) -> Result<(ContextHash, Box<SerializeStats>), DBError> {
-
         if let Some(chunks) = self.hashes.values.clone_new_chunks() {
-            self.sender.as_mut().map(|s| s.send(Command::NewChunks { chunks }).unwrap());
+            self.sender
+                .as_mut()
+                .map(|s| s.send(Command::NewChunks { chunks }).unwrap());
         };
 
         let PostCommitData {
