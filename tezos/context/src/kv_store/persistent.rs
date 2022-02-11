@@ -1148,7 +1148,7 @@ impl KeyValueStoreBackend for Persistent {
     #[cfg(test)]
     fn synchronize_data(
         &mut self,
-        _batch: &[(HashId, Arc<[u8]>)],
+        _batch: &[(HashId, Box<[u8]>)],
         output: &[u8],
     ) -> Result<Option<AbsoluteOffset>, DBError> {
         self.commit_to_disk(output)?;

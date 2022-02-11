@@ -281,7 +281,7 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
     #[cfg(test)]
     fn synchronize_data(
         &mut self,
-        _batch: &[(HashId, Arc<[u8]>)],
+        _batch: &[(HashId, Box<[u8]>)],
         _output: &[u8],
     ) -> Result<Option<AbsoluteOffset>, DBError> {
         Ok(None) // no-op

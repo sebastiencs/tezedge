@@ -380,7 +380,7 @@ impl KeyValueStoreBackend for InMemory {
     #[cfg(test)]
     fn synchronize_data(
         &mut self,
-        batch: &[(HashId, Arc<[u8]>)],
+        batch: &[(HashId, Box<[u8]>)],
         _output: &[u8],
     ) -> Result<Option<AbsoluteOffset>, DBError> {
         let mut vec = ChunkedVec::with_chunk_capacity(batch.len().max(1000));
