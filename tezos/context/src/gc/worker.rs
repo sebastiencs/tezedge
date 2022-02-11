@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 use std::{
-    collections::{HashMap, VecDeque},
+    // collections::{HashMap, VecDeque},
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -36,7 +36,7 @@ pub(crate) struct GCThread {
     pub(crate) pending: Vec<HashId>,
     pub(crate) debug: bool,
 
-    pub(crate) values_map: SharedIndexMap<HashId, Option<Arc<[u8]>>>,
+    pub(crate) values_map: SharedIndexMap<HashId, Option<Box<[u8]>>>,
 
     // pub(crate) values_map: SharedIndexMap<HashId, Option<>>
 
@@ -45,21 +45,22 @@ pub(crate) struct GCThread {
     pub(crate) counter: u8,
 }
 
+assert_eq_size!([u8; 16], Option<Box<[u8]>>);
 assert_eq_size!([u8; 16], Option<Arc<[u8]>>);
 
 pub(crate) enum Command {
     StartNewCycle {
-        values_in_cycle: ChunkedVec<(HashId, Arc<[u8]>)>,
+        values_in_cycle: ChunkedVec<(HashId, Box<[u8]>)>,
         new_ids: ChunkedVec<HashId>,
     },
     MarkReused {
-        values_in_block: ChunkedVec<(HashId, Arc<[u8]>)>,
+        // values_in_block: ChunkedVec<(HashId, Box<[u8]>)>,
         new_ids: ChunkedVec<HashId>,
         reused: ChunkedVec<HashId>,
         commit_hash_id: HashId,
     },
     NewChunks {
-        chunks: Vec<SharedChunk<Option<Arc<[u8]>>>>
+        chunks: Vec<SharedChunk<Option<Box<[u8]>>>>
     },
     Close,
 }
@@ -137,10 +138,11 @@ impl GCThread {
                 }
                 Ok(Command::MarkReused {
                     reused,
-                    values_in_block,
+                    // values_in_block,
                     new_ids,
                     commit_hash_id,
-                }) => self.mark_reused(reused, values_in_block, new_ids, commit_hash_id),
+                }) => self.mark_reused(reused, new_ids, commit_hash_id),
+                // }) => self.mark_reused(reused, values_in_block, new_ids, commit_hash_id),
                 Ok(Command::Close) => {
                     elog!("GC received Command::Close");
                     break;
@@ -154,7 +156,7 @@ impl GCThread {
         elog!("GC exited");
     }
 
-    fn add_chunks(&mut self, chunks: Vec<SharedChunk<Option<Arc<[u8]>>>>) {
+    fn add_chunks(&mut self, chunks: Vec<SharedChunk<Option<Box<[u8]>>>>) {
         self.values_map.append_chunks(chunks);
     }
 
@@ -343,7 +345,7 @@ impl GCThread {
     fn mark_reused(
         &mut self,
         mut reused: ChunkedVec<HashId>,
-        mut values_in_blocks: ChunkedVec<(HashId, Arc<[u8]>)>,
+        // mut values_in_blocks: ChunkedVec<(HashId, Box<[u8]>)>,
         new_ids: ChunkedVec<HashId>,
         commit_hash_id: HashId,
     ) {

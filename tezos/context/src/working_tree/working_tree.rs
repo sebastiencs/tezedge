@@ -88,7 +88,7 @@ use super::{
 
 pub struct PostCommitData {
     pub commit_ref: ObjectReference,
-    pub batch: ChunkedVec<(HashId, Arc<[u8]>)>,
+    pub batch: ChunkedVec<(HashId, Box<[u8]>)>,
     pub reused: ChunkedVec<HashId>,
     pub serialize_stats: Box<SerializeStats>,
     pub output: Vec<u8>,
@@ -471,7 +471,7 @@ pub enum CheckObjectHashError {
 }
 
 struct SerializingData<'a> {
-    batch: ChunkedVec<(HashId, Arc<[u8]>)>,
+    batch: ChunkedVec<(HashId, Box<[u8]>)>,
     referenced_older_objects: ChunkedVec<HashId>,
     repository: &'a mut ContextKeyValueStore,
     serialized: Vec<u8>,
