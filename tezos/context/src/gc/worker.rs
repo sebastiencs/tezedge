@@ -13,7 +13,7 @@ use crossbeam_channel::{Receiver, RecvError};
 use static_assertions::assert_eq_size;
 
 use crate::{
-    chunks::ChunkedVec,
+    chunks::{ChunkedVec, SharedChunk, SharedIndexMap},
     kv_store::{index_map::IndexMap, HashId},
     serialize::in_memory::iter_hash_ids,
 };
@@ -30,13 +30,17 @@ pub(crate) const PRESERVE_CYCLE_COUNT: usize = 2;
 pub(crate) static GC_PENDING_HASHIDS: AtomicUsize = AtomicUsize::new(0);
 
 pub(crate) struct GCThread {
-    pub(crate) cycles: Cycles,
+    // pub(crate) cycles: Cycles,
     pub(crate) free_ids: Producer<HashId>,
     pub(crate) recv: Receiver<Command>,
     pub(crate) pending: Vec<HashId>,
     pub(crate) debug: bool,
 
-    pub(crate) global: IndexMap<HashId, Option<Arc<[u8]>>>,
+    pub(crate) values_map: SharedIndexMap<HashId, Option<Arc<[u8]>>>,
+
+    // pub(crate) values_map: SharedIndexMap<HashId, Option<>>
+
+    // pub(crate) global: IndexMap<HashId, Option<Arc<[u8]>>>,
     pub(crate) global_counter: IndexMap<HashId, Option<u8>>,
     pub(crate) counter: u8,
 }
@@ -54,59 +58,62 @@ pub(crate) enum Command {
         reused: ChunkedVec<HashId>,
         commit_hash_id: HashId,
     },
+    NewChunks {
+        chunks: Vec<SharedChunk<Option<Arc<[u8]>>>>
+    },
     Close,
 }
 
-pub(crate) struct Cycles {
-    list: VecDeque<HashMap<HashId, Arc<[u8]>>>,
-}
+// pub(crate) struct Cycles {
+//     list: VecDeque<HashMap<HashId, Arc<[u8]>>>,
+// }
 
-impl Default for Cycles {
-    fn default() -> Self {
-        let mut list = VecDeque::with_capacity(PRESERVE_CYCLE_COUNT);
+// impl Default for Cycles {
+//     fn default() -> Self {
+//         let mut list = VecDeque::with_capacity(PRESERVE_CYCLE_COUNT);
 
-        for _ in 0..PRESERVE_CYCLE_COUNT {
-            list.push_back(Default::default());
-        }
+//         for _ in 0..PRESERVE_CYCLE_COUNT {
+//             list.push_back(Default::default());
+//         }
 
-        Self { list }
-    }
-}
+//         Self { list }
+//     }
+// }
 
-impl Cycles {
-    fn move_to_last_cycle(&mut self, hash_id: HashId) -> Option<Arc<[u8]>> {
-        let mut value = None;
+// impl Cycles {
+//     fn move_to_last_cycle(&mut self, hash_id: HashId) -> Option<Arc<[u8]>> {
+//         let mut value = None;
 
-        for store in self.list.iter_mut().take(PRESERVE_CYCLE_COUNT - 1) {
-            if let Some(item) = store.remove(&hash_id) {
-                value = Some(item);
-            };
-        }
+//         for store in self.list.iter_mut().take(PRESERVE_CYCLE_COUNT - 1) {
+//             if let Some(item) = store.remove(&hash_id) {
+//                 value = Some(item);
+//             };
+//         }
 
-        let value = value?;
+//         let value = value?;
 
-        if let Some(last_cycle) = self.list.back_mut() {
-            last_cycle.insert(hash_id, Arc::clone(&value));
-        } else {
-            elog!("GC: Failed to insert value in Cycles")
-        }
+//         if let Some(last_cycle) = self.list.back_mut() {
+//             last_cycle.insert(hash_id, Arc::clone(&value));
+//         } else {
+//             elog!("GC: Failed to insert value in Cycles")
+//         }
 
-        Some(value)
-    }
+//         Some(value)
+//     }
 
-    fn roll(&mut self, new_cycle: HashMap<HashId, Arc<[u8]>>) -> Vec<HashId> {
-        let unused = self.list.pop_front().unwrap_or_default();
-        self.list.push_back(new_cycle);
+//     fn roll(&mut self, new_cycle: HashMap<HashId, Arc<[u8]>>) -> Vec<HashId> {
+//         let unused = self.list.pop_front().unwrap_or_default();
+//         self.list.push_back(new_cycle);
 
-        for store in self.list.iter_mut().take(PRESERVE_CYCLE_COUNT - 1) {
-            store.shrink_to_fit();
-        }
+//         for store in self.list.iter_mut().take(PRESERVE_CYCLE_COUNT - 1) {
+//             store.shrink_to_fit();
+//         }
 
-        unused.into_iter().map(|v| v.0).collect()
+//         unused.into_iter().map(|v| v.0).collect()
 
-        // unused.keys_to_vec()
-    }
-}
+//         // unused.keys_to_vec()
+//     }
+// }
 
 impl GCThread {
     pub(crate) fn run(mut self) {
@@ -119,6 +126,9 @@ impl GCThread {
             self.debug(&msg);
 
             match msg {
+                Ok(Command::NewChunks { chunks }) => {
+                    self.add_chunks(chunks);
+                }
                 Ok(Command::StartNewCycle {
                     values_in_cycle,
                     new_ids,
@@ -144,6 +154,10 @@ impl GCThread {
         elog!("GC exited");
     }
 
+    fn add_chunks(&mut self, chunks: Vec<SharedChunk<Option<Arc<[u8]>>>>) {
+        self.values_map.append_chunks(chunks);
+    }
+
     fn debug(&self, msg: &Result<Command, RecvError>) {
         if !self.debug {
             return;
@@ -159,6 +173,7 @@ impl GCThread {
                 new_ids.len()
             ),
             Ok(Command::MarkReused { reused, .. }) => format!("REUSED {:?}", reused.len()),
+            Ok(Command::NewChunks { chunks }) => format!("NEW_CHUNKS {:?}", chunks.len()),
             Ok(Command::Close { .. }) => "CLOSE".to_owned(),
             Err(_) => "ERR".to_owned(),
         };
@@ -183,43 +198,44 @@ impl GCThread {
         // );
 
         log!(
-            "GC_DEBUG NMSG={:?} MSG={:?} PENDING={:?} GLOBAL_LEN={:?} GLOBAL_CAP={:?}",
+            // "GC_DEBUG NMSG={:?} MSG={:?} PENDING={:?} GLOBAL_LEN={:?} GLOBAL_CAP={:?}",
+            "GC_DEBUG NMSG={:?} MSG={:?} PENDING={:?}",
             self.recv.len(),
             msg,
             self.pending.len(),
-            self.global.len(),
-            self.global.capacity(),
+            // self.global.len(),
+            // self.global.capacity(),
         );
     }
 
-    fn start_new_cycle(
-        &mut self,
-        mut new_cycle: ChunkedVec<(HashId, Arc<[u8]>)>,
-        new_ids: ChunkedVec<HashId>,
-    ) {
-        GC_PENDING_HASHIDS.store(self.pending.len(), Ordering::Release);
+    // fn start_new_cycle(
+    //     &mut self,
+    //     mut new_cycle: ChunkedVec<(HashId, Arc<[u8]>)>,
+    //     new_ids: ChunkedVec<HashId>,
+    // ) {
+    //     GC_PENDING_HASHIDS.store(self.pending.len(), Ordering::Release);
 
-        // // Gather `HashId` created before a commit.
-        // // We send them back to the main thread, they can be reused
-        // let mut hashid_without_value = Vec::with_capacity(1024);
+    //     // // Gather `HashId` created before a commit.
+    //     // // We send them back to the main thread, they can be reused
+    //     // let mut hashid_without_value = Vec::with_capacity(1024);
 
-        // let new_cycle = new_cycle.into_hash_map();
+    //     // let new_cycle = new_cycle.into_hash_map();
 
-        // for hash_id in new_ids.iter() {
-        //     if !new_cycle.contains_key(hash_id) {
-        //         hashid_without_value.push(*hash_id);
-        //     }
-        // }
+    //     // for hash_id in new_ids.iter() {
+    //     //     if !new_cycle.contains_key(hash_id) {
+    //     //         hashid_without_value.push(*hash_id);
+    //     //     }
+    //     // }
 
-        // self.send_unused(hashid_without_value);
+    //     // self.send_unused(hashid_without_value);
 
-        // if self.debug {
-        //     log!("GC_WORKER: START_NEW_CYCLE NEW_CYCLE={:?}", new_cycle.len(),);
-        // }
+    //     // if self.debug {
+    //     //     log!("GC_WORKER: START_NEW_CYCLE NEW_CYCLE={:?}", new_cycle.len(),);
+    //     // }
 
-        // let unused = self.cycles.roll(new_cycle);
-        // self.send_unused(unused);
-    }
+    //     // let unused = self.cycles.roll(new_cycle);
+    //     // self.send_unused(unused);
+    // }
 
     /// Notify the main thread that the ids are free to reused
     fn send_unused(&mut self, unused: Vec<HashId>) {
@@ -245,28 +261,28 @@ impl GCThread {
         }
     }
 
-    fn send_pending(&mut self) {
-        if self.pending.is_empty() {
-            return;
-        }
+    // fn send_pending(&mut self) {
+    //     if self.pending.is_empty() {
+    //         return;
+    //     }
 
-        let navailable = self.free_ids.available();
-        if navailable == 0 {
-            return;
-        }
+    //     let navailable = self.free_ids.available();
+    //     if navailable == 0 {
+    //         return;
+    //     }
 
-        let n_to_send = navailable.min(self.pending.len());
-        let start = self.pending.len() - n_to_send;
-        let to_send = &self.pending[start..];
+    //     let n_to_send = navailable.min(self.pending.len());
+    //     let start = self.pending.len() - n_to_send;
+    //     let to_send = &self.pending[start..];
 
-        if let Err(e) = self.free_ids.push_slice(to_send) {
-            elog!("GC: Fail to send free ids {:?}", e);
-            return;
-        }
+    //     if let Err(e) = self.free_ids.push_slice(to_send) {
+    //         elog!("GC: Fail to send free ids {:?}", e);
+    //         return;
+    //     }
 
-        self.pending.truncate(start);
-        GC_PENDING_HASHIDS.store(self.pending.len(), Ordering::Release);
-    }
+    //     self.pending.truncate(start);
+    //     GC_PENDING_HASHIDS.store(self.pending.len(), Ordering::Release);
+    // }
 
     fn traverse_mark_impl(
         &self,
@@ -278,8 +294,7 @@ impl GCThread {
         *traversed += 1;
 
         let value = {
-            let value = self.global.get(hash_id).unwrap().unwrap().as_ref().unwrap();
-            value
+            self.values_map.get(hash_id).unwrap().unwrap().unwrap()
         };
 
         {
@@ -292,7 +307,7 @@ impl GCThread {
             *value_counter = counter;
         }
 
-        for hash_id in iter_hash_ids(value) {
+        for hash_id in iter_hash_ids(&value) {
             self.traverse_mark_impl(global_counter, hash_id, counter, traversed);
         }
     }
@@ -313,7 +328,8 @@ impl GCThread {
                 continue;
             }
 
-            self.global.insert_at(hash_id, None).unwrap();
+            self.values_map.insert_at(hash_id, None).unwrap();
+            // self.global.insert_at(hash_id, None).unwrap();
             unused.push(hash_id);
         }
 
@@ -333,14 +349,14 @@ impl GCThread {
     ) {
         let now = std::time::Instant::now();
 
-        while let Some(chunk) = values_in_blocks.pop_first_chunk() {
-            for (hash_id, value) in chunk.into_iter() {
-                self.global.insert_at(hash_id, Some(value)).unwrap();
-                // self.global_counter
-                //     .insert_at(hash_id, Some(self.counter))
-                //     .unwrap();
-            }
-        }
+        // while let Some(chunk) = values_in_blocks.pop_first_chunk() {
+        //     for (hash_id, value) in chunk.into_iter() {
+        //         self.global.insert_at(hash_id, Some(value)).unwrap();
+        //         // self.global_counter
+        //         //     .insert_at(hash_id, Some(self.counter))
+        //         //     .unwrap();
+        //     }
+        // }
 
         for hash_id in new_ids.iter() {
             self.global_counter

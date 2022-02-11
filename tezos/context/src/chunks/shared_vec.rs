@@ -9,8 +9,16 @@ use parking_lot::RwLock;
 use super::DEFAULT_LIST_LENGTH;
 
 #[derive(Debug)]
-struct SharedChunk<T> {
+pub struct SharedChunk<T> {
     inner: Arc<RwLock<Vec<T>>>,
+}
+
+impl<T> Clone for SharedChunk<T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
 }
 
 impl<T> SharedChunk<T> {
@@ -56,11 +64,13 @@ where
 }
 
 #[derive(Debug)]
-struct SharedChunkedVec<T> {
-    list_of_chunks: Vec<SharedChunk<T>>,
+pub struct SharedChunkedVec<T> {
+    pub list_of_chunks: Vec<SharedChunk<T>>,
     chunk_capacity: usize,
     /// Number of elements in the chunks
     nelems: usize,
+
+    sync_at: usize,
 }
 
 impl<T> SharedChunkedVec<T> {
@@ -69,6 +79,7 @@ impl<T> SharedChunkedVec<T> {
             list_of_chunks: Vec::new(),
             chunk_capacity: 1_000,
             nelems: 0,
+            sync_at: 0,
         }
     }
 
@@ -84,7 +95,35 @@ impl<T> SharedChunkedVec<T> {
             list_of_chunks,
             chunk_capacity,
             nelems: 0,
+            sync_at: 0,
         }
+    }
+
+    pub fn with_chunk_capacity_empty(chunk_capacity: usize) -> Self {
+        assert_ne!(chunk_capacity, 0);
+
+        let list_of_chunks: Vec<SharedChunk<T>> = Vec::with_capacity(DEFAULT_LIST_LENGTH);
+
+        Self {
+            list_of_chunks,
+            chunk_capacity,
+            nelems: 0,
+            sync_at: 0,
+        }
+    }
+
+    fn append_chunks(&mut self, mut chunks: Vec<SharedChunk<T>>) {
+        self.list_of_chunks.append(&mut chunks)
+    }
+
+    pub fn clone_new_chunks(&mut self) -> Option<Vec<SharedChunk<T>>> {
+        let new_chunks = self
+            .list_of_chunks
+            .get(self.sync_at..)
+            .map(|chunk| chunk.to_vec())?;
+
+        self.sync_at += self.list_of_chunks.len();
+        Some(new_chunks)
     }
 
     /// Returns the last chunk with space available.
@@ -174,10 +213,11 @@ impl<T> SharedChunkedVec<T> {
         }
     }
 
-    fn clear(&mut self) {
-        self.nelems = 0;
-        self.list_of_chunks.clear();
-    }
+    // fn clear(&mut self) {
+    //     self.nelems = 0;
+    //     self.sync_at = 0;
+    //     self.list_of_chunks.clear();
+    // }
 }
 
 impl<T> SharedChunkedVec<T>
@@ -193,7 +233,7 @@ where
 
 #[derive(Debug)]
 pub struct SharedIndexMap<K, V> {
-    entries: SharedChunkedVec<V>,
+    pub entries: SharedChunkedVec<V>,
     _phantom: PhantomData<K>,
 }
 
@@ -212,6 +252,21 @@ impl<K, V> SharedIndexMap<K, V> {
         }
     }
 
+    pub fn with_chunk_capacity_empty(chunk_capacity: usize) -> Self {
+        Self {
+            entries: SharedChunkedVec::with_chunk_capacity_empty(chunk_capacity),
+            _phantom: PhantomData,
+        }
+    }
+
+    pub fn append_chunks(&mut self, mut chunks: Vec<SharedChunk<V>>) {
+        self.entries.append_chunks(chunks)
+    }
+
+    pub fn clone_new_chunks(&mut self) -> Option<Vec<SharedChunk<V>>> {
+        self.entries.clone_new_chunks()
+    }
+
     pub fn len(&self) -> usize {
         self.entries.len()
     }
@@ -224,9 +279,9 @@ impl<K, V> SharedIndexMap<K, V> {
         self.entries.capacity()
     }
 
-    pub fn clear(&mut self) {
-        self.entries.clear();
-    }
+    // pub fn clear(&mut self) {
+    //     self.entries.clear();
+    // }
 
     // pub fn get_index(&self, index: usize) -> Option<&V> {
     //     self.entries.get(index)

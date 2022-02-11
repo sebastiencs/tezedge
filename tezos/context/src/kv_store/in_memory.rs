@@ -23,7 +23,7 @@ use tezos_timing::{RepositoryMemoryUsage, SerializeStats};
 use crate::{
     chunks::{ChunkedVec, SharedIndexMap},
     gc::{
-        worker::{Command, Cycles, GCThread, GC_PENDING_HASHIDS, PRESERVE_CYCLE_COUNT},
+        worker::{Command, GCThread, GC_PENDING_HASHIDS, PRESERVE_CYCLE_COUNT},
         GarbageCollectionError, GarbageCollector,
     },
     hash::ObjectHash,
@@ -410,14 +410,15 @@ impl InMemory {
                 .name("ctx-inmem-gc-thread".to_string())
                 .spawn(move || {
                     GCThread {
-                        cycles: Cycles::default(),
+                        // cycles: Cycles::default(),
                         recv,
                         free_ids: prod,
                         pending: Vec::new(),
                         debug: false,
-                        global: IndexMap::with_chunk_capacity(10_000_000),
+                        // global: IndexMap::with_chunk_capacity(10_000_000),
                         global_counter: IndexMap::with_chunk_capacity(10_000_000),
                         counter: 0,
+                        values_map: SharedIndexMap::with_chunk_capacity_empty(10_000_000),
                     }
                     .run()
                 })?;
@@ -535,6 +536,11 @@ impl InMemory {
         date: u64,
         mark_as_applied: bool,
     ) -> Result<(ContextHash, Box<SerializeStats>), DBError> {
+
+        if let Some(chunks) = self.hashes.values.clone_new_chunks() {
+            self.sender.as_mut().map(|s| s.send(Command::NewChunks { chunks }).unwrap());
+        };
+
         let PostCommitData {
             commit_ref,
             batch,
