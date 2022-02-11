@@ -864,14 +864,8 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
         )))
     }
 
-    fn block_applied(
-        &self,
-        referenced_older_objects: ChunkedVec<HashId>,
-    ) -> Result<(), ContextError> {
-        Ok(self
-            .repository
-            .write()?
-            .block_applied(referenced_older_objects)?)
+    fn block_applied(&self) -> Result<(), ContextError> {
+        Ok(self.repository.write()?.block_applied()?)
     }
 
     fn cycle_started(&mut self) -> Result<(), ContextError> {
@@ -1009,7 +1003,6 @@ impl ShellContextApi for TezedgeContext {
             &mut *repository,
             None,
             None,
-            false,
             false,
         )?;
 

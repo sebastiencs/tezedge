@@ -184,7 +184,6 @@ pub fn serialize_object(
     strings: &StringInterner,
     stats: &mut SerializeStats,
     batch: &mut ChunkedVec<(HashId, Box<[u8]>)>,
-    referenced_older_objects: &mut ChunkedVec<HashId>,
     repository: &mut ContextKeyValueStore,
     _object_offset: Option<AbsoluteOffset>,
 ) -> Result<Option<AbsoluteOffset>, SerializationError> {
@@ -201,7 +200,6 @@ pub fn serialize_object(
                     strings,
                     stats,
                     batch,
-                    referenced_older_objects,
                     repository,
                 )?;
             } else {
@@ -270,7 +268,6 @@ fn serialize_inode(
     strings: &StringInterner,
     stats: &mut SerializeStats,
     batch: &mut ChunkedVec<(HashId, Box<[u8]>)>,
-    referenced_older_objects: &mut ChunkedVec<HashId>,
     repository: &mut ContextKeyValueStore,
 ) -> Result<(), SerializationError> {
     use SerializationError::*;
@@ -330,21 +327,12 @@ fn serialize_inode(
                     // in the repository.
                     // Add their hash_id to `referenced_older_objects` so the gargage
                     // collector won't collect them.
-                    referenced_older_objects.push(hash_id);
                     continue;
                 }
 
                 let ptr_id = pointer.ptr_id().ok_or(MissingInodeId)?;
                 serialize_inode(
-                    ptr_id,
-                    output,
-                    hash_id,
-                    storage,
-                    strings,
-                    stats,
-                    batch,
-                    referenced_older_objects,
-                    repository,
+                    ptr_id, output, hash_id, storage, strings, stats, batch, repository,
                 )?;
             }
         }

@@ -203,11 +203,13 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
         {
             buffer.clear();
 
-            self.hashes.with_value(hash_id, |value| {
-                if let Some(Some(value)) = value {
-                    buffer.extend_from_slice(value)
-                };
-            });
+            self.hashes
+                .with_value(hash_id, |value| {
+                    if let Some(Some(value)) = value {
+                        buffer.extend_from_slice(value)
+                    };
+                })
+                .unwrap();
 
             // let bytes = self
             //     .hashes
@@ -243,7 +245,6 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
                 self,
                 None,
                 None,
-                false,
                 false,
             )
             .map_err(Box::new)?;

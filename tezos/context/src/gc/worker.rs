@@ -53,7 +53,7 @@ pub(crate) enum Command {
     MarkReused {
         // values_in_block: ChunkedVec<(HashId, Box<[u8]>)>,
         new_ids: ChunkedVec<HashId>,
-        reused: ChunkedVec<HashId>,
+        // reused: ChunkedVec<HashId>,
         commit_hash_id: HashId,
     },
     NewChunks {
@@ -128,17 +128,17 @@ impl GCThread {
                     self.add_chunks(chunks);
                 }
                 Ok(Command::StartNewCycle {
-                    values_in_cycle,
-                    new_ids,
+                    values_in_cycle: _,
+                    new_ids: _,
                 }) => {
                     // self.start_new_cycle(values_in_cycle, new_ids)
                 }
                 Ok(Command::MarkReused {
-                    reused,
+                    // reused,
                     // values_in_block,
                     new_ids,
                     commit_hash_id,
-                }) => self.mark_reused(reused, new_ids, commit_hash_id),
+                }) => self.mark_reused(new_ids, commit_hash_id),
                 // }) => self.mark_reused(reused, values_in_block, new_ids, commit_hash_id),
                 Ok(Command::Close) => {
                     elog!("GC received Command::Close");
@@ -171,7 +171,7 @@ impl GCThread {
                 values_in_cycle.len(),
                 new_ids.len()
             ),
-            Ok(Command::MarkReused { reused, .. }) => format!("REUSED {:?}", reused.len()),
+            Ok(Command::MarkReused { new_ids, .. }) => format!("REUSED {:?}", new_ids.len()),
             Ok(Command::NewChunks { chunks }) => format!("NEW_CHUNKS {:?}", chunks.len()),
             Ok(Command::Close { .. }) => "CLOSE".to_owned(),
             Err(_) => "ERR".to_owned(),
@@ -297,16 +297,18 @@ impl GCThread {
 
         let mut hash_ids: [Option<HashId>; 256] = [None; 256];
 
-        self.values_map.with(hash_id, |object_bytes| {
-            let object_bytes = match object_bytes {
-                Some(Some(object_bytes)) => object_bytes,
-                _ => return,
-            };
+        self.values_map
+            .with(hash_id, |object_bytes| {
+                let object_bytes = match object_bytes {
+                    Some(Some(object_bytes)) => object_bytes,
+                    _ => return,
+                };
 
-            for (index, hash_id) in iter_hash_ids(object_bytes).enumerate() {
-                hash_ids[index] = Some(hash_id);
-            }
-        });
+                for (index, hash_id) in iter_hash_ids(object_bytes).enumerate() {
+                    hash_ids[index] = Some(hash_id);
+                }
+            })
+            .unwrap();
 
         // let value = {
         //     self.values_map.get(hash_id).unwrap().unwrap().unwrap()
@@ -385,7 +387,7 @@ impl GCThread {
 
     fn mark_reused(
         &mut self,
-        mut reused: ChunkedVec<HashId>,
+        // mut reused: ChunkedVec<HashId>,
         // mut values_in_blocks: ChunkedVec<(HashId, Box<[u8]>)>,
         new_ids: ChunkedVec<HashId>,
         commit_hash_id: HashId,

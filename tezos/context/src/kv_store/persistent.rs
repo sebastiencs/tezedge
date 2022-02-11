@@ -1097,7 +1097,6 @@ impl KeyValueStoreBackend for Persistent {
                 self,
                 Some(persistent::serialize_object),
                 Some(offset),
-                false,
                 enable_dedub_objects,
             )
             .map_err(Box::new)?;
