@@ -54,15 +54,6 @@ impl<T> SharedChunk<T> {
     }
 }
 
-// impl<T> SharedChunk<T>
-// where
-//     T: Clone,
-// {
-//     fn get(&self, index: usize) -> Option<T> {
-//         self.inner.read().get(index).cloned()
-//     }
-// }
-
 #[derive(Debug)]
 pub struct SharedChunkedVec<T> {
     pub list_of_chunks: Vec<SharedChunk<T>>,
@@ -70,7 +61,7 @@ pub struct SharedChunkedVec<T> {
     /// Number of elements in the chunks
     nelems: usize,
 
-    sync_at: usize,
+    synced_at: usize,
 }
 
 impl<T> SharedChunkedVec<T> {
@@ -79,7 +70,7 @@ impl<T> SharedChunkedVec<T> {
             list_of_chunks: Vec::new(),
             chunk_capacity: 1_000,
             nelems: 0,
-            sync_at: 0,
+            synced_at: 0,
         }
     }
 
@@ -95,7 +86,7 @@ impl<T> SharedChunkedVec<T> {
             list_of_chunks,
             chunk_capacity,
             nelems: 0,
-            sync_at: 0,
+            synced_at: 0,
         }
     }
 
@@ -108,7 +99,7 @@ impl<T> SharedChunkedVec<T> {
             list_of_chunks,
             chunk_capacity,
             nelems: 0,
-            sync_at: 0,
+            synced_at: 0,
         }
     }
 
@@ -117,20 +108,13 @@ impl<T> SharedChunkedVec<T> {
     }
 
     pub fn clone_new_chunks(&mut self) -> Option<Vec<SharedChunk<T>>> {
-        let new_chunks = self.list_of_chunks.get(self.sync_at..)?;
+        let new_chunks = self.list_of_chunks.get(self.synced_at..)?;
 
         if new_chunks.is_empty() {
             return None;
         }
 
-        let new_chunks: Vec<_> = new_chunks.iter().cloned().collect();
-        // let new_chunks: Vec<_> = new_chunks.iter().map(|chunk| chunk.clone()).collect();
-
-        // let old = self.sync_at;
-        self.sync_at = self.list_of_chunks.len();
-
-        // println!("OLD SYNC_AT={:?} NEW={:?}", old, self.sync_at);
-        Some(new_chunks)
+        Some(new_chunks.iter().cloned().collect())
     }
 
     /// Returns the last chunk with space available.
@@ -219,24 +203,7 @@ impl<T> SharedChunkedVec<T> {
             self.push(fun());
         }
     }
-
-    // fn clear(&mut self) {
-    //     self.nelems = 0;
-    //     self.sync_at = 0;
-    //     self.list_of_chunks.clear();
-    // }
 }
-
-// impl<T> SharedChunkedVec<T>
-// where
-//     T: Clone,
-// {
-//     pub fn get(&self, index: usize) -> Option<T> {
-//         let (list_index, chunk_index) = self.get_indexes_at(index);
-
-//         self.list_of_chunks.get(list_index)?.get(chunk_index)
-//     }
-// }
 
 #[derive(Debug)]
 pub struct SharedIndexMap<K, V> {
@@ -259,10 +226,16 @@ impl<K, V> SharedIndexMap<K, V> {
         }
     }
 
-    pub fn with_chunk_capacity_empty(chunk_capacity: usize) -> Self {
+    fn with_chunk_capacity_empty(chunk_capacity: usize) -> Self {
         Self {
             entries: SharedChunkedVec::with_chunk_capacity_empty(chunk_capacity),
             _phantom: PhantomData,
+        }
+    }
+
+    pub fn get_view(&self) -> SharedIndexMapView<K, V> {
+        SharedIndexMapView {
+            inner: Self::with_chunk_capacity_empty(self.entries.chunk_capacity)
         }
     }
 
@@ -285,29 +258,6 @@ impl<K, V> SharedIndexMap<K, V> {
     pub fn capacity(&self) -> usize {
         self.entries.capacity()
     }
-
-    // pub fn clear(&mut self) {
-    //     self.entries.clear();
-    // }
-
-    // pub fn get_index(&self, index: usize) -> Option<&V> {
-    //     self.entries.get(index)
-    // }
-
-    // pub fn iter_values(&self) -> impl Iterator<Item = &V> {
-    //     self.entries.iter()
-    // }
-
-    // pub fn iter_with_keys(&self) -> IndexMapIter<'_, K, V> {
-    //     IndexMapIter {
-    //         chunks: self.entries.iter(),
-    //         _phantom: PhantomData,
-    //     }
-    // }
-
-    // pub fn clear(&mut self) {
-    //     self.entries.clear();
-    // }
 }
 
 impl<K, V> SharedIndexMap<K, V>
@@ -345,24 +295,11 @@ where
         Ok(self.entries.with_mut(index, fun))
     }
 
-    // pub fn get(&self, key: K) -> Result<Option<&V>, K::Error> {
-    //     Ok(self.entries.get(key.try_into()?))
-    // }
-
-    // pub fn get_mut(&mut self, key: K) -> Result<Option<&mut V>, K::Error> {
-    //     Ok(self.entries.get_mut(key.try_into()?))
-    // }
+    pub fn chunk_index_of(&self, key: K) -> Result<usize, K::Error> {
+        let index: usize = key.try_into()?;
+        Ok(index / self.entries.chunk_capacity)
+    }
 }
-
-// impl<K, V> SharedIndexMap<K, V>
-// where
-//     K: TryInto<usize>,
-//     V: Clone,
-// {
-//     pub fn get(&self, key: K) -> Result<Option<V>, K::Error> {
-//         Ok(self.entries.get(key.try_into()?))
-//     }
-// }
 
 impl<K, V> SharedIndexMap<K, V>
 where
@@ -380,11 +317,6 @@ where
     K: TryFrom<usize>,
     V: Default,
 {
-    // pub fn get_vacant_entry(&mut self) -> Result<(K, &mut V), <K as TryFrom<usize>>::Error> {
-    //     let index = self.entries.push(Default::default());
-    //     Ok((K::try_from(index)?, &mut self.entries[index]))
-    // }
-
     pub fn insert_at(&mut self, key: K, value: V) -> Result<V, <K as TryInto<usize>>::Error> {
         let index: usize = key.try_into()?;
 
@@ -397,5 +329,46 @@ where
             .with_mut(index, |old| std::mem::replace(old.unwrap(), value));
 
         Ok(old)
+    }
+}
+
+pub struct SharedIndexMapView<K, V> {
+    inner: SharedIndexMap<K, V>,
+}
+
+impl<K, V> SharedIndexMapView<K, V> {
+    pub fn append_chunks(&mut self, chunks: Vec<SharedChunk<V>>) {
+        self.inner.append_chunks(chunks)
+    }
+
+    pub fn nchunks(&self) -> usize {
+        self.inner.entries.list_of_chunks.len()
+    }
+}
+
+impl<K, V> SharedIndexMapView<K, V>
+where
+    K: TryInto<usize>,
+{
+    pub fn set(&mut self, key: K, value: V) -> Result<V, K::Error> {
+        self.inner.set(key, value)
+    }
+
+    pub fn with<F, R>(&self, key: K, fun: F) -> Result<R, K::Error>
+    where
+        F: FnOnce(Option<&V>) -> R,
+    {
+        self.inner.with(key, fun)
+    }
+
+    pub fn with_mut<F, R>(&self, key: K, fun: F) -> Result<R, K::Error>
+    where
+        F: FnOnce(Option<&mut V>) -> R,
+    {
+        self.inner.with_mut(key, fun)
+    }
+
+    pub fn chunk_index_of(&self, key: K) -> Result<usize, K::Error> {
+        self.inner.chunk_index_of(key)
     }
 }
