@@ -1215,7 +1215,6 @@ mod tests {
         .unwrap();
         let mut stats = SerializeStats::default();
         let mut batch = ChunkedVec::with_chunk_capacity(1024);
-        let mut older_objects = ChunkedVec::with_chunk_capacity(1024);
         let fake_hash_id = HashId::try_from(1).unwrap();
 
         let offset = repo.synchronize_data(&[], &[0, 0, 0, 0, 0, 0]).unwrap();
@@ -1260,7 +1259,6 @@ mod tests {
             &strings,
             &mut stats,
             &mut batch,
-            &mut older_objects,
             &mut repo,
             offset,
         )
@@ -1321,7 +1319,6 @@ mod tests {
             &strings,
             &mut stats,
             &mut batch,
-            &mut older_objects,
             &mut repo,
             offset,
         )
@@ -1382,7 +1379,6 @@ mod tests {
             &strings,
             &mut stats,
             &mut batch,
-            &mut older_objects,
             &mut repo,
             offset,
         )
@@ -1414,7 +1410,6 @@ mod tests {
             &strings,
             &mut stats,
             &mut batch,
-            &mut older_objects,
             &mut repo,
             Some(0.into()),
         )
@@ -1450,7 +1445,6 @@ mod tests {
             &strings,
             &mut stats,
             &mut batch,
-            &mut older_objects,
             &mut repo,
             offset,
         )
@@ -1485,7 +1479,6 @@ mod tests {
             &strings,
             &mut stats,
             &mut batch,
-            &mut older_objects,
             &mut repo,
             offset,
         )
@@ -1677,7 +1670,6 @@ mod tests {
         let mut strings = StringInterner::default();
         let mut stats = SerializeStats::default();
         let mut batch = ChunkedVec::with_chunk_capacity(1024);
-        let mut older_objects = ChunkedVec::with_chunk_capacity(1024);
 
         let fake_hash_id = HashId::try_from(1).unwrap();
 
@@ -1708,7 +1700,6 @@ mod tests {
             &strings,
             &mut stats,
             &mut batch,
-            &mut older_objects,
             &mut repo,
             Some(1.into()),
         )
