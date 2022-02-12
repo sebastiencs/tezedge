@@ -13,6 +13,7 @@ use crate::{
     chunks::{ChunkedVec, SharedChunk, SharedIndexMapView},
     kv_store::{index_map::IndexMap, HashId},
     serialize::in_memory::iter_hash_ids,
+    ObjectHash,
 };
 
 use tezos_spsc::Producer;
@@ -34,6 +35,7 @@ pub(crate) struct GCThread {
     pub(crate) debug: bool,
 
     pub(crate) objects_view: SharedIndexMapView<HashId, Option<Box<[u8]>>>,
+    pub(crate) hashes_view: SharedIndexMapView<HashId, Option<Box<ObjectHash>>>,
 
     pub(crate) global_counter: IndexMap<HashId, Option<u8>>,
     pub(crate) counter: u8,
@@ -51,7 +53,8 @@ pub(crate) enum Command {
         commit_hash_id: HashId,
     },
     NewChunks {
-        chunks: Vec<SharedChunk<Option<Box<[u8]>>>>,
+        objects_chunks: Option<Vec<SharedChunk<Option<Box<[u8]>>>>>,
+        hashes_chunks: Option<Vec<SharedChunk<Option<Box<ObjectHash>>>>>,
     },
     Close,
 }
@@ -67,8 +70,11 @@ impl GCThread {
             self.debug(&msg);
 
             match msg {
-                Ok(Command::NewChunks { chunks }) => {
-                    self.add_chunks(chunks);
+                Ok(Command::NewChunks {
+                    objects_chunks,
+                    hashes_chunks,
+                }) => {
+                    self.add_chunks(objects_chunks, hashes_chunks);
                 }
                 Ok(Command::MarkNewIds { new_ids }) => {
                     self.mark_new_ids(new_ids);
@@ -93,8 +99,17 @@ impl GCThread {
         elog!("GC exited");
     }
 
-    fn add_chunks(&mut self, chunks: Vec<SharedChunk<Option<Box<[u8]>>>>) {
-        self.objects_view.append_chunks(chunks);
+    fn add_chunks(
+        &mut self,
+        objects_chunks: Option<Vec<SharedChunk<Option<Box<[u8]>>>>>,
+        hashes_chunks: Option<Vec<SharedChunk<Option<Box<ObjectHash>>>>>,
+    ) {
+        if let Some(objects_chunks) = objects_chunks {
+            self.objects_view.append_chunks(objects_chunks);
+        };
+        if let Some(hashes_chunks) = hashes_chunks {
+            self.hashes_view.append_chunks(hashes_chunks);
+        };
     }
 
     fn debug(&self, msg: &Result<Command, RecvError>) {
@@ -108,12 +123,21 @@ impl GCThread {
                 commit_hash_id,
             }) => {
                 format!(
-                    "REUSED NEWS={:?} COMMIT_HASH_ID={:?}",
+                    "REUSED NEW_IDS={:?} COMMIT_HASH_ID={:?}",
                     new_ids.len(),
                     commit_hash_id
                 )
             }
-            Ok(Command::NewChunks { chunks }) => format!("NEW_CHUNKS {:?}", chunks.len()),
+            Ok(Command::NewChunks {
+                objects_chunks,
+                hashes_chunks,
+            }) => {
+                format!(
+                    "NEW_CHUNKS OBJECTS={:?} HASHES={:?}",
+                    objects_chunks.as_ref().map(|c| c.len()).unwrap_or(0),
+                    hashes_chunks.as_ref().map(|c| c.len()).unwrap_or(0),
+                )
+            }
             Ok(Command::MarkNewIds { new_ids }) => format!("NEW_IDS {:?}", new_ids.len()),
             Ok(Command::Close { .. }) => "CLOSE".to_owned(),
             Err(_) => "ERR".to_owned(),
@@ -121,12 +145,13 @@ impl GCThread {
 
         log!(
             // "GC_DEBUG NMSG={:?} MSG={:?} PENDING={:?} GLOBAL_LEN={:?} GLOBAL_CAP={:?}",
-            "GC_DEBUG NMSG={:?} MSG={:?} PENDING={:?} VALUES_LIST={:?} COUNTER_LIST={:?}",
+            "GC_DEBUG NMSG={:?} MSG={:?} PENDING={:?} OBJECT_LIST={:?} HASH_LIST={:?} COUNTER_LIST={:?}",
             self.recv.len(),
             msg,
             self.pending.len(),
             // self.values_map.len(),
             self.objects_view.nchunks(),
+            self.hashes_view.nchunks(),
             self.global_counter.entries.list_of_chunks.len(),
             // self.global.len(),
             // self.global.capacity(),
@@ -158,8 +183,7 @@ impl GCThread {
     }
 
     fn traverse_mark_impl(
-        &self,
-        global_counter: &mut IndexMap<HashId, Option<u8>>,
+        &mut self,
         hash_id: HashId,
         counter: u8,
         traversed: &mut usize,
@@ -188,7 +212,8 @@ impl GCThread {
             .unwrap();
 
         {
-            let value_counter = global_counter
+            let value_counter = self
+                .global_counter
                 .get_mut(hash_id)
                 .unwrap()
                 .unwrap()
@@ -203,7 +228,6 @@ impl GCThread {
                 None => break,
             };
             self.traverse_mark_impl(
-                global_counter,
                 hash_id,
                 counter,
                 traversed,
@@ -222,9 +246,7 @@ impl GCThread {
         max_depth: &mut usize,
         objets_total_bytes: &mut usize,
     ) {
-        let mut global_counter = std::mem::replace(&mut self.global_counter, IndexMap::empty());
         self.traverse_mark_impl(
-            &mut global_counter,
             hash_id,
             counter,
             traversed,
@@ -232,7 +254,6 @@ impl GCThread {
             max_depth,
             objets_total_bytes,
         );
-        self.global_counter = global_counter;
     }
 
     fn take_unused(&mut self) -> Vec<HashId> {
@@ -250,6 +271,7 @@ impl GCThread {
 
         for hash_id in &unused {
             self.objects_view.clear(*hash_id).unwrap();
+            self.hashes_view.clear(*hash_id).unwrap();
             self.global_counter.insert_at(*hash_id, None).unwrap();
         }
 
@@ -278,7 +300,13 @@ impl GCThread {
         let mut traversed = 0;
         let mut max_depth = 0;
         let mut objets_total_bytes = 0;
-        self.traverse_mark(commit_hash_id, self.counter, &mut traversed, &mut max_depth, &mut objets_total_bytes);
+        self.traverse_mark(
+            commit_hash_id,
+            self.counter,
+            &mut traversed,
+            &mut max_depth,
+            &mut objets_total_bytes,
+        );
 
         let unused = self.take_unused();
 

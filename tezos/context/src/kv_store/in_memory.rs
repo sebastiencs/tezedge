@@ -6,6 +6,7 @@
 use std::{
     borrow::Cow,
     collections::{hash_map::DefaultHasher, VecDeque},
+    convert::TryFrom,
     hash::Hasher,
     mem::size_of,
     rc::Rc,
@@ -48,16 +49,16 @@ use super::{HashId, VacantObjectHash};
 
 #[derive(Debug)]
 pub struct HashValueStore {
-    hashes: IndexMap<HashId, ObjectHash>,
+    hashes: SharedIndexMap<HashId, Option<Box<ObjectHash>>>,
     values: SharedIndexMap<HashId, Option<Box<[u8]>>>,
     free_ids: Option<Consumer<HashId>>,
     new_ids: ChunkedVec<HashId>,
     values_bytes: usize,
 }
 
-// const VALUES_LENGTH: usize = 10_000_000;
 // pub const VALUES_LENGTH: usize = 1_000;
-pub const VALUES_LENGTH: usize = 200_000;
+// pub const NEW_IDS_LIMIT: usize = 1000;
+pub const VALUES_LENGTH: usize = 100_000;
 pub const NEW_IDS_LIMIT: usize = 20_000;
 
 impl HashValueStore {
@@ -66,7 +67,7 @@ impl HashValueStore {
         T: Into<Option<Consumer<HashId>>>,
     {
         Self {
-            hashes: IndexMap::with_chunk_capacity(10_000_000), // ~320MB
+            hashes: SharedIndexMap::with_chunk_capacity(VALUES_LENGTH), // ~320MB
             values: SharedIndexMap::with_chunk_capacity(VALUES_LENGTH), // ~80MB
             free_ids: consumer.into(),
             new_ids: ChunkedVec::with_chunk_capacity(512 * 1024), // ~8KB
@@ -112,7 +113,7 @@ impl HashValueStore {
 
     pub(crate) fn clear(&mut self) {
         *self = Self {
-            hashes: IndexMap::empty(),
+            hashes: SharedIndexMap::empty(),
             values: SharedIndexMap::empty(),
             free_ids: self.free_ids.take(),
             new_ids: ChunkedVec::empty(),
@@ -121,15 +122,28 @@ impl HashValueStore {
     }
 
     pub(crate) fn get_vacant_object_hash(&mut self) -> Result<VacantObjectHash, HashIdError> {
-        let (hash_id, entry) = if let Some(free_id) = self.get_free_id() {
-            (free_id, self.hashes.get_mut(free_id)?.ok_or(HashIdError)?)
-        } else {
-            self.hashes.get_vacant_entry()?
+        let hash_id = match self.get_free_id() {
+            Some(free_hash_id) => free_hash_id,
+            None => {
+                let next = self.hashes.len();
+                HashId::try_from(next)?
+            }
         };
+
+        // let index = self.temp_hashes.len();
+        // self.temp_hashes.push((hash_id, Default::default()));
+
+        // let (hash_id, entry) = if let Some(free_id) = self.get_free_id() {
+        //     (free_id, self.hashes.get_mut(free_id)?.ok_or(HashIdError)?)
+        // } else {
+        //     self.hashes.get_vacant_entry()?
+        // };
+
         self.new_ids.push(hash_id);
 
         Ok(VacantObjectHash {
-            entry: Some(entry),
+            entry: None,
+            map: Some(&mut self.hashes),
             hash_id,
         })
     }
@@ -146,8 +160,18 @@ impl HashValueStore {
         self.values.insert_at(hash_id, value)
     }
 
-    pub(crate) fn get_hash(&self, hash_id: HashId) -> Result<Option<&ObjectHash>, HashIdError> {
-        self.hashes.get(hash_id)
+    pub(crate) fn get_hash(&self, hash_id: HashId) -> Result<Option<ObjectHash>, HashIdError> {
+        let hash = self
+            .hashes
+            .with(hash_id, |hash| match hash {
+                Some(Some(hash)) => Some(**hash),
+                _ => return None,
+            })
+            .unwrap();
+
+        Ok(hash)
+
+        // self.hashes.get(hash_id)
     }
 
     pub(crate) fn with_value<F, R>(&self, hash_id: HashId, fun: F) -> Result<R, DBError>
@@ -236,7 +260,7 @@ impl KeyValueStoreBackend for InMemory {
     }
 
     fn get_hash(&self, object_ref: ObjectReference) -> Result<Cow<ObjectHash>, DBError> {
-        self.get_hash(object_ref.hash_id()).map(Cow::Borrowed)
+        self.get_hash(object_ref.hash_id()).map(Cow::Owned)
     }
 
     fn get_vacant_object_hash(&mut self) -> Result<VacantObjectHash, DBError> {
@@ -411,7 +435,8 @@ impl InMemory {
             let (sender, recv) = crossbeam_channel::unbounded();
             let (prod, cons) = tezos_spsc::bounded(2_000_000);
             let hashes = HashValueStore::new(cons);
-            let hashes_view = hashes.values.get_view();
+            let objects_view = hashes.values.get_view();
+            let hashes_view = hashes.hashes.get_view();
 
             let thread_handle = std::thread::Builder::new()
                 .name("ctx-inmem-gc-thread".to_string())
@@ -425,7 +450,8 @@ impl InMemory {
                         // global: IndexMap::with_chunk_capacity(10_000_000),
                         global_counter: IndexMap::with_chunk_capacity(VALUES_LENGTH),
                         counter: 0,
-                        objects_view: hashes_view,
+                        objects_view,
+                        hashes_view,
                     }
                     .run()
                 })?;
@@ -534,12 +560,24 @@ impl InMemory {
     }
 
     fn maybe_send_new_chunks_to_gc(&mut self) {
-        if let Some(chunks) = self.hashes.values.clone_new_chunks() {
-            // println!("MAIN THREAD LIST={:?}", self.hashes.values.entries.list_of_chunks.len());
-            self.sender
-                .as_mut()
-                .map(|s| s.send(Command::NewChunks { chunks }).unwrap());
+        let sender = match self.sender.as_ref() {
+            Some(sender) => sender,
+            None => return,
         };
+
+        let objects_chunks = self.hashes.values.clone_new_chunks();
+        let hashes_chunks = self.hashes.hashes.clone_new_chunks();
+
+        if objects_chunks.is_none() && hashes_chunks.is_none() {
+            return;
+        }
+
+        sender
+            .send(Command::NewChunks {
+                objects_chunks,
+                hashes_chunks,
+            })
+            .unwrap();
     }
 
     fn commit_impl(
@@ -596,13 +634,15 @@ impl InMemory {
     pub(crate) fn get_vacant_entry_hash(&mut self) -> Result<VacantObjectHash, DBError> {
         if self.hashes.new_ids.len() >= NEW_IDS_LIMIT {
             let new_ids = self.hashes.take_new_ids();
-            self.sender.as_ref().map(|s| s.send(Command::MarkNewIds { new_ids }));
+            self.sender
+                .as_ref()
+                .map(|s| s.send(Command::MarkNewIds { new_ids }));
         }
 
         self.hashes.get_vacant_object_hash().map_err(Into::into)
     }
 
-    pub(crate) fn get_hash(&self, hash_id: HashId) -> Result<&ObjectHash, DBError> {
+    pub(crate) fn get_hash(&self, hash_id: HashId) -> Result<ObjectHash, DBError> {
         self.hashes
             .get_hash(hash_id)?
             .ok_or_else(|| DBError::HashNotFound {
