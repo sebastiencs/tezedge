@@ -43,6 +43,9 @@ assert_eq_size!([u8; 16], Option<Box<[u8]>>);
 assert_eq_size!([u8; 16], Option<Arc<[u8]>>);
 
 pub(crate) enum Command {
+    MarkNewIds {
+        new_ids: ChunkedVec<HashId>,
+    },
     MarkReused {
         new_ids: ChunkedVec<HashId>,
         commit_hash_id: HashId,
@@ -66,6 +69,9 @@ impl GCThread {
             match msg {
                 Ok(Command::NewChunks { chunks }) => {
                     self.add_chunks(chunks);
+                }
+                Ok(Command::MarkNewIds { new_ids }) => {
+                    self.mark_new_ids(new_ids);
                 }
                 Ok(Command::MarkReused {
                     // reused,
@@ -108,6 +114,7 @@ impl GCThread {
                 )
             }
             Ok(Command::NewChunks { chunks }) => format!("NEW_CHUNKS {:?}", chunks.len()),
+            Ok(Command::MarkNewIds { new_ids }) => format!("NEW_IDS {:?}", new_ids.len()),
             Ok(Command::Close { .. }) => "CLOSE".to_owned(),
             Err(_) => "ERR".to_owned(),
         };
@@ -158,6 +165,7 @@ impl GCThread {
         traversed: &mut usize,
         depth: usize,
         max_depth: &mut usize,
+        objets_total_bytes: &mut usize,
     ) {
         *traversed += 1;
         *max_depth = depth.max(*max_depth);
@@ -170,6 +178,8 @@ impl GCThread {
                     Some(Some(object_bytes)) => object_bytes,
                     _ => panic!(),
                 };
+
+                *objets_total_bytes += object_bytes.len();
 
                 for (index, hash_id) in iter_hash_ids(object_bytes).enumerate() {
                     hash_ids[index] = Some(hash_id);
@@ -199,6 +209,7 @@ impl GCThread {
                 traversed,
                 depth + 1,
                 max_depth,
+                objets_total_bytes,
             );
         }
     }
@@ -209,6 +220,7 @@ impl GCThread {
         counter: u8,
         traversed: &mut usize,
         max_depth: &mut usize,
+        objets_total_bytes: &mut usize,
     ) {
         let mut global_counter = std::mem::replace(&mut self.global_counter, IndexMap::empty());
         self.traverse_mark_impl(
@@ -218,6 +230,7 @@ impl GCThread {
             traversed,
             1,
             max_depth,
+            objets_total_bytes,
         );
         self.global_counter = global_counter;
     }
@@ -243,14 +256,18 @@ impl GCThread {
         unused
     }
 
-    fn mark_reused(&mut self, new_ids: ChunkedVec<HashId>, commit_hash_id: HashId) {
-        let now = std::time::Instant::now();
-
+    fn mark_new_ids(&mut self, new_ids: ChunkedVec<HashId>) {
         for hash_id in new_ids.iter() {
             self.global_counter
                 .insert_at(*hash_id, Some(self.counter))
                 .unwrap();
         }
+    }
+
+    fn mark_reused(&mut self, new_ids: ChunkedVec<HashId>, commit_hash_id: HashId) {
+        let now = std::time::Instant::now();
+
+        self.mark_new_ids(new_ids);
 
         if !self.recv.is_empty() {
             // println!("DONT MARK");
@@ -260,7 +277,8 @@ impl GCThread {
 
         let mut traversed = 0;
         let mut max_depth = 0;
-        self.traverse_mark(commit_hash_id, self.counter, &mut traversed, &mut max_depth);
+        let mut objets_total_bytes = 0;
+        self.traverse_mark(commit_hash_id, self.counter, &mut traversed, &mut max_depth, &mut objets_total_bytes);
 
         let unused = self.take_unused();
 
@@ -271,10 +289,11 @@ impl GCThread {
         self.send_unused(unused);
 
         log!(
-            "MARK_REUSED SENT={:?} TRAVERSED={:?} MAX_DEPTH={:?} TIME={:?}",
+            "MARK_REUSED SENT={:?} TRAVERSED={:?} MAX_DEPTH={:?} OBJECT_TOTAL_BYTES={:?} TIME={:?}",
             sent,
             traversed,
             max_depth,
+            objets_total_bytes,
             now.elapsed(),
         );
 
