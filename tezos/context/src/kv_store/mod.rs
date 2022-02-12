@@ -8,7 +8,7 @@ use std::convert::{TryFrom, TryInto};
 use modular_bitfield::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::ObjectHash;
+use crate::{chunks::SharedIndexMap, ObjectHash};
 
 pub mod hashes;
 pub mod in_memory;
@@ -127,6 +127,7 @@ impl HashId {
 
 pub struct VacantObjectHash<'a> {
     entry: Option<&'a mut ObjectHash>,
+    map: Option<&'a mut SharedIndexMap<HashId, Option<Box<ObjectHash>>>>,
     hash_id: HashId,
 }
 
@@ -135,6 +136,7 @@ impl<'a> VacantObjectHash<'a> {
         Self {
             entry: Some(entry),
             hash_id,
+            map: None,
         }
     }
 
@@ -144,7 +146,18 @@ impl<'a> VacantObjectHash<'a> {
     {
         if let Some(entry) = self.entry {
             fun(entry);
-        };
+        } else if let Some(map) = self.map {
+            let mut hash = Box::<ObjectHash>::default();
+            fun(&mut hash);
+
+            let hash_id: usize = self.hash_id.try_into().unwrap();
+
+            if map.len() == hash_id {
+                map.push(hash).unwrap();
+            } else {
+                map.insert_at(self.hash_id, hash).unwrap();
+            }
+        }
         self.hash_id
     }
 
