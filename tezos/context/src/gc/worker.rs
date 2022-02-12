@@ -243,11 +243,7 @@ impl GCThread {
         unused
     }
 
-    fn mark_reused(
-        &mut self,
-        new_ids: ChunkedVec<HashId>,
-        commit_hash_id: HashId,
-    ) {
+    fn mark_reused(&mut self, new_ids: ChunkedVec<HashId>, commit_hash_id: HashId) {
         let now = std::time::Instant::now();
 
         for hash_id in new_ids.iter() {
