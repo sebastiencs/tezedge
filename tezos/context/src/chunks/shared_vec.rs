@@ -9,8 +9,37 @@ use parking_lot::RwLock;
 use super::DEFAULT_LIST_LENGTH;
 
 #[derive(Debug)]
+struct VecAliveCounter<T> {
+    alive_counter: u32,
+    inner: Vec<T>
+}
+
+impl<T> std::ops::Deref for VecAliveCounter<T> {
+    type Target = Vec<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<T> std::ops::DerefMut for VecAliveCounter<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
+impl<T> VecAliveCounter<T> {
+    fn with_capacity(cap: usize) -> Self {
+        Self {
+            alive_counter: 0,
+            inner: Vec::with_capacity(cap),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct SharedChunk<T> {
-    inner: Arc<RwLock<Vec<T>>>,
+    inner: Arc<RwLock<VecAliveCounter<T>>>,
 }
 
 impl<T> Clone for SharedChunk<T> {
@@ -24,7 +53,7 @@ impl<T> Clone for SharedChunk<T> {
 impl<T> SharedChunk<T> {
     fn with_capacity(chunk_capacity: usize) -> Self {
         Self {
-            inner: Arc::new(RwLock::new(Vec::with_capacity(chunk_capacity))),
+            inner: Arc::new(RwLock::new(VecAliveCounter::with_capacity(chunk_capacity))),
         }
     }
 
@@ -36,14 +65,6 @@ impl<T> SharedChunk<T> {
         fun(inner.get(index))
     }
 
-    fn with_mut<F, R>(&self, index: usize, fun: F) -> R
-    where
-        F: FnOnce(Option<&mut T>) -> R,
-    {
-        let mut inner = self.inner.write();
-        fun(inner.get_mut(index))
-    }
-
     fn len(&self) -> usize {
         // TODO: Should we optimize this ?
         self.inner.read().len()
@@ -51,6 +72,44 @@ impl<T> SharedChunk<T> {
 
     fn push(&self, elem: T) {
         self.inner.write().push(elem);
+    }
+}
+
+impl<T> SharedChunk<Option<T>> {
+    fn clear(&self, index: usize) -> Option<T> {
+        let mut inner = self.inner.write();
+
+        let old = match std::mem::take(&mut inner[index]) {
+            Some(old) => old,
+            None => return None,
+        };
+
+        inner.alive_counter = inner.alive_counter.checked_sub(1).unwrap();
+
+        if inner.alive_counter == 0 {
+            inner.inner = Vec::new();
+        }
+
+        Some(old)
+    }
+
+    fn insert_alive_at(
+        &self,
+        index: usize,
+        value: Option<T>,
+        chunk_capacity: usize
+    ) {
+        let mut inner = self.inner.write();
+
+        if inner.capacity() == 0 {
+            inner.inner = Vec::with_capacity(chunk_capacity);
+            inner.resize_with(chunk_capacity, Default::default);
+        }
+
+        if std::mem::replace(&mut inner[index], value).is_none() {
+            inner.alive_counter += 1;
+            assert!(inner.alive_counter as usize <= chunk_capacity);
+        }
     }
 }
 
@@ -170,22 +229,7 @@ impl<T> SharedChunkedVec<T> {
     {
         let (list_index, chunk_index) = self.get_indexes_at(index);
 
-        match self.list_of_chunks.get(list_index) {
-            Some(chunk) => chunk.with(chunk_index, fun),
-            None => fun(None),
-        }
-    }
-
-    fn with_mut<F, R>(&self, index: usize, fun: F) -> R
-    where
-        F: FnOnce(Option<&mut T>) -> R,
-    {
-        let (list_index, chunk_index) = self.get_indexes_at(index);
-
-        match self.list_of_chunks.get(list_index) {
-            Some(chunk) => chunk.with_mut(chunk_index, fun),
-            None => fun(None),
-        }
+        self.list_of_chunks[list_index].with(chunk_index, fun)
     }
 
     pub fn push(&mut self, elem: T) -> usize {
@@ -196,14 +240,24 @@ impl<T> SharedChunkedVec<T> {
 
         index
     }
+}
 
-    pub fn resize_with<F>(&mut self, new_len: usize, mut fun: F)
-    where
-        F: FnMut() -> T,
-    {
+impl<T> SharedChunkedVec<Option<T>>
+{
+    fn clear(&self, index: usize) -> Option<T> {
+        let (list_index, chunk_index) = self.get_indexes_at(index);
+        self.list_of_chunks[list_index].clear(chunk_index)
+    }
+
+    pub fn resize_with(&mut self, new_len: usize) {
         while self.nelems < new_len {
-            self.push(fun());
+            self.push(None);
         }
+    }
+
+    fn insert_at(&self, index: usize, value: Option<T>) {
+        let (list_index, chunk_index) = self.get_indexes_at(index);
+        self.list_of_chunks[list_index].insert_alive_at(chunk_index, value, self.chunk_capacity);
     }
 }
 
@@ -271,30 +325,12 @@ where
         Ok(index < self.entries.len())
     }
 
-    pub fn set(&mut self, key: K, value: V) -> Result<V, K::Error> {
-        let index = key.try_into()?;
-
-        let old = self
-            .entries
-            .with_mut(index, |old| std::mem::replace(old.unwrap(), value));
-
-        Ok(old)
-    }
-
     pub fn with<F, R>(&self, key: K, fun: F) -> Result<R, K::Error>
     where
         F: FnOnce(Option<&V>) -> R,
     {
         let index = key.try_into()?;
         Ok(self.entries.with(index, fun))
-    }
-
-    pub fn with_mut<F, R>(&self, key: K, fun: F) -> Result<R, K::Error>
-    where
-        F: FnOnce(Option<&mut V>) -> R,
-    {
-        let index = key.try_into()?;
-        Ok(self.entries.with_mut(index, fun))
     }
 
     pub fn chunk_index_of(&self, key: K) -> Result<usize, K::Error> {
@@ -313,24 +349,26 @@ where
     }
 }
 
-impl<K, V> SharedIndexMap<K, V>
+impl<K, V> SharedIndexMap<K, Option<V>>
 where
     K: TryInto<usize>,
-    K: TryFrom<usize>,
-    V: Default,
 {
-    pub fn insert_at(&mut self, key: K, value: V) -> Result<V, <K as TryInto<usize>>::Error> {
+    pub fn clear(&self, key: K) -> Result<Option<V>, K::Error>
+    {
+        let index = key.try_into()?;
+        Ok(self.entries.clear(index))
+    }
+
+    pub fn insert_at(&mut self, key: K, value: V) -> Result<(), K::Error> {
         let index: usize = key.try_into()?;
 
         if index >= self.entries.len() {
-            self.entries.resize_with(index + 1, V::default);
+            self.entries.resize_with(index + 1);
         }
 
-        let old = self
-            .entries
-            .with_mut(index, |old| std::mem::replace(old.unwrap(), value));
+        self.entries.insert_at(index, Some(value));
 
-        Ok(old)
+        Ok(())
     }
 }
 
@@ -348,26 +386,24 @@ impl<K, V> SharedIndexMapView<K, V> {
     }
 }
 
+impl<K, V> SharedIndexMapView<K, Option<V>>
+where
+    K: TryInto<usize>,
+{
+    pub fn clear(&self, key: K) -> Result<Option<V>, K::Error> {
+        self.inner.clear(key)
+    }
+}
+
 impl<K, V> SharedIndexMapView<K, V>
 where
     K: TryInto<usize>,
 {
-    pub fn set(&mut self, key: K, value: V) -> Result<V, K::Error> {
-        self.inner.set(key, value)
-    }
-
     pub fn with<F, R>(&self, key: K, fun: F) -> Result<R, K::Error>
     where
         F: FnOnce(Option<&V>) -> R,
     {
         self.inner.with(key, fun)
-    }
-
-    pub fn with_mut<F, R>(&self, key: K, fun: F) -> Result<R, K::Error>
-    where
-        F: FnOnce(Option<&mut V>) -> R,
-    {
-        self.inner.with_mut(key, fun)
     }
 
     pub fn chunk_index_of(&self, key: K) -> Result<usize, K::Error> {
