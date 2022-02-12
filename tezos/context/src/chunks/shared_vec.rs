@@ -11,7 +11,7 @@ use super::DEFAULT_LIST_LENGTH;
 #[derive(Debug)]
 struct VecAliveCounter<T> {
     alive_counter: u32,
-    inner: Vec<T>
+    inner: Vec<T>,
 }
 
 impl<T> std::ops::Deref for VecAliveCounter<T> {
@@ -93,12 +93,7 @@ impl<T> SharedChunk<Option<T>> {
         Some(old)
     }
 
-    fn insert_alive_at(
-        &self,
-        index: usize,
-        value: Option<T>,
-        chunk_capacity: usize
-    ) {
+    fn insert_alive_at(&self, index: usize, value: Option<T>, chunk_capacity: usize) {
         let mut inner = self.inner.write();
 
         if inner.capacity() == 0 {
@@ -242,8 +237,7 @@ impl<T> SharedChunkedVec<T> {
     }
 }
 
-impl<T> SharedChunkedVec<Option<T>>
-{
+impl<T> SharedChunkedVec<Option<T>> {
     fn clear(&self, index: usize) -> Option<T> {
         let (list_index, chunk_index) = self.get_indexes_at(index);
         self.list_of_chunks[list_index].clear(chunk_index)
@@ -291,7 +285,7 @@ impl<K, V> SharedIndexMap<K, V> {
 
     pub fn get_view(&self) -> SharedIndexMapView<K, V> {
         SharedIndexMapView {
-            inner: Self::with_chunk_capacity_empty(self.entries.chunk_capacity)
+            inner: Self::with_chunk_capacity_empty(self.entries.chunk_capacity),
         }
     }
 
@@ -353,8 +347,7 @@ impl<K, V> SharedIndexMap<K, Option<V>>
 where
     K: TryInto<usize>,
 {
-    pub fn clear(&self, key: K) -> Result<Option<V>, K::Error>
-    {
+    pub fn clear(&self, key: K) -> Result<Option<V>, K::Error> {
         let index = key.try_into()?;
         Ok(self.entries.clear(index))
     }
