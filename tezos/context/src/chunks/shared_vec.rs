@@ -69,13 +69,18 @@ impl<T> SharedChunk<T> {
         // TODO: Should we optimize this ?
         self.inner.read().len()
     }
-
-    fn push(&self, elem: T) {
-        self.inner.write().push(elem);
-    }
 }
 
 impl<T> SharedChunk<Option<T>> {
+    fn push(&self, elem: Option<T>) {
+        let mut inner = self.inner.write();
+
+        if elem.is_some() {
+            inner.alive_counter += 1;
+        }
+        inner.push(elem);
+    }
+
     fn clear(&self, index: usize) -> Option<T> {
         let mut inner = self.inner.write();
 
@@ -226,21 +231,21 @@ impl<T> SharedChunkedVec<T> {
 
         self.list_of_chunks[list_index].with(chunk_index, fun)
     }
-
-    pub fn push(&mut self, elem: T) -> usize {
-        let index = self.len();
-        self.nelems += 1;
-
-        self.get_next_chunk().push(elem);
-
-        index
-    }
 }
 
 impl<T> SharedChunkedVec<Option<T>> {
     fn clear(&self, index: usize) -> Option<T> {
         let (list_index, chunk_index) = self.get_indexes_at(index);
         self.list_of_chunks[list_index].clear(chunk_index)
+    }
+
+    pub fn push(&mut self, elem: Option<T>) -> usize {
+        let index = self.len();
+        self.nelems += 1;
+
+        self.get_next_chunk().push(elem);
+
+        index
     }
 
     pub fn resize_with(&mut self, new_len: usize) {
@@ -333,12 +338,12 @@ where
     }
 }
 
-impl<K, V> SharedIndexMap<K, V>
+impl<K, V> SharedIndexMap<K, Option<V>>
 where
     K: TryFrom<usize>,
 {
     pub fn push(&mut self, value: V) -> Result<K, <K as TryFrom<usize>>::Error> {
-        let index = self.entries.push(value);
+        let index = self.entries.push(Some(value));
         K::try_from(index)
     }
 }
