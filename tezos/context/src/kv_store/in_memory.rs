@@ -56,7 +56,9 @@ pub struct HashValueStore {
 }
 
 // const VALUES_LENGTH: usize = 10_000_000;
-pub const VALUES_LENGTH: usize = 1_000;
+// pub const VALUES_LENGTH: usize = 1_000;
+pub const VALUES_LENGTH: usize = 200_000;
+pub const NEW_IDS_LIMIT: usize = 20_000;
 
 impl HashValueStore {
     pub(crate) fn new<T>(consumer: T) -> Self
@@ -592,7 +594,7 @@ impl InMemory {
     }
 
     pub(crate) fn get_vacant_entry_hash(&mut self) -> Result<VacantObjectHash, DBError> {
-        if self.hashes.new_ids.len() >= 10_000 {
+        if self.hashes.new_ids.len() >= NEW_IDS_LIMIT {
             let new_ids = self.hashes.take_new_ids();
             self.sender.as_ref().map(|s| s.send(Command::MarkNewIds { new_ids }));
         }
