@@ -55,8 +55,8 @@ pub struct HashValueStore {
     values_bytes: usize,
 }
 
-const VALUES_LENGTH: usize = 10_000_000;
-// const VALUES_LENGTH: usize = 10_000;
+// const VALUES_LENGTH: usize = 10_000_000;
+const VALUES_LENGTH: usize = 1_000;
 
 impl HashValueStore {
     pub(crate) fn new<T>(consumer: T) -> Self
@@ -433,6 +433,7 @@ impl InMemory {
                         global_counter: IndexMap::with_chunk_capacity(VALUES_LENGTH),
                         counter: 0,
                         objects_view: hashes_view,
+                        nalive_by_chunk: Vec::with_capacity(10_000),
                     }
                     .run()
                 })?;
@@ -581,7 +582,7 @@ impl InMemory {
         self.write_batch(batch)?;
         self.maybe_send_new_chunks_to_gc();
 
-        println!("AFTER_BATCH={:?}", self.hashes.values.len());
+        // println!("AFTER_BATCH={:?}", self.hashes.values.len());
 
         self.put_context_hash(commit_ref)?;
         // if mark_as_applied {

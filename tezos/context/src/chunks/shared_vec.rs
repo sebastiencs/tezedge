@@ -114,6 +114,8 @@ impl<T> SharedChunkedVec<T> {
             return None;
         }
 
+        self.synced_at = self.list_of_chunks.len();
+
         Some(new_chunks.iter().cloned().collect())
     }
 
