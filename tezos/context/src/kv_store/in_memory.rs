@@ -592,6 +592,11 @@ impl InMemory {
     }
 
     pub(crate) fn get_vacant_entry_hash(&mut self) -> Result<VacantObjectHash, DBError> {
+        if self.hashes.new_ids.len() >= 10_000 {
+            let new_ids = self.hashes.take_new_ids();
+            self.sender.as_ref().map(|s| s.send(Command::MarkNewIds { new_ids }));
+        }
+
         self.hashes.get_vacant_object_hash().map_err(Into::into)
     }
 
