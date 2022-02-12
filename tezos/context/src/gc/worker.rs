@@ -34,11 +34,7 @@ pub(crate) struct GCThread {
     pub(crate) debug: bool,
 
     pub(crate) objects_view: SharedIndexMapView<HashId, Option<Box<[u8]>>>,
-    pub(crate) nalive_by_chunk: Vec<u32>,
 
-    // pub(crate) values_map: SharedIndexMap<HashId, Option<>>
-
-    // pub(crate) global: IndexMap<HashId, Option<Arc<[u8]>>>,
     pub(crate) global_counter: IndexMap<HashId, Option<u8>>,
     pub(crate) counter: u8,
 }
@@ -48,9 +44,7 @@ assert_eq_size!([u8; 16], Option<Arc<[u8]>>);
 
 pub(crate) enum Command {
     MarkReused {
-        // values_in_block: ChunkedVec<(HashId, Box<[u8]>)>,
         new_ids: ChunkedVec<HashId>,
-        // reused: ChunkedVec<HashId>,
         commit_hash_id: HashId,
     },
     NewChunks {
@@ -94,9 +88,6 @@ impl GCThread {
     }
 
     fn add_chunks(&mut self, chunks: Vec<SharedChunk<Option<Box<[u8]>>>>) {
-        let new_length = self.nalive_by_chunk.len() + chunks.len();
-        self.nalive_by_chunk.resize(new_length, 0);
-
         self.objects_view.append_chunks(chunks);
     }
 
@@ -241,23 +232,12 @@ impl GCThread {
                 continue;
             }
 
-            self.objects_view.set(hash_id, None).unwrap();
-
-            // self.values_map.insert_at(hash_id, None).unwrap();
-            // self.global.insert_at(hash_id, None).unwrap();
             unused.push(hash_id);
         }
 
         for hash_id in &unused {
+            self.objects_view.clear(*hash_id).unwrap();
             self.global_counter.insert_at(*hash_id, None).unwrap();
-
-            let chunk_of_object = self.objects_view.chunk_index_of(*hash_id).unwrap();
-            let nalive_in_chunk = &mut self.nalive_by_chunk[chunk_of_object];
-            *nalive_in_chunk -= 1;
-
-            if *nalive_in_chunk == 0 {
-                println!("CAN DROP A CHUNK: {:?}", chunk_of_object);
-            }
         }
 
         unused
@@ -265,24 +245,19 @@ impl GCThread {
 
     fn mark_reused(
         &mut self,
-        // mut reused: ChunkedVec<HashId>,
-        // mut values_in_blocks: ChunkedVec<(HashId, Box<[u8]>)>,
         new_ids: ChunkedVec<HashId>,
         commit_hash_id: HashId,
     ) {
         let now = std::time::Instant::now();
 
         for hash_id in new_ids.iter() {
-            let chunk_of_object = self.objects_view.chunk_index_of(*hash_id).unwrap();
-            self.nalive_by_chunk[chunk_of_object] += 1;
-
             self.global_counter
                 .insert_at(*hash_id, Some(self.counter))
                 .unwrap();
         }
 
         if !self.recv.is_empty() {
-            println!("DONT MARK");
+            // println!("DONT MARK");
             // self.send_unused(hashid_without_value);
             return;
         }

@@ -56,7 +56,7 @@ pub struct HashValueStore {
 }
 
 // const VALUES_LENGTH: usize = 10_000_000;
-const VALUES_LENGTH: usize = 1_000;
+pub const VALUES_LENGTH: usize = 1_000;
 
 impl HashValueStore {
     pub(crate) fn new<T>(consumer: T) -> Self
@@ -120,11 +120,6 @@ impl HashValueStore {
 
     pub(crate) fn get_vacant_object_hash(&mut self) -> Result<VacantObjectHash, HashIdError> {
         let (hash_id, entry) = if let Some(free_id) = self.get_free_id() {
-            if self.values.contains_key(free_id)? {
-                if let Some(old_value) = self.values.set(free_id, None)? {
-                    self.values_bytes = self.values_bytes.saturating_sub(old_value.len());
-                }
-            }
             (free_id, self.hashes.get_mut(free_id)?.ok_or(HashIdError)?)
         } else {
             self.hashes.get_vacant_entry()?
@@ -146,11 +141,7 @@ impl HashValueStore {
         hash_id: HashId,
         value: Box<[u8]>,
     ) -> Result<(), HashIdError> {
-        self.values_bytes = self.values_bytes.saturating_add(value.len());
-        if let Some(old) = self.values.insert_at(hash_id, Some(value))? {
-            self.values_bytes = self.values_bytes.saturating_sub(old.len());
-        }
-        Ok(())
+        self.values.insert_at(hash_id, value)
     }
 
     pub(crate) fn get_hash(&self, hash_id: HashId) -> Result<Option<&ObjectHash>, HashIdError> {
@@ -433,7 +424,6 @@ impl InMemory {
                         global_counter: IndexMap::with_chunk_capacity(VALUES_LENGTH),
                         counter: 0,
                         objects_view: hashes_view,
-                        nalive_by_chunk: Vec::with_capacity(10_000),
                     }
                     .run()
                 })?;
