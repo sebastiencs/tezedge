@@ -773,7 +773,6 @@ mod tests {
         let mut repo = InMemory::try_new().unwrap();
         let mut stats = SerializeStats::default();
         let mut batch = ChunkedVec::with_chunk_capacity(1024);
-        let mut older_objects = ChunkedVec::with_chunk_capacity(1024);
         let fake_hash_id = HashId::try_from(1).unwrap();
 
         // Test Object::Directory
@@ -816,7 +815,6 @@ mod tests {
             &strings,
             &mut stats,
             &mut batch,
-            &mut older_objects,
             &mut repo,
             None,
         )
@@ -876,7 +874,6 @@ mod tests {
             &strings,
             &mut stats,
             &mut batch,
-            &mut older_objects,
             &mut repo,
             None,
         )
@@ -910,7 +907,6 @@ mod tests {
             &strings,
             &mut stats,
             &mut batch,
-            &mut older_objects,
             &mut repo,
             None,
         )
@@ -944,7 +940,6 @@ mod tests {
             &strings,
             &mut stats,
             &mut batch,
-            &mut older_objects,
             &mut repo,
             None,
         )
@@ -993,23 +988,10 @@ mod tests {
 
         let hash_id = HashId::new(123).unwrap();
         batch.clear();
-        older_objects.clear();
         serialize_inode(
-            inode,
-            &mut data,
-            hash_id,
-            &storage,
-            &strings,
-            &mut stats,
-            &mut batch,
-            &mut older_objects,
-            &mut repo,
+            inode, &mut data, hash_id, &storage, &strings, &mut stats, &mut batch, &mut repo,
         )
         .unwrap();
-
-        let older: HashSet<HashId> =
-            HashSet::from_iter(older_objects.clone().iter().map(|v| v.clone()));
-        assert_eq!(older.len(), 32);
 
         let new_inode_id =
             deserialize_inode(&batch[0].1, &mut storage, &mut strings, &repo).unwrap();
@@ -1078,15 +1060,7 @@ mod tests {
 
         batch.clear();
         serialize_inode(
-            inode_id,
-            &mut data,
-            hash_id,
-            &storage,
-            &strings,
-            &mut stats,
-            &mut batch,
-            &mut older_objects,
-            &mut repo,
+            inode_id, &mut data, hash_id, &storage, &strings, &mut stats, &mut batch, &mut repo,
         )
         .unwrap();
 
@@ -1116,7 +1090,6 @@ mod tests {
         let mut strings = StringInterner::default();
         let mut stats = SerializeStats::default();
         let mut batch = ChunkedVec::with_chunk_capacity(1024);
-        let mut older_objects = ChunkedVec::with_chunk_capacity(1024);
 
         let fake_hash_id = HashId::try_from(1).unwrap();
 
@@ -1147,7 +1120,6 @@ mod tests {
             &strings,
             &mut stats,
             &mut batch,
-            &mut older_objects,
             &mut repo,
             None,
         )
