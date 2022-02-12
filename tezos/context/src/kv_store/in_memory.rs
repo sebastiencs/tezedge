@@ -412,11 +412,13 @@ impl InMemory {
             .parse::<bool>()
             .expect("Provided `DISABLE_INMEM_CONTEXT_GC` value cannot be converted to bool");
 
-        let (sender, cons, thread_handle) = if garbage_collector_disabled {
-            (None, None, None)
+        let (sender, thread_handle, hashes) = if garbage_collector_disabled {
+            (None, None, HashValueStore::new(None))
         } else {
             let (sender, recv) = crossbeam_channel::unbounded();
             let (prod, cons) = tezos_spsc::bounded(2_000_000);
+            let hashes = HashValueStore::new(cons);
+            let hashes_view = hashes.values.get_view();
 
             let thread_handle = std::thread::Builder::new()
                 .name("ctx-inmem-gc-thread".to_string())
@@ -430,16 +432,15 @@ impl InMemory {
                         // global: IndexMap::with_chunk_capacity(10_000_000),
                         global_counter: IndexMap::with_chunk_capacity(VALUES_LENGTH),
                         counter: 0,
-                        values_map: SharedIndexMap::with_chunk_capacity_empty(VALUES_LENGTH),
+                        objects_view: hashes_view,
                     }
                     .run()
                 })?;
 
-            (Some(sender), Some(cons), Some(thread_handle))
+            (Some(sender), Some(thread_handle), hashes)
         };
 
         let current_cycle = ChunkedVec::with_chunk_capacity(512 * 1024);
-        let hashes = HashValueStore::new(cons);
         let context_hashes = Default::default();
 
         let mut context_hashes_cycles = VecDeque::with_capacity(PRESERVE_CYCLE_COUNT);
