@@ -670,7 +670,6 @@ mod tests {
 
         let mut strings = StringInterner::default();
         let mut output = Vec::new();
-        let mut older_objects = ChunkedVec::with_chunk_capacity(1024);
         let mut stats = SerializeStats::default();
 
         // Create HashId ready to be commited
@@ -812,7 +811,6 @@ mod tests {
                             &strings,
                             &mut stats,
                             &mut batch,
-                            &mut older_objects,
                             repo,
                             offset,
                         )
@@ -839,7 +837,6 @@ mod tests {
                     &strings,
                     &mut stats,
                     &mut batch,
-                    &mut older_objects,
                     repo,
                     offset,
                 )
