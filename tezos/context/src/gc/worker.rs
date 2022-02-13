@@ -39,7 +39,7 @@ pub(crate) struct GCThread {
     pub(crate) debug: bool,
 
     pub(crate) objects_view: SharedIndexMapView<HashId, Option<Box<[u8]>>>,
-    pub(crate) hashes_view: SharedIndexMapView<HashId, ObjectHash>,
+    pub(crate) hashes_view: SharedIndexMapView<HashId, Option<ObjectHash>>,
 
     pub(crate) global_counter: IndexMap<HashId, Option<u8>>,
     pub(crate) counter: u8,
@@ -58,7 +58,7 @@ pub(crate) enum Command {
     },
     NewChunks {
         objects_chunks: Option<Vec<SharedChunk<Option<Box<[u8]>>>>>,
-        hashes_chunks: Option<Vec<SharedChunk<ObjectHash>>>,
+        hashes_chunks: Option<Vec<SharedChunk<Option<ObjectHash>>>>,
     },
     Close,
 }
@@ -106,7 +106,7 @@ impl GCThread {
     fn add_chunks(
         &mut self,
         objects_chunks: Option<Vec<SharedChunk<Option<Box<[u8]>>>>>,
-        hashes_chunks: Option<Vec<SharedChunk<ObjectHash>>>,
+        hashes_chunks: Option<Vec<SharedChunk<Option<ObjectHash>>>>,
     ) {
         if let Some(objects_chunks) = objects_chunks {
             self.objects_view.append_chunks(objects_chunks);
@@ -205,7 +205,10 @@ impl GCThread {
             .with(hash_id, |object_bytes| {
                 let object_bytes = match object_bytes {
                     Some(Some(object_bytes)) => object_bytes,
-                    _ => panic!(),
+                    _ => {
+                        let chunk = self.objects_view.chunk_index_of(hash_id).unwrap();
+                        panic!("Missing Object {:?} chunk={:?}", hash_id, chunk);
+                    }
                 };
 
                 *objets_total_bytes += object_bytes.len();
@@ -285,7 +288,7 @@ impl GCThread {
 
             // assert_eq!(obj_dealloc, hash_dealloc);
 
-            // if hash_dealloc {
+            // if obj_dealloc {
             //     println!("DEALLOCATED CHUNK({:?})", chunk);
             // }
 
