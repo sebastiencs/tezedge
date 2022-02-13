@@ -121,23 +121,17 @@ impl HashValueStore {
     }
 
     pub(crate) fn get_vacant_object_hash(&mut self) -> Result<VacantObjectHash, HashIdError> {
-        let hash_id = match self.get_free_id() {
+        let vacant = match self.get_free_id() {
             Some(free_hash_id) => {
-                free_hash_id
+                self.new_ids.push(free_hash_id);
+                VacantObjectHash::new_existing_id(&mut self.hashes, free_hash_id)
             },
             None => {
-                let next = self.hashes.len();
-                HashId::try_from(next)?
-            }
+                VacantObjectHash::new_push(&mut self.hashes, &mut self.new_ids)
+            },
         };
 
-        self.new_ids.push(hash_id);
-
-        Ok(VacantObjectHash {
-            entry: None,
-            map: Some(&mut self.hashes),
-            hash_id,
-        })
+        Ok(vacant)
     }
 
     fn get_free_id(&mut self) -> Option<HashId> {
