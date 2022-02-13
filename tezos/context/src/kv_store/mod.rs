@@ -8,7 +8,10 @@ use std::convert::{TryFrom, TryInto};
 use modular_bitfield::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::{chunks::{SharedIndexMap, ChunkedVec}, ObjectHash};
+use crate::{
+    chunks::{ChunkedVec, SharedIndexMap},
+    ObjectHash,
+};
 
 pub mod hashes;
 pub mod in_memory;
@@ -134,7 +137,7 @@ impl HashId {
 enum Vacant<'a> {
     ByRef {
         entry_ref: &'a mut ObjectHash,
-        hash_id: HashId
+        hash_id: HashId,
     },
     Push {
         map: &'a mut SharedIndexMap<HashId, Option<Box<ObjectHash>>>,
@@ -143,7 +146,7 @@ enum Vacant<'a> {
     UseFreeId {
         map: &'a mut SharedIndexMap<HashId, Option<Box<ObjectHash>>>,
         hash_id: HashId,
-    }
+    },
 }
 
 pub struct VacantObjectHash<'a> {
@@ -154,30 +157,27 @@ pub struct VacantObjectHash<'a> {
 impl<'a> VacantObjectHash<'a> {
     pub fn new(entry_ref: &'a mut ObjectHash, hash_id: HashId) -> Self {
         Self {
-            vacant: Vacant::ByRef {
-                entry_ref,
-                hash_id,
-            },
+            vacant: Vacant::ByRef { entry_ref, hash_id },
             is_working_tree: false,
         }
     }
 
-    pub fn new_existing_id(map: &'a mut SharedIndexMap<HashId, Option<Box<ObjectHash>>>, hash_id: HashId) -> Self {
+    pub fn new_existing_id(
+        map: &'a mut SharedIndexMap<HashId, Option<Box<ObjectHash>>>,
+        hash_id: HashId,
+    ) -> Self {
         Self {
-            vacant: Vacant::UseFreeId {
-                map,
-                hash_id,
-            },
+            vacant: Vacant::UseFreeId { map, hash_id },
             is_working_tree: false,
         }
     }
 
-    pub fn new_push(map: &'a mut SharedIndexMap<HashId, Option<Box<ObjectHash>>>, new_ids: &'a mut ChunkedVec<HashId>) -> Self {
+    pub fn new_push(
+        map: &'a mut SharedIndexMap<HashId, Option<Box<ObjectHash>>>,
+        new_ids: &'a mut ChunkedVec<HashId>,
+    ) -> Self {
         Self {
-            vacant: Vacant::Push {
-                map,
-                new_ids,
-            },
+            vacant: Vacant::Push { map, new_ids },
             is_working_tree: false,
         }
     }
@@ -190,7 +190,7 @@ impl<'a> VacantObjectHash<'a> {
             Vacant::ByRef { entry_ref, hash_id } => {
                 fun(entry_ref);
                 hash_id
-            },
+            }
             Vacant::Push { map, new_ids } => {
                 let mut hash = Box::<ObjectHash>::default();
 
@@ -200,7 +200,7 @@ impl<'a> VacantObjectHash<'a> {
                 new_ids.push(hash_id);
 
                 hash_id
-            },
+            }
             Vacant::UseFreeId { map, hash_id } => {
                 let mut hash = Box::<ObjectHash>::default();
                 fun(&mut hash);
@@ -208,7 +208,7 @@ impl<'a> VacantObjectHash<'a> {
                 map.insert_at(hash_id, hash).unwrap();
 
                 hash_id
-            },
+            }
         };
 
         if self.is_working_tree {
