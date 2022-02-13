@@ -8,7 +8,7 @@ use std::convert::{TryFrom, TryInto};
 use modular_bitfield::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::{chunks::SharedIndexMap, ObjectHash};
+use crate::{chunks::{SharedIndexMap, ChunkedVec}, ObjectHash};
 
 pub mod hashes;
 pub mod in_memory;
@@ -125,32 +125,60 @@ impl HashId {
     }
 }
 
-pub struct VacantObjectHash<'a> {
-    entry: Option<&'a mut ObjectHash>,
-    map: Option<&'a mut SharedIndexMap<HashId, Option<Box<ObjectHash>>>>,
-    hash_id: HashId,
-}
-
-// enum Vacant<'a> {
-//     ByRef {
-//         entry_ref: &'a mut ObjectHash,
-//         hash_id: HashId
-//     },
-//     Push {
-//         map: &'a mut SharedIndexMap<HashId, Option<Box<ObjectHash>>>,
-//     },
-//     UseFree {
-//         map: &'a mut SharedIndexMap<HashId, Option<Box<ObjectHash>>>,
-//         hash_id: HashId,
-//     }
+// pub struct VacantObjectHash<'a> {
+//     entry: Option<&'a mut ObjectHash>,
+//     map: Option<&'a mut SharedIndexMap<HashId, Option<Box<ObjectHash>>>>,
+//     hash_id: HashId,
 // }
 
+enum Vacant<'a> {
+    ByRef {
+        entry_ref: &'a mut ObjectHash,
+        hash_id: HashId
+    },
+    Push {
+        map: &'a mut SharedIndexMap<HashId, Option<Box<ObjectHash>>>,
+        new_ids: &'a mut ChunkedVec<HashId>,
+    },
+    UseFreeId {
+        map: &'a mut SharedIndexMap<HashId, Option<Box<ObjectHash>>>,
+        hash_id: HashId,
+    }
+}
+
+pub struct VacantObjectHash<'a> {
+    vacant: Vacant<'a>,
+    is_working_tree: bool,
+}
+
 impl<'a> VacantObjectHash<'a> {
-    pub fn new(entry: &'a mut ObjectHash, hash_id: HashId) -> Self {
+    pub fn new(entry_ref: &'a mut ObjectHash, hash_id: HashId) -> Self {
         Self {
-            entry: Some(entry),
-            hash_id,
-            map: None,
+            vacant: Vacant::ByRef {
+                entry_ref,
+                hash_id,
+            },
+            is_working_tree: false,
+        }
+    }
+
+    pub fn new_existing_id(map: &'a mut SharedIndexMap<HashId, Option<Box<ObjectHash>>>, hash_id: HashId) -> Self {
+        Self {
+            vacant: Vacant::UseFreeId {
+                map,
+                hash_id,
+            },
+            is_working_tree: false,
+        }
+    }
+
+    pub fn new_push(map: &'a mut SharedIndexMap<HashId, Option<Box<ObjectHash>>>, new_ids: &'a mut ChunkedVec<HashId>) -> Self {
+        Self {
+            vacant: Vacant::Push {
+                map,
+                new_ids,
+            },
+            is_working_tree: false,
         }
     }
 
@@ -158,47 +186,40 @@ impl<'a> VacantObjectHash<'a> {
     where
         F: FnOnce(&mut ObjectHash),
     {
-        if let Some(entry) = self.entry {
-            fun(entry);
-        } else if let Some(map) = self.map {
-            let mut hash = Box::<ObjectHash>::default();
-            fun(&mut hash);
+        let mut hash_id = match self.vacant {
+            Vacant::ByRef { entry_ref, hash_id } => {
+                fun(entry_ref);
+                hash_id
+            },
+            Vacant::Push { map, new_ids } => {
+                let mut hash = Box::<ObjectHash>::default();
 
-            let hash_id: usize = self.hash_id.try_into().unwrap();
+                fun(&mut hash);
 
-            // let hash_clone = hash.clone();
+                let hash_id = map.push(hash).unwrap();
+                new_ids.push(hash_id);
 
-            // let mut is_push = false;
+                hash_id
+            },
+            Vacant::UseFreeId { map, hash_id } => {
+                let mut hash = Box::<ObjectHash>::default();
+                fun(&mut hash);
 
-            // let before = map.len();
+                map.insert_at(hash_id, hash).unwrap();
 
-            if map.len() == hash_id {
-                let new = map.push(hash).unwrap();
-                assert_eq!(self.hash_id, new);
-                // is_push = true;
-            } else {
-                map.insert_at(self.hash_id, hash).unwrap();
-            }
+                hash_id
+            },
+        };
 
-            // let copy_hash_id = self.hash_id;
-
-            // let chunk = map.chunk_index_of(self.hash_id).unwrap();
-
-            // map.with(self.hash_id, |hash| {
-            //     assert!(
-            //         hash.unwrap().is_some(),
-            //         "IS_PUSH={:?} HASH_ID={:?} MAP_LEN={:?} MAP_LEN_BEFORE={:?} CHUNK({:?})",
-            //         is_push, copy_hash_id, map.len(), before, chunk
-            //     );
-            //     let a = hash.unwrap().as_ref().unwrap();
-            //     assert_eq!(a, &hash_clone);
-            // }).unwrap();
+        if self.is_working_tree {
+            hash_id.set_in_working_tree().unwrap();
         }
-        self.hash_id
+
+        hash_id
     }
 
     pub(crate) fn set_readonly_runner(mut self) -> Result<Self, HashIdError> {
-        self.hash_id.set_in_working_tree()?;
+        self.is_working_tree = true;
         Ok(self)
     }
 }
