@@ -100,7 +100,7 @@ impl<T: std::fmt::Debug + Eq> SharedChunk<Option<T>> {
 
         if inner.alive_counter == 0 && !is_last_chunk {
             inner.inner = Vec::new();
-            return (Some(old), true)
+            return (Some(old), true);
         }
 
         (Some(old), false)
@@ -363,7 +363,10 @@ where
         let index = self.entries.push(Some(value));
         let key = K::try_from(index);
 
-        assert!(self.with(key.as_ref().ok().unwrap().clone(), |v| v.is_some()).ok().unwrap());
+        assert!(self
+            .with(key.as_ref().ok().unwrap().clone(), |v| v.is_some())
+            .ok()
+            .unwrap());
 
         key
     }

@@ -125,10 +125,8 @@ impl HashValueStore {
             Some(free_hash_id) => {
                 self.new_ids.push(free_hash_id);
                 VacantObjectHash::new_existing_id(&mut self.hashes, free_hash_id)
-            },
-            None => {
-                VacantObjectHash::new_push(&mut self.hashes, &mut self.new_ids)
-            },
+            }
+            None => VacantObjectHash::new_push(&mut self.hashes, &mut self.new_ids),
         };
 
         Ok(vacant)
@@ -152,8 +150,13 @@ impl HashValueStore {
             .with(hash_id, |hash| match hash {
                 Some(Some(hash)) => Some(**hash),
                 Some(None) => {
-                    panic!("AAAAAA {:?} {:?} LEN={:?}", hash_id, hash, self.hashes.len());
-                },
+                    panic!(
+                        "AAAAAA {:?} {:?} LEN={:?}",
+                        hash_id,
+                        hash,
+                        self.hashes.len()
+                    );
+                }
                 None => return panic!(),
             })
             .unwrap();
