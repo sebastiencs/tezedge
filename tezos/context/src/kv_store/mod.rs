@@ -131,6 +131,20 @@ pub struct VacantObjectHash<'a> {
     hash_id: HashId,
 }
 
+// enum Vacant<'a> {
+//     ByRef {
+//         entry_ref: &'a mut ObjectHash,
+//         hash_id: HashId
+//     },
+//     Push {
+//         map: &'a mut SharedIndexMap<HashId, Option<Box<ObjectHash>>>,
+//     },
+//     UseFree {
+//         map: &'a mut SharedIndexMap<HashId, Option<Box<ObjectHash>>>,
+//         hash_id: HashId,
+//     }
+// }
+
 impl<'a> VacantObjectHash<'a> {
     pub fn new(entry: &'a mut ObjectHash, hash_id: HashId) -> Self {
         Self {
@@ -152,11 +166,33 @@ impl<'a> VacantObjectHash<'a> {
 
             let hash_id: usize = self.hash_id.try_into().unwrap();
 
+            // let hash_clone = hash.clone();
+
+            // let mut is_push = false;
+
+            // let before = map.len();
+
             if map.len() == hash_id {
-                map.push(hash).unwrap();
+                let new = map.push(hash).unwrap();
+                assert_eq!(self.hash_id, new);
+                // is_push = true;
             } else {
                 map.insert_at(self.hash_id, hash).unwrap();
             }
+
+            // let copy_hash_id = self.hash_id;
+
+            // let chunk = map.chunk_index_of(self.hash_id).unwrap();
+
+            // map.with(self.hash_id, |hash| {
+            //     assert!(
+            //         hash.unwrap().is_some(),
+            //         "IS_PUSH={:?} HASH_ID={:?} MAP_LEN={:?} MAP_LEN_BEFORE={:?} CHUNK({:?})",
+            //         is_push, copy_hash_id, map.len(), before, chunk
+            //     );
+            //     let a = hash.unwrap().as_ref().unwrap();
+            //     assert_eq!(a, &hash_clone);
+            // }).unwrap();
         }
         self.hash_id
     }

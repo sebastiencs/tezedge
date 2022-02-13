@@ -145,10 +145,11 @@ impl GCThread {
 
         log!(
             // "GC_DEBUG NMSG={:?} MSG={:?} PENDING={:?} GLOBAL_LEN={:?} GLOBAL_CAP={:?}",
-            "GC_DEBUG NMSG={:?} MSG={:?} PENDING={:?} OBJECT_LIST={:?} HASH_LIST={:?} COUNTER_LIST={:?}",
+            "GC_DEBUG NMSG={:?} MSG={:?} PENDING={:?} PENDING_CAP={:?} OBJECT_LIST={:?} HASH_LIST={:?} COUNTER_LIST={:?}",
             self.recv.len(),
             msg,
             self.pending.len(),
+            self.pending.capacity(),
             // self.values_map.len(),
             self.objects_view.nchunks(),
             self.hashes_view.nchunks(),
@@ -270,10 +271,21 @@ impl GCThread {
         }
 
         for hash_id in &unused {
-            self.objects_view.clear(*hash_id).unwrap();
-            self.hashes_view.clear(*hash_id).unwrap();
+            let (_, obj_dealloc) = self.objects_view.clear(*hash_id).unwrap();
+            let (_, hash_dealloc) = self.hashes_view.clear(*hash_id).unwrap();
+
+            // let chunk = self.hashes_view.chunk_index_of(*hash_id);
+
+            // assert_eq!(obj_dealloc, hash_dealloc);
+
+            // if hash_dealloc {
+            //     println!("DEALLOCATED CHUNK({:?})", chunk);
+            // }
+
             self.global_counter.insert_at(*hash_id, None).unwrap();
         }
+
+        // println!("CLEARED {:?}", unused);
 
         unused
     }
