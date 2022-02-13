@@ -7,6 +7,8 @@ use std::{
 use parking_lot::RwLock;
 use static_assertions::assert_eq_size;
 
+use crate::ObjectHash;
+
 use super::DEFAULT_LIST_LENGTH;
 
 #[derive(Debug)]
@@ -74,6 +76,56 @@ impl<T> SharedChunk<T> {
     }
 }
 
+impl SharedChunk<ObjectHash> {
+    fn clear(&self, index: usize, is_last_chunk: bool) -> bool {
+        let mut inner = self.inner.write();
+
+        // let old = match std::mem::take(&mut inner[index]) {
+        //     Some(old) => old,
+        //     None => return (None, false),
+        // };
+
+        inner.alive_counter = inner.alive_counter.checked_sub(1).unwrap();
+
+        if inner.alive_counter == 0 && !is_last_chunk {
+            inner.inner = Vec::new();
+            return true;
+        }
+
+        false
+    }
+
+    fn push(&self, elem: ObjectHash, is_alive: bool) -> usize {
+        let mut inner = self.inner.write();
+
+        let index = inner.len();
+
+        if is_alive {
+            inner.alive_counter += 1;
+        }
+        inner.push(elem);
+
+        index
+    }
+
+    fn insert_alive_at(&self, index: usize, value: ObjectHash, chunk_capacity: usize) {
+        let mut inner = self.inner.write();
+
+        if inner.capacity() == 0 {
+            assert_eq!(inner.alive_counter, 0);
+            inner.inner = Vec::with_capacity(chunk_capacity);
+            inner.resize_with(chunk_capacity, Default::default);
+        }
+
+        inner[index] = value;
+        // if std::mem::replace(&mut inner[index], value).is_none() {
+        inner.alive_counter += 1;
+        // }
+
+        assert!(inner.alive_counter as usize <= chunk_capacity);
+    }
+}
+
 impl<T: std::fmt::Debug + Eq> SharedChunk<Option<T>> {
     fn push(&self, elem: Option<T>) -> usize {
         let mut inner = self.inner.write();
@@ -95,12 +147,12 @@ impl<T: std::fmt::Debug + Eq> SharedChunk<Option<T>> {
             return (None, false);
         }
 
+        inner.alive_counter = inner.alive_counter.checked_sub(1).unwrap();
+
         let old = match std::mem::take(&mut inner[index]) {
             Some(old) => old,
             None => return (None, false),
         };
-
-        inner.alive_counter = inner.alive_counter.checked_sub(1).unwrap();
 
         if inner.alive_counter == 0 && !is_last_chunk {
             inner.inner = Vec::new();
@@ -247,6 +299,42 @@ impl<T> SharedChunkedVec<T> {
     }
 }
 
+impl SharedChunkedVec<ObjectHash> {
+    fn clear(&self, index: usize) -> bool {
+        let (list_index, chunk_index) = self.get_indexes_at(index);
+
+        let is_last_chunk = list_index + 1 == self.list_of_chunks.len();
+        self.list_of_chunks[list_index].clear(chunk_index, is_last_chunk)
+    }
+
+    fn insert_at(&self, index: usize, value: ObjectHash) {
+        let (list_index, chunk_index) = self.get_indexes_at(index);
+        self.list_of_chunks[list_index].insert_alive_at(chunk_index, value, self.chunk_capacity);
+    }
+
+    pub fn resize_with(&mut self, new_len: usize) {
+        while self.nelems < new_len {
+            self.push_impl(Default::default(), false);
+        }
+    }
+
+    pub fn push(&mut self, elem: ObjectHash) -> usize {
+        self.push_impl(elem, true)
+    }
+
+    pub fn push_impl(&mut self, elem: ObjectHash, is_alive: bool) -> usize {
+        let index = self.len();
+        self.nelems += 1;
+
+        let index_in_chunk = self.get_next_chunk().push(elem, is_alive);
+        let list_index = self.list_of_chunks.len() - 1;
+
+        assert_eq!((list_index * self.chunk_capacity) + index_in_chunk, index);
+
+        index
+    }
+}
+
 impl<T: std::fmt::Debug + Eq> SharedChunkedVec<Option<T>> {
     fn clear(&self, index: usize) -> (Option<T>, bool) {
         let (list_index, chunk_index) = self.get_indexes_at(index);
@@ -376,6 +464,47 @@ where
     }
 }
 
+impl<K> SharedIndexMap<K, ObjectHash>
+where
+    K: TryInto<usize> + std::fmt::Debug + Clone,
+{
+    pub fn clear(&self, key: K) -> Result<bool, K::Error> {
+        let index = key.try_into()?;
+        Ok(self.entries.clear(index))
+    }
+
+    pub fn insert_at(&mut self, key: K, value: ObjectHash) -> Result<(), K::Error> {
+        let index: usize = key.try_into()?;
+
+        if index >= self.entries.len() {
+            self.entries.resize_with(index + 1);
+        }
+
+        self.entries.insert_at(index, value);
+
+        Ok(())
+    }
+}
+
+impl<K> SharedIndexMap<K, ObjectHash>
+where
+    K: TryFrom<usize>,
+    K: TryInto<usize>,
+    K: std::fmt::Debug + Clone,
+{
+    pub fn push(&mut self, value: ObjectHash) -> Result<K, <K as TryFrom<usize>>::Error> {
+        let index = self.entries.push(value);
+        let key = K::try_from(index);
+
+        assert!(self
+            .with(key.as_ref().ok().unwrap().clone(), |v| v.is_some())
+            .ok()
+            .unwrap());
+
+        key
+    }
+}
+
 impl<K, V: std::fmt::Debug + Eq> SharedIndexMap<K, Option<V>>
 where
     K: TryInto<usize> + std::fmt::Debug + Clone,
@@ -417,6 +546,15 @@ where
     K: TryInto<usize> + std::fmt::Debug + Clone,
 {
     pub fn clear(&self, key: K) -> Result<(Option<V>, bool), K::Error> {
+        self.inner.clear(key)
+    }
+}
+
+impl<K> SharedIndexMapView<K, ObjectHash>
+where
+    K: TryInto<usize> + std::fmt::Debug + Clone,
+{
+    pub fn clear(&self, key: K) -> Result<bool, K::Error> {
         self.inner.clear(key)
     }
 }
