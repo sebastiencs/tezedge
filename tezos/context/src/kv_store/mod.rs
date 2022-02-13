@@ -140,11 +140,11 @@ enum Vacant<'a> {
         hash_id: HashId,
     },
     Push {
-        map: &'a mut SharedIndexMap<HashId, Option<Box<ObjectHash>>>,
+        map: &'a mut SharedIndexMap<HashId, ObjectHash>,
         new_ids: &'a mut ChunkedVec<HashId>,
     },
     UseFreeId {
-        map: &'a mut SharedIndexMap<HashId, Option<Box<ObjectHash>>>,
+        map: &'a mut SharedIndexMap<HashId, ObjectHash>,
         hash_id: HashId,
     },
 }
@@ -163,7 +163,7 @@ impl<'a> VacantObjectHash<'a> {
     }
 
     pub fn new_existing_id(
-        map: &'a mut SharedIndexMap<HashId, Option<Box<ObjectHash>>>,
+        map: &'a mut SharedIndexMap<HashId, ObjectHash>,
         hash_id: HashId,
     ) -> Self {
         Self {
@@ -173,7 +173,7 @@ impl<'a> VacantObjectHash<'a> {
     }
 
     pub fn new_push(
-        map: &'a mut SharedIndexMap<HashId, Option<Box<ObjectHash>>>,
+        map: &'a mut SharedIndexMap<HashId, ObjectHash>,
         new_ids: &'a mut ChunkedVec<HashId>,
     ) -> Self {
         Self {
@@ -192,7 +192,7 @@ impl<'a> VacantObjectHash<'a> {
                 hash_id
             }
             Vacant::Push { map, new_ids } => {
-                let mut hash = Box::<ObjectHash>::default();
+                let mut hash = ObjectHash::default();
 
                 fun(&mut hash);
 
@@ -202,7 +202,7 @@ impl<'a> VacantObjectHash<'a> {
                 hash_id
             }
             Vacant::UseFreeId { map, hash_id } => {
-                let mut hash = Box::<ObjectHash>::default();
+                let mut hash = ObjectHash::default();
                 fun(&mut hash);
 
                 map.insert_at(hash_id, hash).unwrap();

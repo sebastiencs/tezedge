@@ -6,7 +6,6 @@
 use std::{
     borrow::Cow,
     collections::{hash_map::DefaultHasher, VecDeque},
-    convert::TryFrom,
     hash::Hasher,
     mem::size_of,
     rc::Rc,
@@ -49,7 +48,7 @@ use super::{HashId, VacantObjectHash};
 
 #[derive(Debug)]
 pub struct HashValueStore {
-    hashes: SharedIndexMap<HashId, Option<Box<ObjectHash>>>,
+    hashes: SharedIndexMap<HashId, ObjectHash>,
     values: SharedIndexMap<HashId, Option<Box<[u8]>>>,
     free_ids: Option<Consumer<HashId>>,
     new_ids: ChunkedVec<HashId>,
@@ -148,16 +147,18 @@ impl HashValueStore {
         let hash = self
             .hashes
             .with(hash_id, |hash| match hash {
-                Some(Some(hash)) => Some(**hash),
-                Some(None) => {
-                    panic!(
-                        "AAAAAA {:?} {:?} LEN={:?}",
-                        hash_id,
-                        hash,
-                        self.hashes.len()
-                    );
-                }
+                Some(hash) => Some(*hash),
                 None => return panic!(),
+                // Some(Some(hash)) => Some(**hash),
+                // Some(None) => {
+                //     panic!(
+                //         "AAAAAA {:?} {:?} LEN={:?}",
+                //         hash_id,
+                //         hash,
+                //         self.hashes.len()
+                //     );
+                // }
+                // None => return panic!(),
             })
             .unwrap();
 
