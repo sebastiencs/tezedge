@@ -1,9 +1,13 @@
 // Copyright (c) SimpleStaking, Viable Systems and Tezedge Contributors
 // SPDX-License-Identifier: MIT
 
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
+use std::{
+    collections::HashSet,
+    iter::FromIterator,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
 };
 
 use crossbeam_channel::{Receiver, RecvError};
@@ -35,7 +39,7 @@ pub(crate) struct GCThread {
     pub(crate) debug: bool,
 
     pub(crate) objects_view: SharedIndexMapView<HashId, Option<Box<[u8]>>>,
-    pub(crate) hashes_view: SharedIndexMapView<HashId, Option<Box<ObjectHash>>>,
+    pub(crate) hashes_view: SharedIndexMapView<HashId, ObjectHash>,
 
     pub(crate) global_counter: IndexMap<HashId, Option<u8>>,
     pub(crate) counter: u8,
@@ -54,7 +58,7 @@ pub(crate) enum Command {
     },
     NewChunks {
         objects_chunks: Option<Vec<SharedChunk<Option<Box<[u8]>>>>>,
-        hashes_chunks: Option<Vec<SharedChunk<Option<Box<ObjectHash>>>>>,
+        hashes_chunks: Option<Vec<SharedChunk<ObjectHash>>>,
     },
     Close,
 }
@@ -102,7 +106,7 @@ impl GCThread {
     fn add_chunks(
         &mut self,
         objects_chunks: Option<Vec<SharedChunk<Option<Box<[u8]>>>>>,
-        hashes_chunks: Option<Vec<SharedChunk<Option<Box<ObjectHash>>>>>,
+        hashes_chunks: Option<Vec<SharedChunk<ObjectHash>>>,
     ) {
         if let Some(objects_chunks) = objects_chunks {
             self.objects_view.append_chunks(objects_chunks);
@@ -270,9 +274,12 @@ impl GCThread {
             unused.push(hash_id);
         }
 
+        let set = HashSet::<&HashId>::from_iter(unused.iter());
+        assert_eq!(set.len(), unused.len());
+
         for hash_id in &unused {
             let (_, obj_dealloc) = self.objects_view.clear(*hash_id).unwrap();
-            let (_, hash_dealloc) = self.hashes_view.clear(*hash_id).unwrap();
+            let hash_dealloc = self.hashes_view.clear(*hash_id).unwrap();
 
             // let chunk = self.hashes_view.chunk_index_of(*hash_id);
 
