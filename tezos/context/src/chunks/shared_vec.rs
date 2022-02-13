@@ -5,6 +5,7 @@ use std::{
 };
 
 use parking_lot::RwLock;
+use static_assertions::assert_eq_size;
 
 use super::DEFAULT_LIST_LENGTH;
 
@@ -42,6 +43,8 @@ pub struct SharedChunk<T> {
     inner: Arc<RwLock<VecAliveCounter<T>>>,
 }
 
+assert_eq_size!([u8; 40], RwLock<VecAliveCounter<u8>>);
+
 impl<T> Clone for SharedChunk<T> {
     fn clone(&self) -> Self {
         Self {
@@ -62,7 +65,7 @@ impl<T> SharedChunk<T> {
         F: FnOnce(Option<&T>) -> R,
     {
         let inner = self.inner.read();
-        fun(inner.get(index))
+        fun(Some(&inner[index]))
     }
 
     fn len(&self) -> usize {
@@ -71,45 +74,52 @@ impl<T> SharedChunk<T> {
     }
 }
 
-impl<T> SharedChunk<Option<T>> {
-    fn push(&self, elem: Option<T>) {
+impl<T: std::fmt::Debug + Eq> SharedChunk<Option<T>> {
+    fn push(&self, elem: Option<T>) -> usize {
         let mut inner = self.inner.write();
+
+        let index = inner.len();
 
         if elem.is_some() {
             inner.alive_counter += 1;
         }
         inner.push(elem);
+
+        index
     }
 
-    fn clear(&self, index: usize) -> Option<T> {
+    fn clear(&self, index: usize, is_last_chunk: bool) -> (Option<T>, bool) {
         let mut inner = self.inner.write();
 
         let old = match std::mem::take(&mut inner[index]) {
             Some(old) => old,
-            None => return None,
+            None => return (None, false),
         };
 
         inner.alive_counter = inner.alive_counter.checked_sub(1).unwrap();
 
-        if inner.alive_counter == 0 {
+        if inner.alive_counter == 0 && !is_last_chunk {
             inner.inner = Vec::new();
+            return (Some(old), true)
         }
 
-        Some(old)
+        (Some(old), false)
     }
 
     fn insert_alive_at(&self, index: usize, value: Option<T>, chunk_capacity: usize) {
         let mut inner = self.inner.write();
 
         if inner.capacity() == 0 {
+            assert_eq!(inner.alive_counter, 0);
             inner.inner = Vec::with_capacity(chunk_capacity);
             inner.resize_with(chunk_capacity, Default::default);
         }
 
         if std::mem::replace(&mut inner[index], value).is_none() {
             inner.alive_counter += 1;
-            assert!(inner.alive_counter as usize <= chunk_capacity);
         }
+
+        assert!(inner.alive_counter as usize <= chunk_capacity);
     }
 }
 
@@ -233,17 +243,22 @@ impl<T> SharedChunkedVec<T> {
     }
 }
 
-impl<T> SharedChunkedVec<Option<T>> {
-    fn clear(&self, index: usize) -> Option<T> {
+impl<T: std::fmt::Debug + Eq> SharedChunkedVec<Option<T>> {
+    fn clear(&self, index: usize) -> (Option<T>, bool) {
         let (list_index, chunk_index) = self.get_indexes_at(index);
-        self.list_of_chunks[list_index].clear(chunk_index)
+
+        let is_last_chunk = list_index + 1 == self.list_of_chunks.len();
+        self.list_of_chunks[list_index].clear(chunk_index, is_last_chunk)
     }
 
     pub fn push(&mut self, elem: Option<T>) -> usize {
         let index = self.len();
         self.nelems += 1;
 
-        self.get_next_chunk().push(elem);
+        let index_in_chunk = self.get_next_chunk().push(elem);
+        let list_index = self.list_of_chunks.len() - 1;
+
+        assert_eq!((list_index * self.chunk_capacity) + index_in_chunk, index);
 
         index
     }
@@ -338,21 +353,27 @@ where
     }
 }
 
-impl<K, V> SharedIndexMap<K, Option<V>>
+impl<K, V: std::fmt::Debug + Eq> SharedIndexMap<K, Option<V>>
 where
     K: TryFrom<usize>,
+    K: TryInto<usize>,
+    K: std::fmt::Debug + Clone,
 {
     pub fn push(&mut self, value: V) -> Result<K, <K as TryFrom<usize>>::Error> {
         let index = self.entries.push(Some(value));
-        K::try_from(index)
+        let key = K::try_from(index);
+
+        assert!(self.with(key.as_ref().ok().unwrap().clone(), |v| v.is_some()).ok().unwrap());
+
+        key
     }
 }
 
-impl<K, V> SharedIndexMap<K, Option<V>>
+impl<K, V: std::fmt::Debug + Eq> SharedIndexMap<K, Option<V>>
 where
-    K: TryInto<usize>,
+    K: TryInto<usize> + std::fmt::Debug + Clone,
 {
-    pub fn clear(&self, key: K) -> Result<Option<V>, K::Error> {
+    pub fn clear(&self, key: K) -> Result<(Option<V>, bool), K::Error> {
         let index = key.try_into()?;
         Ok(self.entries.clear(index))
     }
@@ -384,11 +405,11 @@ impl<K, V> SharedIndexMapView<K, V> {
     }
 }
 
-impl<K, V> SharedIndexMapView<K, Option<V>>
+impl<K, V: std::fmt::Debug + Eq> SharedIndexMapView<K, Option<V>>
 where
-    K: TryInto<usize>,
+    K: TryInto<usize> + std::fmt::Debug + Clone,
 {
-    pub fn clear(&self, key: K) -> Result<Option<V>, K::Error> {
+    pub fn clear(&self, key: K) -> Result<(Option<V>, bool), K::Error> {
         self.inner.clear(key)
     }
 }

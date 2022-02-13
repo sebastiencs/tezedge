@@ -56,10 +56,10 @@ pub struct HashValueStore {
     values_bytes: usize,
 }
 
-// pub const VALUES_LENGTH: usize = 1_000;
-// pub const NEW_IDS_LIMIT: usize = 1000;
-pub const VALUES_LENGTH: usize = 100_000;
-pub const NEW_IDS_LIMIT: usize = 20_000;
+pub const VALUES_LENGTH: usize = 1_000;
+pub const NEW_IDS_LIMIT: usize = 1000;
+// pub const VALUES_LENGTH: usize = 100_000;
+// pub const NEW_IDS_LIMIT: usize = 20_000;
 
 impl HashValueStore {
     pub(crate) fn new<T>(consumer: T) -> Self
@@ -87,8 +87,7 @@ impl HashValueStore {
         let hashes_capacity = self.hashes.capacity();
 
         let total_bytes = values_bytes
-            .saturating_add(values_capacity * size_of::<Option<Arc<[u8]>>>())
-            .saturating_add(values_capacity * 16) // Each `Arc` has 16 extra bytes for the counters
+            .saturating_add(values_capacity * size_of::<Option<Box<[u8]>>>())
             .saturating_add(hashes_capacity * size_of::<ObjectHash>())
             .saturating_add(strings_total_bytes)
             .saturating_add(shapes_total_bytes)
@@ -123,21 +122,14 @@ impl HashValueStore {
 
     pub(crate) fn get_vacant_object_hash(&mut self) -> Result<VacantObjectHash, HashIdError> {
         let hash_id = match self.get_free_id() {
-            Some(free_hash_id) => free_hash_id,
+            Some(free_hash_id) => {
+                free_hash_id
+            },
             None => {
                 let next = self.hashes.len();
                 HashId::try_from(next)?
             }
         };
-
-        // let index = self.temp_hashes.len();
-        // self.temp_hashes.push((hash_id, Default::default()));
-
-        // let (hash_id, entry) = if let Some(free_id) = self.get_free_id() {
-        //     (free_id, self.hashes.get_mut(free_id)?.ok_or(HashIdError)?)
-        // } else {
-        //     self.hashes.get_vacant_entry()?
-        // };
 
         self.new_ids.push(hash_id);
 
@@ -165,7 +157,10 @@ impl HashValueStore {
             .hashes
             .with(hash_id, |hash| match hash {
                 Some(Some(hash)) => Some(**hash),
-                _ => return None,
+                Some(None) => {
+                    panic!("AAAAAA {:?} {:?} LEN={:?}", hash_id, hash, self.hashes.len());
+                },
+                None => return panic!(),
             })
             .unwrap();
 
