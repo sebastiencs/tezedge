@@ -140,11 +140,11 @@ enum Vacant<'a> {
         hash_id: HashId,
     },
     Push {
-        map: &'a mut SharedIndexMap<HashId, ObjectHash>,
+        map: &'a mut SharedIndexMap<HashId, Option<ObjectHash>>,
         new_ids: &'a mut ChunkedVec<HashId>,
     },
     UseFreeId {
-        map: &'a mut SharedIndexMap<HashId, ObjectHash>,
+        map: &'a mut SharedIndexMap<HashId, Option<ObjectHash>>,
         hash_id: HashId,
     },
 }
@@ -163,7 +163,7 @@ impl<'a> VacantObjectHash<'a> {
     }
 
     pub fn new_existing_id(
-        map: &'a mut SharedIndexMap<HashId, ObjectHash>,
+        map: &'a mut SharedIndexMap<HashId, Option<ObjectHash>>,
         hash_id: HashId,
     ) -> Self {
         Self {
@@ -173,7 +173,7 @@ impl<'a> VacantObjectHash<'a> {
     }
 
     pub fn new_push(
-        map: &'a mut SharedIndexMap<HashId, ObjectHash>,
+        map: &'a mut SharedIndexMap<HashId, Option<ObjectHash>>,
         new_ids: &'a mut ChunkedVec<HashId>,
     ) -> Self {
         Self {

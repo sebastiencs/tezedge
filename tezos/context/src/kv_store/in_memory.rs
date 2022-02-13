@@ -48,17 +48,17 @@ use super::{HashId, VacantObjectHash};
 
 #[derive(Debug)]
 pub struct HashValueStore {
-    hashes: SharedIndexMap<HashId, ObjectHash>,
+    hashes: SharedIndexMap<HashId, Option<ObjectHash>>,
     values: SharedIndexMap<HashId, Option<Box<[u8]>>>,
     free_ids: Option<Consumer<HashId>>,
     new_ids: ChunkedVec<HashId>,
     values_bytes: usize,
 }
 
-pub const VALUES_LENGTH: usize = 1_000;
-pub const NEW_IDS_LIMIT: usize = 1000;
-// pub const VALUES_LENGTH: usize = 100_000;
-// pub const NEW_IDS_LIMIT: usize = 20_000;
+// pub const VALUES_LENGTH: usize = 2;
+// pub const NEW_IDS_LIMIT: usize = 1000;
+pub const VALUES_LENGTH: usize = 50_000;
+pub const NEW_IDS_LIMIT: usize = 20_000;
 
 impl HashValueStore {
     pub(crate) fn new<T>(consumer: T) -> Self
@@ -147,8 +147,8 @@ impl HashValueStore {
         let hash = self
             .hashes
             .with(hash_id, |hash| match hash {
-                Some(hash) => Some(*hash),
-                None => return panic!(),
+                Some(Some(hash)) => Some(*hash),
+                _ => panic!(),
                 // Some(Some(hash)) => Some(**hash),
                 // Some(None) => {
                 //     panic!(
