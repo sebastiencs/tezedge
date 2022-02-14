@@ -1090,7 +1090,6 @@ impl WorkingTree {
                     if dir_entry.is_commited() {
                         return Ok(());
                     }
-                    // dir_entry.set_commited(true);
 
                     if let Some(offset) = data.get_dedup_object(object_hash_id) {
                         dir_entry.set_offset(offset);
