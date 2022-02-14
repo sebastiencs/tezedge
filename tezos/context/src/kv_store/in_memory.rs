@@ -182,7 +182,7 @@ impl HashValueStore {
     // }
 
     pub(crate) fn contains(&self, hash_id: HashId) -> Result<bool, HashIdError> {
-        self.values.with(hash_id, |v| v.is_some())
+        self.values.with(hash_id, |v| matches!(v, Some(Some(_))))
     }
 
     fn take_new_ids(&mut self) -> ChunkedVec<HashId> {
