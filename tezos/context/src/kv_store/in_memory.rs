@@ -182,7 +182,7 @@ impl HashValueStore {
     // }
 
     pub(crate) fn contains(&self, hash_id: HashId) -> Result<bool, HashIdError> {
-        Ok(self.values.with(hash_id, |v| v.is_some())?)
+        self.values.with(hash_id, |v| v.is_some())
     }
 
     fn take_new_ids(&mut self) -> ChunkedVec<HashId> {
@@ -194,7 +194,6 @@ impl HashValueStore {
 }
 
 pub struct InMemory {
-    current_cycle: ChunkedVec<(HashId, Arc<[u8]>)>,
     pub hashes: HashValueStore,
     sender: Option<Sender<Command>>,
     pub context_hashes: Map<u64, HashId>,
@@ -452,7 +451,6 @@ impl InMemory {
             (Some(sender), Some(thread_handle), hashes)
         };
 
-        let current_cycle = ChunkedVec::with_chunk_capacity(512 * 1024);
         let context_hashes = Default::default();
 
         let mut context_hashes_cycles = VecDeque::with_capacity(PRESERVE_CYCLE_COUNT);
@@ -461,7 +459,6 @@ impl InMemory {
         }
 
         Ok(Self {
-            current_cycle,
             hashes,
             sender,
             context_hashes,
