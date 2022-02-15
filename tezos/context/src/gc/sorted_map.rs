@@ -42,6 +42,7 @@ const fn const_split_at(chunk_size: usize) -> usize {
     (chunk_size / 2) + (chunk_size / 4)
 }
 
+#[derive(Clone)]
 struct Chunk<K, V, const CHUNK_SIZE: usize>
 where
     K: Ord,
@@ -57,6 +58,7 @@ assert_eq_size!([u8; 48], [(HashId, Arc<[u8]>); 2]);
 
 // TODO: Use const default when the feature is stabilized, it will be in 1.59.0:
 // https://github.com/rust-lang/rust/pull/90207
+#[derive(Clone)]
 pub struct SortedMap<K, V, const CHUNK_SIZE: usize>
 where
     K: Ord,
