@@ -135,6 +135,12 @@ pub struct Persistent {
     read_statistics: Option<Mutex<ReadStatistics>>,
 }
 
+impl Drop for Persistent {
+    fn drop(&mut self) {
+        elog!("Dropping Persistent context");
+    }
+}
+
 impl NotGarbageCollected for Persistent {}
 
 impl Flushable for Persistent {

@@ -476,7 +476,8 @@ impl InMemory {
     fn reload_database(&mut self) -> Result<(), ReloadError> {
         let (tree, parent_hash, commit) = {
             let mut ondisk = Persistent::try_new(PersistentConfiguration {
-                db_path: Some("/tmp/tezedge/context".to_string()),
+                // db_path: Some("/tmp/tezedge/context".to_string()),
+                db_path: Some("/home/sebastien/tmp/tezedge_snapshot_after_h".to_string()),
                 startup_check: false,
                 read_mode: true,
             })?;
@@ -547,6 +548,7 @@ impl InMemory {
             .ok_or(ReloadError::StringInternerNotFound)?;
 
         self.string_interner.shrink_to_fit();
+        self.shapes.shrink_to_fit();
 
         println!("AFTER_RELOAD MEMORY_USAGE={:#?}", self.memory_usage());
 
@@ -778,7 +780,7 @@ mod tests {
     #[test]
     fn reload_from_disk() {
         if true {
-            return;
+            // return;
         }
 
         let now = std::time::Instant::now();
