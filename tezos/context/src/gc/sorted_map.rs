@@ -197,6 +197,10 @@ where
         self.inner.len()
     }
 
+    fn capacity(&self) -> usize {
+        self.inner.capacity()
+    }
+
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -446,6 +450,14 @@ where
                 std::cmp::Ordering::Equal
             }
         })
+    }
+
+    pub fn total_bytes(&self) -> usize {
+        let list_size = self.list.len() * std::mem::size_of::<Chunk<K, V, CHUNK_SIZE>>();
+        // TODO: Change this
+        let capacity = self.list.iter().fold(0, |acc, c| acc + c.capacity());
+
+        list_size + (capacity * std::mem::size_of::<(K, V)>())
     }
 
     pub fn entry(&mut self, key: K) -> Entry<K, V, CHUNK_SIZE> {
