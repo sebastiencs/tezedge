@@ -31,8 +31,12 @@ macro_rules! elog {
     })
 }
 
-pub(crate) mod sorted_map;
+mod sorted_map;
 pub(crate) mod worker;
+
+// TODO: Use const default when the feature is stabilized, it will be in 1.59.0:
+// https://github.com/rust-lang/rust/pull/90207
+pub type SortedMap<K, V> = sorted_map::SortedMap<K, V, { sorted_map::DEFAULT_CHUNK_SIZE }>;
 
 pub trait GarbageCollector {
     fn new_cycle_started(&mut self) -> Result<(), GarbageCollectionError>;
