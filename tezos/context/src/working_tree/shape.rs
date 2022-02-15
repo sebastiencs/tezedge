@@ -11,7 +11,7 @@ use std::{
 
 use crate::{
     chunks::ChunkedVec,
-    gc::SortedMap,
+    gc::{Entry, SortedMap},
     kv_store::index_map::IndexMap,
     persistent::file::{File, TAG_SHAPE, TAG_SHAPE_INDEX},
     serialize::DeserializationError,
@@ -82,7 +82,7 @@ pub struct ShapeSliceId {
 /// A `DirectoryShapeId` maps to a slice of `StringId`
 pub struct DirectoryShapes {
     /// Map `DirectoryShapeHash` to its `DirectoryShapeId` and strings.
-    hash_to_strings: Map<DirectoryShapeHash, (DirectoryShapeId, ShapeSliceId)>,
+    hash_to_strings: SortedMap<DirectoryShapeHash, (DirectoryShapeId, ShapeSliceId)>,
     shapes: ChunkedVec<StringId>,
 
     to_serialize: Vec<ShapeSliceId>,
@@ -178,8 +178,8 @@ impl DirectoryShapes {
         let shape_hash = DirectoryShapeHash(hasher.finish());
 
         match self.hash_to_strings.entry(shape_hash) {
-            std::collections::btree_map::Entry::Occupied(entry) => Ok(Some(entry.get().0)),
-            std::collections::btree_map::Entry::Vacant(entry) => {
+            Entry::Occupied(entry) => Ok(Some(entry.0)),
+            Entry::Vacant(entry) => {
                 let start = self.shapes.len() as u64;
                 let length = self.temp.len() as u32;
 
