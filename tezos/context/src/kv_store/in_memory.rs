@@ -763,5 +763,26 @@ impl Drop for InMemory {
         if let Err(e) = thread_handle.join() {
             eprintln!("Fail to join  GC worker thread: {:?}", e);
         }
+        elog!("Dropping InMemory");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reload_from_disk() {
+        if false {
+            return;
+        }
+
+        let now = std::time::Instant::now();
+
+        let mut repo = InMemory::try_new().unwrap();
+        repo.reload_database().unwrap();
+
+        println!("RELOADED in {:?}", now.elapsed());
+        std::thread::sleep_ms(60000);
     }
 }
