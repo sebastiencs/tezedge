@@ -22,7 +22,7 @@ use crate::{
 
 use tezos_spsc::Producer;
 
-// use super::sorted_map::SortedMap;
+use super::SortedMap;
 
 pub(crate) const PRESERVE_CYCLE_COUNT: usize = 2;
 

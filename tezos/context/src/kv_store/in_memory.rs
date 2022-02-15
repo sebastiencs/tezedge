@@ -47,7 +47,7 @@ use super::{index_map::IndexMap, persistent::PersistentConfiguration, HashIdErro
 use super::{HashId, VacantObjectHash};
 
 const NEW_IDS_CHUNK_CAPACITY: usize = 512 * 1024;
-const CURRENT_CYCLE_CHUNK_CAPACITY: usize = 512 * 1024;
+// const CURRENT_CYCLE_CHUNK_CAPACITY: usize = 512 * 1024;
 
 #[derive(Debug)]
 pub struct HashValueStore {
