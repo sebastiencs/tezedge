@@ -94,7 +94,8 @@ where
 
 impl<K, V, const CHUNK_SIZE: usize> std::fmt::Debug for SortedMap<K, V, CHUNK_SIZE>
 where
-    K: Ord,
+    K: Ord + std::fmt::Debug,
+    V: std::fmt::Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut len = 0;
@@ -106,6 +107,7 @@ where
         }
 
         f.debug_struct("SortedMap")
+            // .field("chunks", &self.list)
             .field("nchunks", &self.list.len())
             .field("list_len", &len)
             .field("list_cap", &cap)
@@ -146,7 +148,7 @@ where
                 list_index,
                 chunk_index,
                 key,
-            } => map.insert_impl(key, value, Err(list_index), Some(Err(chunk_index))),
+            } => map.insert_impl(key, value, Ok(list_index), Some(Err(chunk_index))),
         }
     }
 }
@@ -157,6 +159,30 @@ where
 {
     Occupied(&'a mut V),
     Vacant(VacantEntry<'a, K, V, CHUNK_SIZE>),
+}
+
+impl<'a, K, V, const CHUNK_SIZE: usize> std::fmt::Debug for Entry<'a, K, V, CHUNK_SIZE>
+where
+    K: Ord + Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Occupied(_) => f.write_str("Occupied"),
+            Self::Vacant(VacantEntry::ListIndex { list_index, .. }) => f
+                .debug_struct("Vacant::ListIndex")
+                .field("list_index", list_index)
+                .finish(),
+            Self::Vacant(VacantEntry::ListChunkIndexes {
+                chunk_index,
+                list_index,
+                ..
+            }) => f
+                .debug_struct("Vacant::ListChunkIndexes")
+                .field("list_index", list_index)
+                .field("chunk_index", chunk_index)
+                .finish(),
+        }
+    }
 }
 
 impl<K, V, const CHUNK_SIZE: usize> Chunk<K, V, CHUNK_SIZE>
@@ -449,6 +475,7 @@ where
 impl<K, V, const CHUNK_SIZE: usize> SortedMap<K, V, CHUNK_SIZE>
 where
     K: Ord + Copy + Debug,
+    V: Debug,
 {
     /// [test-only] Make sure that the map is correctly ordered
     #[cfg(test)]
@@ -459,6 +486,7 @@ where
             if let Some(prev_chunk) = prev_chunk {
                 assert!(prev_chunk.0 < chunk.min);
                 assert!(prev_chunk.1 < chunk.max);
+                assert!(prev_chunk.1 < chunk.min);
             };
 
             assert!(chunk.min <= chunk.max);
@@ -593,6 +621,49 @@ mod tests {
         map.assert_correct();
 
         assert_eq!(map.list.len(), 25_000);
+    }
+
+    #[test]
+    fn test_sorted_map_entry() {
+        let mut map = SortedMap::<_, _, 4>::default();
+
+        const N: usize = 100_000;
+
+        for index in 0..N {
+            if index % 2 == 0 {
+                continue;
+            }
+            match map.entry(index) {
+                Entry::Occupied(_) => panic!(),
+                Entry::Vacant(entry) => {
+                    entry.insert(index + 1);
+                }
+            }
+        }
+        map.assert_correct();
+
+        for index in 0..N {
+            if index % 2 != 0 {
+                continue;
+            }
+            match map.entry(index) {
+                Entry::Occupied(_) => panic!(),
+                Entry::Vacant(entry) => {
+                    entry.insert(index + 1);
+                }
+            }
+        }
+        map.assert_correct();
+
+        for index in 0..N {
+            match map.entry(index) {
+                Entry::Occupied(v) => assert_eq!(*v, index + 1),
+                Entry::Vacant(_) => panic!(),
+            }
+        }
+        map.assert_correct();
+
+        assert_eq!(map.list.len(), 37_500);
     }
 
     #[test]
