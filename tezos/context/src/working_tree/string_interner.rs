@@ -10,6 +10,7 @@ use std::{borrow::Cow, collections::hash_map::DefaultHasher, convert::TryInto, h
 use static_assertions::const_assert;
 use tezos_timing::StringsMemoryUsage;
 
+use crate::gc::SortedMap;
 use crate::{
     chunks::{ChunkedString, ChunkedVec},
     persistent::file::{File, TAG_BIG_STRINGS, TAG_STRINGS},
@@ -88,7 +89,7 @@ pub struct SerializeStrings {
 
 #[derive(Clone, Debug)]
 struct BigStrings {
-    hashes: Map<u64, u32>,
+    hashes: SortedMap<u64, u32>,
     strings: ChunkedString,
     offsets: ChunkedVec<(u32, u32)>,
     to_serialize_index: usize,
@@ -97,7 +98,7 @@ struct BigStrings {
 impl Default for BigStrings {
     fn default() -> Self {
         Self {
-            hashes: Map::default(),
+            hashes: SortedMap::default(),
             strings: ChunkedString::with_chunk_capacity(64 * 1024 * 1024), // ~67MB
             offsets: ChunkedVec::with_chunk_capacity(128 * 1024),          // ~1MB
             to_serialize_index: 0,
@@ -216,7 +217,7 @@ pub struct StringInterner {
     /// `Map` of hash of the string to their `StringId`
     /// We don't use `HashMap<String, StringId>` because the map would
     /// keep a copy of the string
-    string_to_offset: Map<u64, StringId>,
+    string_to_offset: SortedMap<u64, StringId>,
     /// Concatenation of all strings < STRING_INTERN_THRESHOLD.
     /// This is never cleared/deallocated
     all_strings: ChunkedString,
@@ -230,7 +231,7 @@ pub struct StringInterner {
 impl Default for StringInterner {
     fn default() -> Self {
         Self {
-            string_to_offset: Map::default(),
+            string_to_offset: SortedMap::default(),
             all_strings: ChunkedString::with_chunk_capacity(512 * 1024), // ~512KB
             all_strings_to_serialize: Vec::new(),
             big_strings: BigStrings::default(),
@@ -433,6 +434,11 @@ impl StringInterner {
 
     pub fn get_to_serialize_index(&self) -> usize {
         self.big_strings.to_serialize_index
+    }
+
+    pub fn shrink_to_fit(&mut self) {
+        self.string_to_offset.shrink_to_fit();
+        self.big_strings.hashes.shrink_to_fit();
     }
 }
 

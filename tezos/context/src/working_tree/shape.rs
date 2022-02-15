@@ -11,6 +11,7 @@ use std::{
 
 use crate::{
     chunks::ChunkedVec,
+    gc::SortedMap,
     kv_store::index_map::IndexMap,
     persistent::file::{File, TAG_SHAPE, TAG_SHAPE_INDEX},
     serialize::DeserializationError,
