@@ -777,7 +777,7 @@ mod tests {
 
     #[test]
     fn reload_from_disk() {
-        if false {
+        if true {
             return;
         }
 
