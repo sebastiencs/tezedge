@@ -113,6 +113,52 @@ where
     }
 }
 
+pub enum VacantEntry<'a, K, V, const CHUNK_SIZE: usize>
+where
+    K: Ord,
+{
+    ListIndex {
+        map: &'a mut SortedMap<K, V, CHUNK_SIZE>,
+        list_index: usize,
+        key: K,
+    },
+    ListChunkIndexes {
+        map: &'a mut SortedMap<K, V, CHUNK_SIZE>,
+        list_index: usize,
+        chunk_index: usize,
+        key: K,
+    },
+}
+
+impl<'a, K, V, const CHUNK_SIZE: usize> VacantEntry<'a, K, V, CHUNK_SIZE>
+where
+    K: Ord + Copy,
+{
+    pub fn insert(self, value: V) {
+        match self {
+            VacantEntry::ListIndex {
+                map,
+                list_index,
+                key,
+            } => map.insert_impl(key, value, Err(list_index), None),
+            VacantEntry::ListChunkIndexes {
+                map,
+                list_index,
+                chunk_index,
+                key,
+            } => map.insert_impl(key, value, Err(list_index), Some(Err(chunk_index))),
+        }
+    }
+}
+
+pub enum Entry<'a, K, V, const CHUNK_SIZE: usize>
+where
+    K: Ord,
+{
+    Occupied(&'a mut V),
+    Vacant(VacantEntry<'a, K, V, CHUNK_SIZE>),
+}
+
 impl<K, V, const CHUNK_SIZE: usize> Chunk<K, V, CHUNK_SIZE>
 where
     K: Ord + Copy,
@@ -168,8 +214,12 @@ where
         Some(item.1)
     }
 
-    fn insert(&mut self, key: K, value: V) -> Option<Self> {
-        let insert_at = match self.inner.binary_search_by_key(&key, |&(k, _)| k) {
+    fn index_in_chunk(&self, key: &K) -> Result<usize, usize> {
+        self.inner.binary_search_by_key(key, |&(k, _)| k)
+    }
+
+    fn insert_impl(&mut self, key: K, value: V, search: Result<usize, usize>) -> Option<Self> {
+        let insert_at = match search {
             Ok(index) => {
                 self.inner[index].1 = value;
                 return None;
@@ -217,6 +267,10 @@ where
         }
 
         next_chunk
+    }
+
+    fn insert(&mut self, key: K, value: V) -> Option<Self> {
+        self.insert_impl(key, value, self.index_in_chunk(&key))
     }
 }
 
@@ -273,12 +327,23 @@ where
         item
     }
 
-    pub fn insert(&mut self, key: K, value: V) {
-        match self.binary_search(&key) {
+    fn insert_impl(
+        &mut self,
+        key: K,
+        value: V,
+        list_search: Result<usize, usize>,
+        chunk_search: Option<Result<usize, usize>>,
+    ) {
+        match list_search {
             Ok(index) => {
                 let chunk = &mut self.list[index];
 
-                let mut new_chunk = match chunk.insert(key, value) {
+                let chunk_search = match chunk_search {
+                    Some(chunk_search) => chunk_search,
+                    None => chunk.index_in_chunk(&key),
+                };
+
+                let mut new_chunk = match chunk.insert_impl(key, value, chunk_search) {
                     Some(new_chunk) => new_chunk,
                     None => return,
                 };
@@ -339,6 +404,10 @@ where
         }
     }
 
+    pub fn insert(&mut self, key: K, value: V) {
+        self.insert_impl(key, value, self.binary_search(&key), None)
+    }
+
     fn binary_search(&self, key: &K) -> Result<usize, usize> {
         let key = *key;
 
@@ -351,6 +420,29 @@ where
                 std::cmp::Ordering::Equal
             }
         })
+    }
+
+    pub fn entry(&mut self, key: K) -> Entry<K, V, CHUNK_SIZE> {
+        let list_index = match self.binary_search(&key) {
+            Ok(list_index) => list_index,
+            Err(list_index) => {
+                return Entry::Vacant(VacantEntry::ListIndex {
+                    map: self,
+                    list_index,
+                    key,
+                });
+            }
+        };
+
+        match self.list[list_index].index_in_chunk(&key) {
+            Ok(chunk_index) => Entry::Occupied(&mut self.list[list_index].inner[chunk_index].1),
+            Err(chunk_index) => Entry::Vacant(VacantEntry::ListChunkIndexes {
+                map: self,
+                list_index,
+                chunk_index,
+                key,
+            }),
+        }
     }
 }
 
@@ -472,6 +564,56 @@ mod tests {
 
         for index in 0..100_000 {
             map.insert(100_000 - index, index);
+        }
+        map.assert_correct();
+
+        assert_eq!(map.list.len(), 25_000);
+    }
+
+    #[test]
+    fn test_sorted_map_big_entry() {
+        let mut map = SortedMap::<_, _, 4>::default();
+
+        for index in 0..100_000 {
+            match map.entry(index) {
+                Entry::Occupied(_) => panic!(),
+                Entry::Vacant(entry) => {
+                    entry.insert(index + 1);
+                }
+            }
+        }
+        map.assert_correct();
+
+        for index in 0..100_000 {
+            match map.entry(index) {
+                Entry::Occupied(v) => assert_eq!(*v, index + 1),
+                Entry::Vacant(_) => panic!(),
+            }
+        }
+        map.assert_correct();
+
+        assert_eq!(map.list.len(), 25_000);
+    }
+
+    #[test]
+    fn test_sorted_map_big_revert_entry() {
+        let mut map = SortedMap::<_, _, 4>::default();
+
+        for index in 0..100_000 {
+            match map.entry(100_000 - index) {
+                Entry::Occupied(_) => panic!(),
+                Entry::Vacant(entry) => {
+                    entry.insert(index + 1);
+                }
+            }
+        }
+        map.assert_correct();
+
+        for index in 0..100_000 {
+            match map.entry(100_000 - index) {
+                Entry::Occupied(v) => assert_eq!(*v, index + 1),
+                Entry::Vacant(_) => panic!(),
+            }
         }
         map.assert_correct();
 
