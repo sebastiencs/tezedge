@@ -10,11 +10,6 @@ use clap::{App, Arg};
 use slog::*;
 use tezos_interop::runtime::OCamlBlockPanic;
 
-use mimalloc::MiMalloc;
-
-#[global_allocator]
-static GLOBAL: MiMalloc = MiMalloc;
-
 // #[cfg(not(target_env = "msvc"))]
 // use tikv_jemallocator::Jemalloc;
 
