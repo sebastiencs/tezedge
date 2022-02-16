@@ -19,3 +19,5 @@ tezos_context = { path = "../tezos/context" }
 tezos_context_api = { path = "../tezos/context-api" }
 tezos_interop = { path = "../tezos/interop" }
 tezos_messages = { path = "../tezos/messages" }
+# tikv-jemallocator = "0.4.1"
+mimalloc = { version = "0.1.28", default-features = false }

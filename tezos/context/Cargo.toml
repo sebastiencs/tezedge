@@ -33,6 +33,9 @@ tezos_conv = { path = "../conv" }
 tezos_spsc = { path = "../spsc" }
 crypto = { path = "../../crypto" }
 tezos_timing = { path = "../timing" }
+# tikv-jemallocator = "0.4.1"
+# tikv-jemalloc-ctl = "0.4.2"
+mimalloc = { version = "0.1.28", default-features = false }
 
 [dev-dependencies]
 flate2 = "1.0"
