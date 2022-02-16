@@ -51,7 +51,7 @@ const NEW_IDS_CHUNK_CAPACITY: usize = 512 * 1024;
 
 #[derive(Debug)]
 pub struct HashValueStore {
-    hashes: SharedIndexMap<HashId, Option<ObjectHash>>,
+    hashes: SharedIndexMap<HashId, Option<Box<ObjectHash>>>,
     values: SharedIndexMap<HashId, Option<Box<[u8]>>>,
     free_ids: Option<Consumer<HashId>>,
     new_ids: ChunkedVec<HashId>,
@@ -150,7 +150,7 @@ impl HashValueStore {
         let hash = self
             .hashes
             .with(hash_id, |hash| match hash {
-                Some(Some(hash)) => Some(*hash),
+                Some(Some(hash)) => Some(**hash),
                 _ => panic!(),
                 // Some(Some(hash)) => Some(**hash),
                 // Some(None) => {

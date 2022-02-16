@@ -39,7 +39,7 @@ pub(crate) struct GCThread {
     pub(crate) debug: bool,
 
     pub(crate) objects_view: SharedIndexMapView<HashId, Option<Box<[u8]>>>,
-    pub(crate) hashes_view: SharedIndexMapView<HashId, Option<ObjectHash>>,
+    pub(crate) hashes_view: SharedIndexMapView<HashId, Option<Box<ObjectHash>>>,
 
     pub(crate) global_counter: IndexMap<HashId, Option<u8>>,
     pub(crate) counter: u8,
@@ -58,7 +58,7 @@ pub(crate) enum Command {
     },
     NewChunks {
         objects_chunks: Option<Vec<SharedChunk<Option<Box<[u8]>>>>>,
-        hashes_chunks: Option<Vec<SharedChunk<Option<ObjectHash>>>>,
+        hashes_chunks: Option<Vec<SharedChunk<Option<Box<ObjectHash>>>>>,
     },
     Close,
 }
@@ -106,7 +106,7 @@ impl GCThread {
     fn add_chunks(
         &mut self,
         objects_chunks: Option<Vec<SharedChunk<Option<Box<[u8]>>>>>,
-        hashes_chunks: Option<Vec<SharedChunk<Option<ObjectHash>>>>,
+        hashes_chunks: Option<Vec<SharedChunk<Option<Box<ObjectHash>>>>>,
     ) {
         if let Some(objects_chunks) = objects_chunks {
             self.objects_view.append_chunks(objects_chunks);
