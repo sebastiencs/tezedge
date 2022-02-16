@@ -51,10 +51,17 @@ mod notification_integration;
 mod snapshot_command;
 mod system;
 
-extern crate jemallocator;
+use mimalloc::MiMalloc;
 
 #[global_allocator]
-static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
+static GLOBAL: MiMalloc = MiMalloc;
+
+// #[cfg(not(target_env = "msvc"))]
+// use tikv_jemallocator::Jemalloc;
+
+// #[cfg(not(target_env = "msvc"))]
+// #[global_allocator]
+// static GLOBAL: Jemalloc = Jemalloc;
 
 fn create_tokio_runtime(
     env: &crate::configuration::Environment,
