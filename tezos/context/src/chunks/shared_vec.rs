@@ -447,6 +447,21 @@ impl<K, V> SharedIndexMap<K, V> {
     pub fn capacity(&self) -> usize {
         self.entries.capacity()
     }
+
+    pub fn alive_dead(&self) -> (usize, usize) {
+        let mut alive = 0;
+        let mut dead = 0;
+
+        for chunk in &self.entries.list_of_chunks {
+            if chunk.inner.read().is_empty() {
+                dead += 1;
+            } else {
+                alive += 1;
+            }
+        }
+
+        (alive, dead)
+    }
 }
 
 impl<K, V> SharedIndexMap<K, V>
@@ -565,6 +580,10 @@ impl<K, V> SharedIndexMapView<K, V> {
 
     pub fn nchunks(&self) -> usize {
         self.inner.entries.list_of_chunks.len()
+    }
+
+    pub fn alive_dead(&self) -> (usize, usize) {
+        self.inner.alive_dead()
     }
 }
 

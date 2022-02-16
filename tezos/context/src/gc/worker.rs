@@ -338,13 +338,20 @@ impl GCThread {
         // self.send_unused(hashid_without_value);
         self.send_unused(unused);
 
+        let (alive, dead) = self.objects_view.alive_dead();
+        let (h_alive, h_dead) = self.hashes_view.alive_dead();
+
         log!(
-            "MARK_REUSED SENT={:?} TRAVERSED={:?} MAX_DEPTH={:?} OBJECT_TOTAL_BYTES={:?} TIME={:?}",
+            "MARK_REUSED SENT={:?} TRAVERSED={:?} MAX_DEPTH={:?} OBJECT_TOTAL_BYTES={:?} TIME={:?} OBJ_LIST_ALIVE={:?} OBJ_LIST_DEAD={:?} HASH_LIST_ALIVE={:?} HASH_LIVE_DEAD={:?}",
             sent,
             traversed,
             max_depth,
             objets_total_bytes,
             now.elapsed(),
+            alive,
+            dead,
+            h_alive,
+            h_dead,
         );
 
         self.counter = self.counter.wrapping_add(1);

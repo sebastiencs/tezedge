@@ -58,9 +58,9 @@ pub struct HashValueStore {
     values_bytes: usize,
 }
 
-// pub const VALUES_LENGTH: usize = 2;
+// pub const VALUES_LENGTH: usize = 100;
 // pub const NEW_IDS_LIMIT: usize = 1000;
-pub const VALUES_LENGTH: usize = 50_000;
+pub const VALUES_LENGTH: usize = 10_000;
 pub const NEW_IDS_LIMIT: usize = 20_000;
 
 impl HashValueStore {
