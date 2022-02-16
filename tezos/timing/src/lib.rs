@@ -202,6 +202,7 @@ pub struct StorageMemoryUsage {
 pub struct StringsMemoryUsage {
     pub all_strings_map_cap: usize,
     pub all_strings_map_len: usize,
+    pub all_strings_to_serialize_cap: usize,
     pub all_strings_cap: usize,
     pub all_strings_len: usize,
     pub big_strings_cap: usize,

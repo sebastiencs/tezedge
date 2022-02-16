@@ -233,7 +233,7 @@ impl Default for StringInterner {
         Self {
             string_to_offset: SortedMap::default(),
             all_strings: ChunkedString::with_chunk_capacity(512 * 1024), // ~512KB
-            all_strings_to_serialize: Vec::new(),
+            all_strings_to_serialize: Vec::with_capacity(1024),
             big_strings: BigStrings::default(),
         } // Total ~69MB
     }
@@ -346,10 +346,12 @@ impl StringInterner {
     pub fn memory_usage(&self) -> StringsMemoryUsage {
         let all_strings_cap = self.all_strings.capacity();
         let big_strings_cap = self.big_strings.strings.capacity();
+        let all_strings_to_serialize_cap = self.all_strings_to_serialize.capacity();
 
         StringsMemoryUsage {
             all_strings_map_cap: self.string_to_offset.len(),
             all_strings_map_len: self.string_to_offset.len(),
+            all_strings_to_serialize_cap,
             all_strings_cap,
             all_strings_len: self.all_strings.len(),
             big_strings_cap,
@@ -439,6 +441,10 @@ impl StringInterner {
     pub fn shrink_to_fit(&mut self) {
         self.string_to_offset.shrink_to_fit();
         self.big_strings.hashes.shrink_to_fit();
+        if self.all_strings_to_serialize.capacity() > 1024 {
+            assert!(self.all_strings_to_serialize.is_empty());
+            self.all_strings_to_serialize = Vec::with_capacity(1024);
+        }
     }
 }
 

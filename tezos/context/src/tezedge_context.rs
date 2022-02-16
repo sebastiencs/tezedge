@@ -844,6 +844,8 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
             let mut storage = index.storage.borrow_mut();
             let mut strings = index.get_string_interner()?;
 
+            strings.shrink_to_fit();
+
             let commit = match self.fetch_commit(object_ref, &mut storage, &mut strings)? {
                 Some(commit) => commit,
                 None => return Ok(None),
