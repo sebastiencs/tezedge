@@ -60,7 +60,7 @@ pub struct HashValueStore {
 
 // pub const VALUES_LENGTH: usize = 100;
 // pub const NEW_IDS_LIMIT: usize = 1000;
-pub const VALUES_LENGTH: usize = 10_000;
+pub const VALUES_LENGTH: usize = 1_000;
 pub const NEW_IDS_LIMIT: usize = 20_000;
 
 impl HashValueStore {
