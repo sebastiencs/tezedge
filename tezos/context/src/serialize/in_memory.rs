@@ -12,7 +12,7 @@ use tezos_timing::SerializeStats;
 
 use crate::{
     chunks::ChunkedVec,
-    kv_store::HashId,
+    kv_store::{in_memory::BATCH_CHUNK_CAPACITY, HashId},
     serialize::{deserialize_hash_id, ObjectHeader, ObjectTag},
     working_tree::{
         shape::ShapeStrings,
@@ -183,7 +183,7 @@ pub fn serialize_object(
     storage: &Storage,
     strings: &StringInterner,
     stats: &mut SerializeStats,
-    batch: &mut ChunkedVec<(HashId, Box<[u8]>)>,
+    batch: &mut ChunkedVec<(HashId, Box<[u8]>), { BATCH_CHUNK_CAPACITY }>,
     repository: &mut ContextKeyValueStore,
     _object_offset: Option<AbsoluteOffset>,
 ) -> Result<Option<AbsoluteOffset>, SerializationError> {
@@ -267,7 +267,7 @@ fn serialize_inode(
     storage: &Storage,
     strings: &StringInterner,
     stats: &mut SerializeStats,
-    batch: &mut ChunkedVec<(HashId, Box<[u8]>)>,
+    batch: &mut ChunkedVec<(HashId, Box<[u8]>), { BATCH_CHUNK_CAPACITY }>,
     repository: &mut ContextKeyValueStore,
 ) -> Result<(), SerializationError> {
     use SerializationError::*;
@@ -772,7 +772,7 @@ mod tests {
         let mut strings = StringInterner::default();
         let mut repo = InMemory::try_new().unwrap();
         let mut stats = SerializeStats::default();
-        let mut batch = ChunkedVec::with_chunk_capacity(1024);
+        let mut batch = ChunkedVec::<_, BATCH_CHUNK_CAPACITY>::default();
         let fake_hash_id = HashId::try_from(1).unwrap();
 
         // Test Object::Directory
@@ -971,7 +971,7 @@ mod tests {
 
             let hash_id = HashId::new((index + 1) as u64).unwrap();
 
-            let mut vec = ChunkedVec::<(HashId, Box<[u8]>)>::with_chunk_capacity(2);
+            let mut vec = ChunkedVec::<(HashId, Box<[u8]>), BATCH_CHUNK_CAPACITY>::default();
             vec.push((hash_id, Box::new(ObjectHeader::new().into_bytes())));
 
             repo.write_batch(vec).unwrap();
@@ -1089,7 +1089,7 @@ mod tests {
         let mut storage = Storage::new();
         let mut strings = StringInterner::default();
         let mut stats = SerializeStats::default();
-        let mut batch = ChunkedVec::with_chunk_capacity(1024);
+        let mut batch = ChunkedVec::<_, BATCH_CHUNK_CAPACITY>::default();
 
         let fake_hash_id = HashId::try_from(1).unwrap();
 

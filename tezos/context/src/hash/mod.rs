@@ -390,7 +390,7 @@ mod tests {
     use tezos_timing::SerializeStats;
 
     use crate::chunks::ChunkedVec;
-    use crate::kv_store::in_memory::InMemory;
+    use crate::kv_store::in_memory::{InMemory, BATCH_CHUNK_CAPACITY};
     use crate::kv_store::persistent::{Persistent, PersistentConfiguration};
     use crate::serialize::{in_memory, persistent, SerializeObjectSignature};
     use crate::working_tree::ObjectReference;
@@ -687,7 +687,7 @@ mod tests {
 
             let bindings_count = test_case.bindings.len();
             let mut dir_id = DirectoryId::empty();
-            let mut batch = ChunkedVec::with_chunk_capacity(1024);
+            let mut batch = ChunkedVec::<_, BATCH_CHUNK_CAPACITY>::default();
 
             let mut names = HashSet::new();
 
@@ -826,7 +826,7 @@ mod tests {
 
                 let offset = repo.synchronize_data(&batch.to_vec(), &output).unwrap();
 
-                let mut batch = ChunkedVec::with_chunk_capacity(1024);
+                let mut batch = ChunkedVec::<_, BATCH_CHUNK_CAPACITY>::default();
                 output.clear();
 
                 let offset = serialize_fun(

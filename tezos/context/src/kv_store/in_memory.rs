@@ -23,7 +23,9 @@ use tezos_timing::{RepositoryMemoryUsage, SerializeStats};
 use crate::{
     chunks::{ChunkedVec, SharedIndexMap},
     gc::{
-        worker::{Command, GCThread, GC_PENDING_HASHIDS, PENDING_CHUNK_SIZE, PRESERVE_CYCLE_COUNT},
+        worker::{
+            Command, GCThread, GC_PENDING_HASHIDS, NEW_IDS_CHUNK_CAPACITY, PRESERVE_CYCLE_COUNT,
+        },
         GarbageCollectionError, GarbageCollector,
     },
     hash::ObjectHash,
@@ -43,10 +45,12 @@ use crate::{persistent::get_commit_hash, serialize::in_memory};
 
 use tezos_spsc::Consumer;
 
-use super::{index_map::IndexMap, persistent::PersistentConfiguration, HashIdError};
+use super::{persistent::PersistentConfiguration, HashIdError};
 use super::{HashId, VacantObjectHash};
 
-const NEW_IDS_CHUNK_CAPACITY: usize = 512 * 1024;
+pub const BATCH_CHUNK_CAPACITY: usize = 8 * 1024;
+
+// const NEW_IDS_CHUNK_CAPACITY: usize = 512 * 1024;
 // const CURRENT_CYCLE_CHUNK_CAPACITY: usize = 512 * 1024;
 
 #[derive(Debug)]
@@ -54,7 +58,7 @@ pub struct HashValueStore {
     hashes: SharedIndexMap<HashId, Option<Box<ObjectHash>>>,
     values: SharedIndexMap<HashId, Option<Box<[u8]>>>,
     free_ids: Option<Consumer<HashId>>,
-    new_ids: ChunkedVec<HashId>,
+    new_ids: ChunkedVec<HashId, NEW_IDS_CHUNK_CAPACITY>,
     values_bytes: usize,
 }
 
@@ -72,7 +76,7 @@ impl HashValueStore {
             hashes: SharedIndexMap::with_chunk_capacity(VALUES_LENGTH), // ~320MB
             values: SharedIndexMap::with_chunk_capacity(VALUES_LENGTH), // ~80MB
             free_ids: consumer.into(),
-            new_ids: ChunkedVec::with_chunk_capacity(NEW_IDS_CHUNK_CAPACITY), // ~8KB
+            new_ids: ChunkedVec::default(), // ~8KB
             values_bytes: 0,
         } // Total ~400MB
     }
@@ -188,11 +192,8 @@ impl HashValueStore {
         self.values.with(hash_id, |v| matches!(v, Some(Some(_))))
     }
 
-    fn take_new_ids(&mut self) -> ChunkedVec<HashId> {
-        std::mem::replace(
-            &mut self.new_ids,
-            ChunkedVec::with_chunk_capacity(NEW_IDS_CHUNK_CAPACITY),
-        )
+    fn take_new_ids(&mut self) -> ChunkedVec<HashId, NEW_IDS_CHUNK_CAPACITY> {
+        std::mem::take(&mut self.new_ids)
     }
 }
 
@@ -407,7 +408,7 @@ impl KeyValueStoreBackend for InMemory {
         batch: &[(HashId, Box<[u8]>)],
         _output: &[u8],
     ) -> Result<Option<AbsoluteOffset>, DBError> {
-        let mut vec = ChunkedVec::with_chunk_capacity(batch.len().max(1000));
+        let mut vec = ChunkedVec::<_, BATCH_CHUNK_CAPACITY>::default();
         for item in batch {
             vec.push(item.clone());
         }
@@ -649,7 +650,7 @@ impl InMemory {
 
     pub fn write_batch(
         &mut self,
-        mut batch: ChunkedVec<(HashId, Box<[u8]>)>,
+        mut batch: ChunkedVec<(HashId, Box<[u8]>), BATCH_CHUNK_CAPACITY>,
     ) -> Result<(), DBError> {
         while let Some(chunk) = batch.pop_first_chunk() {
             for (hash_id, value) in chunk.into_iter() {

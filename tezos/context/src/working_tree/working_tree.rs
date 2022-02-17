@@ -62,6 +62,7 @@ use tezos_timing::SerializeStats;
 use crate::{
     chunks::ChunkedVec,
     gc::GarbageCollectionError,
+    kv_store::in_memory::BATCH_CHUNK_CAPACITY,
     serialize::{
         persistent::AbsoluteOffset, DeserializationError, SerializationError,
         SerializeObjectSignature,
@@ -88,7 +89,7 @@ use super::{
 
 pub struct PostCommitData {
     pub commit_ref: ObjectReference,
-    pub batch: ChunkedVec<(HashId, Box<[u8]>)>,
+    pub batch: ChunkedVec<(HashId, Box<[u8]>), { BATCH_CHUNK_CAPACITY }>,
     pub serialize_stats: Box<SerializeStats>,
     pub output: Vec<u8>,
 }
@@ -154,7 +155,7 @@ impl PostCommitData {
     fn empty_with_commit(commit_hash: HashId) -> Self {
         Self {
             commit_ref: ObjectReference::new(Some(commit_hash), None),
-            batch: ChunkedVec::empty(),
+            batch: ChunkedVec::<_, { BATCH_CHUNK_CAPACITY }>::empty(),
             serialize_stats: Default::default(),
             output: Default::default(),
         }
@@ -469,7 +470,7 @@ pub enum CheckObjectHashError {
 }
 
 struct SerializingData<'a> {
-    batch: ChunkedVec<(HashId, Box<[u8]>)>,
+    batch: ChunkedVec<(HashId, Box<[u8]>), { BATCH_CHUNK_CAPACITY }>,
     repository: &'a mut ContextKeyValueStore,
     serialized: Vec<u8>,
     stats: Box<SerializeStats>,
@@ -486,7 +487,7 @@ impl<'a> SerializingData<'a> {
         enable_dedup_object: bool,
     ) -> Self {
         Self {
-            batch: ChunkedVec::with_chunk_capacity(8 * 1024),
+            batch: ChunkedVec::default(),
             repository,
             serialized: Vec::with_capacity(2048),
             stats: Default::default(),

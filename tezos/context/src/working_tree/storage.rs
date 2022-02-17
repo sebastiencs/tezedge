@@ -1047,11 +1047,11 @@ type TempDirRange = Range<usize>;
 /// every checkout.
 pub struct Storage {
     /// An map `DirEntryId -> DirEntry`
-    nodes: IndexMap<DirEntryId, DirEntry>,
+    nodes: IndexMap<DirEntryId, DirEntry, { DEFAULT_NODES_CAPACITY }>,
     /// Concatenation of all directories in the working tree.
     /// The working tree has `DirectoryId` which refers to a subslice of this
     /// vector `directories`
-    directories: ChunkedVec<(StringId, DirEntryId)>,
+    directories: ChunkedVec<(StringId, DirEntryId), { DEFAULT_DIRECTORIES_CAPACITY }>,
     /// Temporary directories, this is used to avoid allocations when we
     /// manipulate `directories`
     /// For example, `Storage::insert` will create a new directory in `temp_dir`, once
@@ -1066,7 +1066,7 @@ pub struct Storage {
     /// vector `blobs`.
     /// Note that blobs < 8 bytes are not included in this vector `blobs`, such
     /// blob is directly inlined in the `BlobId`
-    blobs: ChunkedVec<u8>,
+    blobs: ChunkedVec<u8, { DEFAULT_BLOBS_CAPACITY }>,
     /// Concatenation of all inodes.
     ///
     /// A `Inode` refers to a subslice of `Self::thin_pointers`
@@ -1078,7 +1078,7 @@ pub struct Storage {
     /// of an Inode, any children of that root are not visible to the working tree.
     ///
     /// See `PointersId` and `Inode` for more information
-    inodes: IndexMap<InodeId, Inode>,
+    inodes: IndexMap<InodeId, Inode, { DEFAULT_INODES_CAPACITY }>,
     /// Concatenation of pointers.
     /// `Self::inodes` refers to a subslice of this field.
     /// A `ThinPointer` contains either a `InodeId` (u32) or a `FatPointerId` (u32)
@@ -1086,7 +1086,7 @@ pub struct Storage {
     /// This vector is growing very fast when manipulating inodes
     ///
     /// See `PointersId` and `Inode` for more information
-    thin_pointers: IndexMap<ThinPointerId, ThinPointer>,
+    thin_pointers: IndexMap<ThinPointerId, ThinPointer, { DEFAULT_THIN_POINTERS_CAPACITY }>,
     /// Contains big pointers
     /// It's either a `HashId` (6 bytes), an `AbsoluteOffset` (8 bytes) or a
     /// `DirectoryId` (8 bytes)
@@ -1094,7 +1094,7 @@ pub struct Storage {
     /// There are no duplicate in this vector.
     /// Many `ThinPointer` may refer to the same `FatPointerId`
     /// This makes the vector much smaller than `Self::thin_pointers`
-    fat_pointers: IndexMap<FatPointerId, FatPointer>,
+    fat_pointers: IndexMap<FatPointerId, FatPointer, { DEFAULT_FAT_POINTERS_CAPACITY }>,
     /// Store the `ObjectReference` of the inode pointers.
     ///
     /// This is used at commit time (when inodes are hashed and serialized)
@@ -1163,18 +1163,18 @@ const DEFAULT_THIN_POINTERS_CAPACITY: usize = 128 * 1024;
 impl Storage {
     pub fn new() -> Self {
         Self {
-            directories: ChunkedVec::with_chunk_capacity(DEFAULT_DIRECTORIES_CAPACITY), // ~4MB
-            temp_dir: Vec::with_capacity(256),                                          // 2KB
+            directories: ChunkedVec::default(), // ~4MB
+            temp_dir: Vec::with_capacity(256),  // 2KB
             // Allocates `temp_inodes_index` only when used
-            temp_inodes_index: Vec::new(), // 0B
-            blobs: ChunkedVec::with_chunk_capacity(DEFAULT_BLOBS_CAPACITY), // 128KB
-            nodes: IndexMap::with_chunk_capacity(DEFAULT_NODES_CAPACITY), // ~3MB
-            inodes: IndexMap::with_chunk_capacity(DEFAULT_INODES_CAPACITY), // ~20MB
+            temp_inodes_index: Vec::new(),     // 0B
+            blobs: ChunkedVec::default(),      // 128KB
+            nodes: IndexMap::default(),        // ~3MB
+            inodes: IndexMap::default(),       // ~20MB
             data: Vec::with_capacity(100_000), // ~97KB
             offsets_to_hash_id: Default::default(),
-            fat_pointers: IndexMap::with_chunk_capacity(DEFAULT_FAT_POINTERS_CAPACITY), // ~262KB
+            fat_pointers: IndexMap::default(), // ~262KB
             pointers_data: Default::default(),
-            thin_pointers: IndexMap::with_chunk_capacity(DEFAULT_THIN_POINTERS_CAPACITY), // ~525KB
+            thin_pointers: IndexMap::default(), // ~525KB
         } // Total ~27MB
     }
 
@@ -2549,7 +2549,7 @@ mod tool {
                 })
                 .collect();
 
-            self.directories = ChunkedVec::with_chunk_capacity(DEFAULT_DIRECTORIES_CAPACITY);
+            self.directories = ChunkedVec::default();
             self.directories.extend_from_slice(&new_directories);
 
             new_string_interner

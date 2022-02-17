@@ -90,7 +90,7 @@ pub struct SerializeStrings {
 struct BigStrings {
     hashes: SortedMap<u64, u32>,
     strings: ChunkedString<{ 64 * 1024 * 1024 }>, // ~67MB
-    offsets: ChunkedVec<(u32, u32)>,
+    offsets: ChunkedVec<(u32, u32), { 128 * 1024 }>, // ~1MB
     to_serialize_index: usize,
 }
 
@@ -98,8 +98,8 @@ impl Default for BigStrings {
     fn default() -> Self {
         Self {
             hashes: SortedMap::default(),
-            strings: ChunkedString::new(), // ~67MB
-            offsets: ChunkedVec::with_chunk_capacity(128 * 1024), // ~1MB
+            strings: ChunkedString::default(), // ~67MB
+            offsets: ChunkedVec::default(),    // ~1MB
             to_serialize_index: 0,
         } // Total ~68MB
     }
