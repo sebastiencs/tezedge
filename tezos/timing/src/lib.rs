@@ -209,6 +209,7 @@ pub struct StringsMemoryUsage {
     pub big_strings_len: usize,
     pub big_strings_map_cap: usize,
     pub big_strings_map_len: usize,
+    pub big_strings_hashes_bytes: usize,
     pub total_bytes: usize,
 }
 
