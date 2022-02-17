@@ -2162,7 +2162,6 @@ dependencies = [
  "num_cpus",
  "rlimit",
  "rpc",
- "rpmalloc",
  "serde_json",
  "shell",
  "shell_integration",
@@ -2178,6 +2177,7 @@ dependencies = [
  "tezos_messages",
  "tezos_protocol_ipc_client",
  "thiserror",
+ "tikv-jemallocator",
  "tokio",
 ]
 
@@ -2772,6 +2772,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "paste"
+version = "1.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0744126afe1a6dd7f394cb50a716dbe086cb06e255e53d8d0185d82828358fb5"
+
+[[package]]
 name = "path-tree"
 version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2933,8 +2939,6 @@ dependencies = [
  "clap 2.34.0",
  "crypto",
  "ctrlc",
- "jemallocator",
- "rpmalloc",
  "slog",
  "slog-async",
  "slog-term",
@@ -2944,6 +2948,7 @@ dependencies = [
  "tezos_interop",
  "tezos_messages",
  "thiserror",
+ "tikv-jemallocator",
 ]
 
 [[package]]
@@ -3269,26 +3274,6 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "url",
-]
-
-[[package]]
-name = "rpmalloc"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86179c13cdc0bcedbb60e63c1aebe3bac82162ddfa746320de6dcea31ebe2b06"
-dependencies = [
- "rpmalloc-sys",
-]
-
-[[package]]
-name = "rpmalloc-sys"
-version = "0.2.2+1.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "370e623bf2ca97dd497b7dd0e2889ec953a46c8c268489a818a5e305633e8609"
-dependencies = [
- "cc",
- "libc",
- "pkg-config",
 ]
 
 [[package]]
@@ -4138,6 +4123,8 @@ dependencies = [
  "tezos_spsc",
  "tezos_timing",
  "thiserror",
+ "tikv-jemalloc-ctl",
+ "tikv-jemallocator",
 ]
 
 [[package]]
@@ -4372,6 +4359,38 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5516c27b78311c50bf42c071425c560ac799b11c30b31f87e3081965fe5e0180"
 dependencies = [
  "once_cell",
+]
+
+[[package]]
+name = "tikv-jemalloc-ctl"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb833c46ecbf8b6daeccb347cefcabf9c1beb5c9b0f853e1cec45632d9963e69"
+dependencies = [
+ "libc",
+ "paste",
+ "tikv-jemalloc-sys",
+]
+
+[[package]]
+name = "tikv-jemalloc-sys"
+version = "0.4.2+5.2.1-patched.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5844e429d797c62945a566f8da4e24c7fe3fbd5d6617fd8bf7a0b7dc1ee0f22e"
+dependencies = [
+ "cc",
+ "fs_extra",
+ "libc",
+]
+
+[[package]]
+name = "tikv-jemallocator"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c14a5a604eb8715bc5785018a37d00739b180bcf609916ddf4393d33d49ccdf"
+dependencies = [
+ "libc",
+ "tikv-jemalloc-sys",
 ]
 
 [[package]]
