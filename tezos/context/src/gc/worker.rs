@@ -15,7 +15,7 @@ use static_assertions::assert_eq_size;
 
 use crate::{
     chunks::{ChunkedVec, SharedChunk, SharedIndexMapView},
-    kv_store::{index_map::IndexMap, HashId},
+    kv_store::{in_memory::debug_jemalloc, index_map::IndexMap, HashId},
     serialize::in_memory::iter_hash_ids,
     ObjectHash,
 };
