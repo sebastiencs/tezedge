@@ -15,7 +15,6 @@ use crate::{
     chunks::{ChunkedString, ChunkedVec},
     persistent::file::{File, TAG_BIG_STRINGS, TAG_STRINGS},
     serialize::DeserializationError,
-    Map,
 };
 
 use super::storage::StorageError;
@@ -90,7 +89,7 @@ pub struct SerializeStrings {
 #[derive(Clone, Debug)]
 struct BigStrings {
     hashes: SortedMap<u64, u32>,
-    strings: ChunkedString,
+    strings: ChunkedString<{ 64 * 1024 * 1024 }>,
     offsets: ChunkedVec<(u32, u32)>,
     to_serialize_index: usize,
 }
@@ -99,8 +98,8 @@ impl Default for BigStrings {
     fn default() -> Self {
         Self {
             hashes: SortedMap::default(),
-            strings: ChunkedString::with_chunk_capacity(64 * 1024 * 1024), // ~67MB
-            offsets: ChunkedVec::with_chunk_capacity(128 * 1024),          // ~1MB
+            strings: ChunkedString::new(), // ~67MB
+            offsets: ChunkedVec::with_chunk_capacity(128 * 1024), // ~1MB
             to_serialize_index: 0,
         } // Total ~68MB
     }
@@ -220,7 +219,7 @@ pub struct StringInterner {
     string_to_offset: SortedMap<u64, StringId>,
     /// Concatenation of all strings < STRING_INTERN_THRESHOLD.
     /// This is never cleared/deallocated
-    all_strings: ChunkedString,
+    all_strings: ChunkedString<{ 512 * 1024 }>,
     /// List of `StringId` that needs to be commited
     pub all_strings_to_serialize: Vec<StringId>,
     /// Concatenation of big strings. This is cleared/deallocated
@@ -232,7 +231,7 @@ impl Default for StringInterner {
     fn default() -> Self {
         Self {
             string_to_offset: SortedMap::default(),
-            all_strings: ChunkedString::with_chunk_capacity(512 * 1024), // ~512KB
+            all_strings: ChunkedString::new(), // ~512KB
             all_strings_to_serialize: Vec::with_capacity(1024),
             big_strings: BigStrings::default(),
         } // Total ~69MB
@@ -346,6 +345,7 @@ impl StringInterner {
     pub fn memory_usage(&self) -> StringsMemoryUsage {
         let all_strings_cap = self.all_strings.capacity();
         let big_strings_cap = self.big_strings.strings.capacity();
+        let big_strings_hashes_bytes = self.big_strings.hashes.total_bytes();
         let all_strings_to_serialize_cap = self.all_strings_to_serialize.capacity();
 
         StringsMemoryUsage {
@@ -358,7 +358,8 @@ impl StringInterner {
             big_strings_len: self.big_strings.strings.len(),
             big_strings_map_cap: self.big_strings.offsets.capacity(),
             big_strings_map_len: self.big_strings.offsets.len(),
-            total_bytes: all_strings_cap + big_strings_cap,
+            big_strings_hashes_bytes,
+            total_bytes: all_strings_cap + big_strings_cap + big_strings_hashes_bytes,
         }
     }
 
