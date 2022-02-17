@@ -7,8 +7,6 @@ use std::{
 use parking_lot::RwLock;
 use static_assertions::assert_eq_size;
 
-use crate::ObjectHash;
-
 use super::DEFAULT_LIST_LENGTH;
 
 #[derive(Debug)]

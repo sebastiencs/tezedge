@@ -11,9 +11,8 @@ use thiserror::Error;
 
 use crypto::hash::FromBytesError;
 
-use crate::chunks::ChunkedVec;
+use crate::hash::HashingError;
 use crate::persistent::DBError;
-use crate::{hash::HashingError, kv_store::HashId};
 
 /// Print logs on stdout with the prefix `[tezedge.gc]`
 macro_rules! log {
