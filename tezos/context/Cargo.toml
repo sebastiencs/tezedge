@@ -21,6 +21,8 @@ parking_lot = "0.12.0"
 serde = { version = "1.0", features = ["derive"] }
 slog = { version = "2.7", features = ["max_level_trace", "release_max_level_trace"] }
 static_assertions = "1.1"
+tikv-jemallocator = "0.4.1"
+tikv-jemalloc-ctl = "0.4.2"
 rand = "0.8"
 strum = "0.20"
 strum_macros = "0.20"
@@ -33,8 +35,6 @@ tezos_conv = { path = "../conv" }
 tezos_spsc = { path = "../spsc" }
 crypto = { path = "../../crypto" }
 tezos_timing = { path = "../timing" }
-tikv-jemallocator = "0.4.1"
-tikv-jemalloc-ctl = "0.4.2"
 
 [dev-dependencies]
 flate2 = "1.0"

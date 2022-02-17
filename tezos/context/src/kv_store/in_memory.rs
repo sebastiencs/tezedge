@@ -94,7 +94,7 @@ impl HashValueStore {
 
         let total_bytes = values_bytes
             .saturating_add(values_capacity * size_of::<Option<Box<[u8]>>>())
-            .saturating_add(hashes_capacity * size_of::<ObjectHash>())
+            .saturating_add(hashes_capacity * size_of::<Option<Box<ObjectHash>>>())
             .saturating_add(strings_total_bytes)
             .saturating_add(shapes_total_bytes)
             .saturating_add(commit_index_total_bytes);
@@ -461,10 +461,12 @@ impl InMemory {
 
     /// Reload context from disk
     fn reload_database(&mut self) -> Result<(), ReloadError> {
+        debug_jemalloc();
+
         let (tree, parent_hash, commit) = {
             let mut ondisk = Persistent::try_new(PersistentConfiguration {
-                // db_path: Some("/tmp/tezedge/context".to_string()),
-                db_path: Some("/home/sebastien/tmp/tezedge_snapshot_after_h".to_string()),
+                db_path: Some("/tmp/tezedge/context".to_string()),
+                // db_path: Some("/home/sebastien/tmp/tezedge_snapshot_after_h".to_string()),
                 startup_check: false,
                 read_mode: true,
             })?;
@@ -538,6 +540,7 @@ impl InMemory {
         self.shapes.shrink_to_fit();
 
         println!("AFTER_RELOAD MEMORY_USAGE={:#?}", self.memory_usage());
+        debug_jemalloc();
 
         Ok(())
     }
@@ -738,6 +741,8 @@ impl InMemory {
 
 impl Drop for InMemory {
     fn drop(&mut self) {
+        elog!("Dropping InMemory");
+
         let sender = match self.sender.take() {
             Some(sender) => sender,
             None => return,
@@ -807,7 +812,7 @@ mod tests {
     #[test]
     fn reload_from_disk() {
         if true {
-            // return;
+            return;
         }
 
         #[cfg(not(target_env = "msvc"))]
@@ -817,7 +822,28 @@ mod tests {
         #[global_allocator]
         static GLOBAL: Jemalloc = Jemalloc;
 
-        println!("RELOADED in {:?}", now.elapsed());
-        std::thread::sleep_ms(60000);
+        // #[no_mangle]
+        // pub static mut malloc_conf: *const libc::c_char =
+        //     b"background_thread:true\0".as_ptr() as _;
+
+        debug_jemalloc();
+
+        {
+            let now = std::time::Instant::now();
+
+            let mut repo = InMemory::try_new().unwrap();
+            repo.reload_database().unwrap();
+
+            println!("RELOADED in {:?}", now.elapsed());
+            std::thread::sleep_ms(10000);
+            std::mem::drop(repo);
+        }
+
+        debug_jemalloc();
+
+        println!("EVERYTHING DROPPED");
+        std::thread::sleep_ms(20000);
+
+        debug_jemalloc();
     }
 }
