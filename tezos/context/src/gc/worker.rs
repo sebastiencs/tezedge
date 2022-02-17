@@ -409,6 +409,7 @@ impl GCThread {
             h_alive,
             h_dead,
         );
+        debug_jemalloc();
 
         self.counter = self.counter.wrapping_add(1);
     }

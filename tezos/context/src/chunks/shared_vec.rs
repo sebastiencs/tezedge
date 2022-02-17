@@ -150,11 +150,7 @@ impl<T: std::fmt::Debug + Eq> SharedChunk<Option<T>> {
     fn clear(&self, index: usize, is_last_chunk: bool) -> (Option<T>, bool) {
         let mut inner = self.inner.write();
 
-        if inner.capacity() == 0 {
-            return (None, false);
-        }
-
-        let old = match std::mem::take(&mut inner[index]) {
+        let old = match inner.get_mut(index).and_then(std::mem::take) {
             Some(old) => old,
             None => return (None, false),
         };
