@@ -22,9 +22,8 @@ use crate::{
 
 use tezos_spsc::Producer;
 
-use super::SortedMap;
-
 pub(crate) const PRESERVE_CYCLE_COUNT: usize = 2;
+pub const PENDING_CHUNK_SIZE: usize = 100_000;
 
 /// Used for statistics
 ///
@@ -32,17 +31,16 @@ pub(crate) const PRESERVE_CYCLE_COUNT: usize = 2;
 pub(crate) static GC_PENDING_HASHIDS: AtomicUsize = AtomicUsize::new(0);
 
 pub(crate) struct GCThread {
-    // pub(crate) cycles: Cycles,
-    pub(crate) free_ids: Producer<HashId>,
-    pub(crate) recv: Receiver<Command>,
-    pub(crate) pending: Vec<HashId>,
-    pub(crate) debug: bool,
+    free_ids: Producer<HashId>,
+    recv: Receiver<Command>,
+    pending: ChunkedVec<HashId>,
+    debug: bool,
 
-    pub(crate) objects_view: SharedIndexMapView<HashId, Option<Box<[u8]>>>,
-    pub(crate) hashes_view: SharedIndexMapView<HashId, Option<Box<ObjectHash>>>,
+    objects_view: SharedIndexMapView<HashId, Option<Box<[u8]>>>,
+    hashes_view: SharedIndexMapView<HashId, Option<Box<ObjectHash>>>,
 
-    pub(crate) global_counter: IndexMap<HashId, Option<u8>>,
-    pub(crate) counter: u8,
+    global_counter: IndexMap<HashId, Option<u8>>,
+    counter: u8,
 }
 
 assert_eq_size!([u8; 16], Option<Box<[u8]>>);
@@ -64,6 +62,23 @@ pub(crate) enum Command {
 }
 
 impl GCThread {
+    pub fn new(
+        recv: Receiver<Command>,
+        producer: Producer<HashId>,
+        objects_view: SharedIndexMapView<HashId, Option<Box<[u8]>>>,
+        hashes_view: SharedIndexMapView<HashId, Option<Box<ObjectHash>>>,
+    ) -> Self {
+        Self {
+            recv,
+            free_ids: producer,
+            pending: ChunkedVec::with_chunk_capacity(PENDING_CHUNK_SIZE),
+            debug: false,
+            global_counter: IndexMap::with_chunk_capacity(1_000_000),
+            counter: 0,
+            objects_view,
+            hashes_view,
+        }
+    }
     pub(crate) fn run(mut self) {
         // Enable debug logs when `TEZEDGE_GC_DEBUG` is present
         self.debug = std::env::var("TEZEDGE_GC_DEBUG").is_ok();
@@ -81,6 +96,7 @@ impl GCThread {
                     self.add_chunks(objects_chunks, hashes_chunks);
                 }
                 Ok(Command::MarkNewIds { new_ids }) => {
+                    self.send_unused(None);
                     self.mark_new_ids(new_ids);
                 }
                 Ok(Command::MarkReused {
@@ -164,26 +180,52 @@ impl GCThread {
     }
 
     /// Notify the main thread that the ids are free to reused
-    fn send_unused(&mut self, unused: Vec<HashId>) {
-        let unused_length = unused.len();
-        let navailable = self.free_ids.available();
+    /// Returns the number of `HashId` sent
+    fn send_unused(&mut self, unused: impl Into<Option<ChunkedVec<HashId>>>) -> usize {
+        let unused: Option<ChunkedVec<HashId>> = unused.into();
+        let unused_is_none = unused.is_none();
 
-        let (to_send, pending) = if navailable < unused_length {
-            unused.split_at(navailable)
-        } else {
-            (&unused[..], &[][..])
-        };
+        let sent = self.send_unused_impl(unused);
 
-        if let Err(e) = self.free_ids.push_slice(to_send) {
-            elog!("GC: Fail to send free ids {:?}", e);
-            self.pending.extend_from_slice(&unused);
-            GC_PENDING_HASHIDS.store(self.pending.len(), Ordering::Release);
-            return;
+        if unused_is_none && sent > 0 {
+            log!("GC_DEBUG SENT={:?}", sent);
         }
 
-        if !pending.is_empty() {
-            self.pending.extend_from_slice(pending);
-            GC_PENDING_HASHIDS.store(self.pending.len(), Ordering::Release);
+        GC_PENDING_HASHIDS.store(self.pending.len(), Ordering::Release);
+        sent
+    }
+
+    fn send_unused_impl(&mut self, unused: Option<ChunkedVec<HashId>>) -> usize {
+        if let Some(unused) = unused {
+            self.pending.append_chunks(unused);
+        };
+
+        let mut sent = 0;
+
+        loop {
+            if self.pending.is_empty() {
+                return sent;
+            }
+
+            let navailable = self.free_ids.available();
+
+            if navailable < PENDING_CHUNK_SIZE {
+                // We send chunk by chunk
+                return sent;
+            }
+
+            let chunk = match self.pending.pop_first_chunk() {
+                Some(chunk) => chunk,
+                None => return sent,
+            };
+
+            if let Err(e) = self.free_ids.push_slice(&chunk) {
+                elog!("GC: Fail to send free ids {:?}", e);
+                self.pending.extend_from_slice(&chunk);
+                return sent;
+            } else {
+                sent += chunk.len()
+            }
         }
     }
 
@@ -264,10 +306,10 @@ impl GCThread {
         );
     }
 
-    fn take_unused(&mut self) -> Vec<HashId> {
+    fn take_unused(&mut self) -> ChunkedVec<HashId> {
         let unused_at = self.counter.wrapping_sub(3);
 
-        let mut unused = Vec::with_capacity(2048);
+        let mut unused = ChunkedVec::with_chunk_capacity(2048);
 
         for (hash_id, hash_id_counter) in self.global_counter.iter_with_keys() {
             if !matches!(hash_id_counter, Some(counter) if *counter == unused_at) {
@@ -280,7 +322,7 @@ impl GCThread {
         let set = HashSet::<&HashId>::from_iter(unused.iter());
         assert_eq!(set.len(), unused.len());
 
-        for hash_id in &unused {
+        for hash_id in unused.iter() {
             let (_, obj_dealloc) = self.objects_view.clear(*hash_id).unwrap();
             let hash_dealloc = self.hashes_view.clear(*hash_id).unwrap();
 
@@ -316,6 +358,7 @@ impl GCThread {
         if !self.recv.is_empty() {
             // println!("DONT MARK");
             // self.send_unused(hashid_without_value);
+            self.send_unused(None);
             return;
         }
 
@@ -333,17 +376,18 @@ impl GCThread {
         let unused = self.take_unused();
 
         // let mut sent = hashid_without_value.len();
-        let sent = unused.len();
+        let found_unused = unused.len();
 
         // self.send_unused(hashid_without_value);
-        self.send_unused(unused);
+        let nsent = self.send_unused(unused);
 
         let (alive, dead) = self.objects_view.alive_dead();
         let (h_alive, h_dead) = self.hashes_view.alive_dead();
 
         log!(
-            "MARK_REUSED SENT={:?} TRAVERSED={:?} MAX_DEPTH={:?} OBJECT_TOTAL_BYTES={:?} TIME={:?} OBJ_LIST_ALIVE={:?} OBJ_LIST_DEAD={:?} HASH_LIST_ALIVE={:?} HASH_LIVE_DEAD={:?}",
-            sent,
+            "MARK_REUSED FOUND_UNUSED={:?} SENT={:?} TRAVERSED={:?} MAX_DEPTH={:?} OBJECT_TOTAL_BYTES={:?} TIME={:?} OBJ_LIST_ALIVE={:?} OBJ_LIST_DEAD={:?} HASH_LIST_ALIVE={:?} HASH_LIVE_DEAD={:?}",
+            found_unused,
+            nsent,
             traversed,
             max_depth,
             objets_total_bytes,
