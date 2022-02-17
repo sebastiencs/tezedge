@@ -823,6 +823,11 @@ mod tests {
             // return;
         }
 
+        use tcmalloc::TCMalloc;
+
+        #[global_allocator]
+        static GLOBAL: TCMalloc = TCMalloc;
+
         // #[cfg(not(target_env = "msvc"))]
         // use tikv_jemallocator::Jemalloc;
 
