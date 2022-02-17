@@ -11,6 +11,7 @@ thiserror = "1.0"
 fs_extra = "1.2.0"
 futures = "0.3"
 tezedge-actor-system = { git = "https://github.com/tezedge/tezedge-actor-system.git", tag = "v0.5.0" }
+tikv-jemallocator = "0.4.1"
 rlimit = "0.5"
 serde_json = "1.0"
 slog = { version = "2.7", features = ["max_level_trace", "release_max_level_trace"] }
@@ -35,4 +36,3 @@ monitoring = { path = "../monitoring" }
 rpc = { path = "../rpc" }
 async_ipc = { path = "../async-ipc" }
 signal-hook = "0.3.9"
-tikv-jemallocator = "0.4.1"
