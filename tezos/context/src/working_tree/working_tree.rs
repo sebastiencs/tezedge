@@ -50,7 +50,7 @@
 use std::{
     array::TryFromSliceError,
     collections::{HashMap, HashSet},
-    sync::{Arc, PoisonError},
+    sync::PoisonError,
     vec::IntoIter,
 };
 

@@ -3,7 +3,7 @@
 
 use std::{
     array::TryFromSliceError, convert::TryInto, io::Write, num::TryFromIntError, str::Utf8Error,
-    string::FromUtf8Error, sync::Arc,
+    string::FromUtf8Error,
 };
 
 use modular_bitfield::prelude::*;

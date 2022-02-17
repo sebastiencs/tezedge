@@ -15,7 +15,6 @@ use ocaml_interop::BoxRoot;
 use tezos_context_api::StringDirectoryMap;
 use tezos_timing::{BlockMemoryUsage, ContextMemoryUsage};
 
-use crate::chunks::ChunkedVec;
 use crate::{
     hash::ObjectHash,
     kv_store::HashId,
