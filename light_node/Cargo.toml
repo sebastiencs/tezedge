@@ -35,6 +35,4 @@ monitoring = { path = "../monitoring" }
 rpc = { path = "../rpc" }
 async_ipc = { path = "../async-ipc" }
 signal-hook = "0.3.9"
-# tikv-jemallocator = "0.4.1"
-# tcmalloc = { version = "0.3.0", features = ["bundled"] }
-rpmalloc = "0.2.2"
+tikv-jemallocator = "0.4.1"
