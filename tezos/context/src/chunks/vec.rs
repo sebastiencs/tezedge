@@ -105,6 +105,13 @@ where
         (start, length)
     }
 
+    /// Appends `other` chunks.
+    pub fn append_chunks(&mut self, mut other: ChunkedVec<T>) {
+        while let Some(mut chunk) = other.pop_first_chunk() {
+            self.append(&mut chunk);
+        }
+    }
+
     pub fn extend_from(&mut self, other: &Self) {
         let our_length = self.list_of_chunks.len();
         let other_length = other.list_of_chunks.len();
@@ -315,8 +322,9 @@ impl<T> ChunkedVec<T> {
         if self.list_of_chunks.is_empty() {
             None
         } else {
-            self.nelems -= self.list_of_chunks[0].len();
-            Some(self.list_of_chunks.remove(0))
+            let chunk = self.list_of_chunks.remove(0);
+            self.nelems -= chunk.len();
+            Some(chunk)
         }
     }
 
@@ -400,6 +408,38 @@ mod tests {
         assert_eq!(chunks.pop().unwrap(), 2);
         assert_eq!(chunks.pop().unwrap(), 1);
         assert!(chunks.pop().is_none());
+    }
+
+    #[test]
+    fn test_chunked_pop_chunk() {
+        let mut chunks = ChunkedVec::with_chunk_capacity(2);
+        assert!(chunks.pop().is_none());
+        assert_eq!(chunks.capacity(), 2);
+
+        chunks.extend_from_slice(&[1, 2, 3, 4, 5, 6, 7]);
+        assert_eq!(chunks.len(), 7);
+        assert_eq!(chunks.capacity(), 8);
+
+        chunks.pop_first_chunk().unwrap();
+        assert_eq!(chunks.len(), 5);
+        assert_eq!(chunks.get_slice(0..5).unwrap(), &[3, 4, 5, 6, 7][..]);
+        assert_eq!(chunks.capacity(), 6);
+
+        chunks.pop_first_chunk().unwrap();
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks.get_slice(0..3).unwrap(), &[5, 6, 7][..]);
+        assert_eq!(chunks.capacity(), 4);
+
+        chunks.pop_first_chunk().unwrap();
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks.get_slice(0..1).unwrap(), &[7][..]);
+        assert_eq!(chunks.capacity(), 2);
+
+        chunks.pop_first_chunk().unwrap();
+        assert_eq!(chunks.len(), 0);
+        assert_eq!(chunks.capacity(), 0);
+
+        assert!(chunks.pop_first_chunk().is_none());
     }
 
     #[test]

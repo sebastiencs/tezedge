@@ -23,7 +23,7 @@ use tezos_timing::{RepositoryMemoryUsage, SerializeStats};
 use crate::{
     chunks::{ChunkedVec, SharedIndexMap},
     gc::{
-        worker::{Command, GCThread, GC_PENDING_HASHIDS, PRESERVE_CYCLE_COUNT},
+        worker::{Command, GCThread, GC_PENDING_HASHIDS, PENDING_CHUNK_SIZE, PRESERVE_CYCLE_COUNT},
         GarbageCollectionError, GarbageCollector,
     },
     hash::ObjectHash,
@@ -428,28 +428,14 @@ impl InMemory {
             (None, None, HashValueStore::new(None))
         } else {
             let (sender, recv) = crossbeam_channel::unbounded();
-            let (prod, cons) = tezos_spsc::bounded(2_000_000);
-            let hashes = HashValueStore::new(cons);
+            let (producer, consumer) = tezos_spsc::bounded(2_000_000);
+            let hashes = HashValueStore::new(consumer);
             let objects_view = hashes.values.get_view();
             let hashes_view = hashes.hashes.get_view();
 
             let thread_handle = std::thread::Builder::new()
                 .name("ctx-inmem-gc-thread".to_string())
-                .spawn(move || {
-                    GCThread {
-                        // cycles: Cycles::default(),
-                        recv,
-                        free_ids: prod,
-                        pending: Vec::new(),
-                        debug: false,
-                        // global: IndexMap::with_chunk_capacity(10_000_000),
-                        global_counter: IndexMap::with_chunk_capacity(VALUES_LENGTH),
-                        counter: 0,
-                        objects_view,
-                        hashes_view,
-                    }
-                    .run()
-                })?;
+                .spawn(move || GCThread::new(recv, producer, objects_view, hashes_view).run())?;
 
             (Some(sender), Some(thread_handle), hashes)
         };
