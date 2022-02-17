@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     chunks::{ChunkedVec, SharedIndexMap},
+    gc::worker::NEW_IDS_CHUNK_CAPACITY,
     ObjectHash,
 };
 
@@ -141,7 +142,7 @@ enum Vacant<'a> {
     },
     Push {
         map: &'a mut SharedIndexMap<HashId, Option<Box<ObjectHash>>>,
-        new_ids: &'a mut ChunkedVec<HashId>,
+        new_ids: &'a mut ChunkedVec<HashId, { NEW_IDS_CHUNK_CAPACITY }>,
     },
     UseFreeId {
         map: &'a mut SharedIndexMap<HashId, Option<Box<ObjectHash>>>,
@@ -174,7 +175,7 @@ impl<'a> VacantObjectHash<'a> {
 
     pub fn new_push(
         map: &'a mut SharedIndexMap<HashId, Option<Box<ObjectHash>>>,
-        new_ids: &'a mut ChunkedVec<HashId>,
+        new_ids: &'a mut ChunkedVec<HashId, NEW_IDS_CHUNK_CAPACITY>,
     ) -> Self {
         Self {
             vacant: Vacant::Push { map, new_ids },

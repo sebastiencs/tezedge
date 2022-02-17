@@ -12,18 +12,18 @@ use crate::chunks::{ChunkedVec, ChunkedVecIter};
 ///
 /// The underlying container is a `Vec` and the id is its index.
 #[derive(Debug)]
-pub struct IndexMap<K, V> {
-    pub entries: ChunkedVec<V>,
+pub struct IndexMap<K, V, const CHUNK_CAPACITY: usize> {
+    pub entries: ChunkedVec<V, CHUNK_CAPACITY>,
     _phantom: PhantomData<K>,
 }
 
-impl<K, V> Default for IndexMap<K, V> {
+impl<K, V, const CHUNK_CAPACITY: usize> Default for IndexMap<K, V, CHUNK_CAPACITY> {
     fn default() -> Self {
-        Self::empty()
+        Self::new()
     }
 }
 
-impl<K, V> IndexMap<K, V> {
+impl<K, V, const CHUNK_CAPACITY: usize> IndexMap<K, V, CHUNK_CAPACITY> {
     pub fn empty() -> Self {
         Self {
             entries: ChunkedVec::empty(),
@@ -31,9 +31,9 @@ impl<K, V> IndexMap<K, V> {
         }
     }
 
-    pub fn with_chunk_capacity(cap: usize) -> Self {
+    pub fn new() -> Self {
         Self {
-            entries: ChunkedVec::with_chunk_capacity(cap),
+            entries: ChunkedVec::default(),
             _phantom: PhantomData,
         }
     }
@@ -58,7 +58,7 @@ impl<K, V> IndexMap<K, V> {
         self.entries.iter()
     }
 
-    pub fn iter_with_keys(&self) -> IndexMapIter<'_, K, V> {
+    pub fn iter_with_keys(&self) -> IndexMapIter<'_, K, V, CHUNK_CAPACITY> {
         IndexMapIter {
             chunks: self.entries.iter(),
             _phantom: PhantomData,
@@ -70,7 +70,7 @@ impl<K, V> IndexMap<K, V> {
     }
 }
 
-impl<K, V> IndexMap<K, V>
+impl<K, V, const CHUNK_CAPACITY: usize> IndexMap<K, V, CHUNK_CAPACITY>
 where
     K: TryInto<usize>,
 {
@@ -92,7 +92,7 @@ where
     }
 }
 
-impl<K, V> IndexMap<K, V>
+impl<K, V, const CHUNK_CAPACITY: usize> IndexMap<K, V, CHUNK_CAPACITY>
 where
     K: TryFrom<usize>,
 {
@@ -102,7 +102,7 @@ where
     }
 }
 
-impl<K, V> IndexMap<K, V>
+impl<K, V, const CHUNK_CAPACITY: usize> IndexMap<K, V, CHUNK_CAPACITY>
 where
     K: TryInto<usize>,
     K: TryFrom<usize>,
@@ -124,12 +124,12 @@ where
     }
 }
 
-pub struct IndexMapIter<'a, K, V> {
-    chunks: ChunkedVecIter<'a, V>,
+pub struct IndexMapIter<'a, K, V, const CHUNK_CAPACITY: usize> {
+    chunks: ChunkedVecIter<'a, V, CHUNK_CAPACITY>,
     _phantom: PhantomData<K>,
 }
 
-impl<'a, K, V> Iterator for IndexMapIter<'a, K, V>
+impl<'a, K, V, const CHUNK_CAPACITY: usize> Iterator for IndexMapIter<'a, K, V, CHUNK_CAPACITY>
 where
     K: TryFrom<usize>,
 {

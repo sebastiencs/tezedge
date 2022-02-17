@@ -83,12 +83,12 @@ pub struct ShapeSliceId {
 pub struct DirectoryShapes {
     /// Map `DirectoryShapeHash` to its `DirectoryShapeId` and strings.
     hash_to_strings: SortedMap<DirectoryShapeHash, (DirectoryShapeId, ShapeSliceId)>,
-    shapes: ChunkedVec<StringId>,
+    shapes: ChunkedVec<StringId, { 64 * 1024 * 1024 }>,
 
     to_serialize: Vec<ShapeSliceId>,
 
     /// Map the `DirectoryShapeId` to its `DirectoryShapeHash`.
-    id_to_hash: IndexMap<DirectoryShapeId, DirectoryShapeHash>,
+    id_to_hash: IndexMap<DirectoryShapeId, DirectoryShapeHash, { 100 * 1024 }>,
     /// Temporary vector used to collect the `StringId` when creating/retrieving a shape.
     temp: Vec<StringId>,
 }
@@ -127,9 +127,9 @@ impl DirectoryShapes {
     pub fn new() -> Self {
         Self {
             hash_to_strings: Default::default(),
-            id_to_hash: IndexMap::with_chunk_capacity(1_024 * 100),
+            id_to_hash: IndexMap::default(),
             temp: Vec::with_capacity(256),
-            shapes: ChunkedVec::with_chunk_capacity(64 * 1024 * 1024), // 64 MB
+            shapes: ChunkedVec::default(), // 64 MB
             to_serialize: Vec::with_capacity(256),
         }
     }
