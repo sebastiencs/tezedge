@@ -23,7 +23,9 @@ use crate::{
 use tezos_spsc::Producer;
 
 pub(crate) const PRESERVE_CYCLE_COUNT: usize = 2;
-pub const PENDING_CHUNK_SIZE: usize = 100_000;
+const PENDING_CHUNK_CAPACITY: usize = 100_000;
+const UNUSED_CHUNK_CAPACITY: usize = 20_000;
+pub const NEW_IDS_CHUNK_CAPACITY: usize = 20_000;
 
 /// Used for statistics
 ///
@@ -33,13 +35,13 @@ pub(crate) static GC_PENDING_HASHIDS: AtomicUsize = AtomicUsize::new(0);
 pub(crate) struct GCThread {
     free_ids: Producer<HashId>,
     recv: Receiver<Command>,
-    pending: ChunkedVec<HashId>,
+    pending: ChunkedVec<HashId, PENDING_CHUNK_CAPACITY>,
     debug: bool,
 
     objects_view: SharedIndexMapView<HashId, Option<Box<[u8]>>>,
     hashes_view: SharedIndexMapView<HashId, Option<Box<ObjectHash>>>,
 
-    global_counter: IndexMap<HashId, Option<u8>>,
+    global_counter: IndexMap<HashId, Option<u8>, 1_000_000>,
     counter: u8,
 }
 
@@ -48,10 +50,10 @@ assert_eq_size!([u8; 16], Option<Arc<[u8]>>);
 
 pub(crate) enum Command {
     MarkNewIds {
-        new_ids: ChunkedVec<HashId>,
+        new_ids: ChunkedVec<HashId, NEW_IDS_CHUNK_CAPACITY>,
     },
     MarkReused {
-        new_ids: ChunkedVec<HashId>,
+        new_ids: ChunkedVec<HashId, NEW_IDS_CHUNK_CAPACITY>,
         commit_hash_id: HashId,
     },
     NewChunks {
@@ -71,9 +73,9 @@ impl GCThread {
         Self {
             recv,
             free_ids: producer,
-            pending: ChunkedVec::with_chunk_capacity(PENDING_CHUNK_SIZE),
+            pending: ChunkedVec::default(),
             debug: false,
-            global_counter: IndexMap::with_chunk_capacity(1_000_000),
+            global_counter: IndexMap::default(),
             counter: 0,
             objects_view,
             hashes_view,
@@ -181,8 +183,11 @@ impl GCThread {
 
     /// Notify the main thread that the ids are free to reused
     /// Returns the number of `HashId` sent
-    fn send_unused(&mut self, unused: impl Into<Option<ChunkedVec<HashId>>>) -> usize {
-        let unused: Option<ChunkedVec<HashId>> = unused.into();
+    fn send_unused(
+        &mut self,
+        unused: impl Into<Option<ChunkedVec<HashId, { UNUSED_CHUNK_CAPACITY }>>>,
+    ) -> usize {
+        let unused: Option<ChunkedVec<HashId, { UNUSED_CHUNK_CAPACITY }>> = unused.into();
         let unused_is_none = unused.is_none();
 
         let sent = self.send_unused_impl(unused);
@@ -195,7 +200,10 @@ impl GCThread {
         sent
     }
 
-    fn send_unused_impl(&mut self, unused: Option<ChunkedVec<HashId>>) -> usize {
+    fn send_unused_impl(
+        &mut self,
+        unused: Option<ChunkedVec<HashId, { UNUSED_CHUNK_CAPACITY }>>,
+    ) -> usize {
         if let Some(unused) = unused {
             self.pending.append_chunks(unused);
         };
@@ -209,7 +217,7 @@ impl GCThread {
 
             let navailable = self.free_ids.available();
 
-            if navailable < PENDING_CHUNK_SIZE {
+            if navailable < PENDING_CHUNK_CAPACITY {
                 // We send chunk by chunk
                 return sent;
             }
@@ -306,10 +314,10 @@ impl GCThread {
         );
     }
 
-    fn take_unused(&mut self) -> ChunkedVec<HashId> {
+    fn take_unused(&mut self) -> ChunkedVec<HashId, { UNUSED_CHUNK_CAPACITY }> {
         let unused_at = self.counter.wrapping_sub(3);
 
-        let mut unused = ChunkedVec::with_chunk_capacity(2048);
+        let mut unused = ChunkedVec::default();
 
         for (hash_id, hash_id_counter) in self.global_counter.iter_with_keys() {
             if !matches!(hash_id_counter, Some(counter) if *counter == unused_at) {
@@ -342,7 +350,7 @@ impl GCThread {
         unused
     }
 
-    fn mark_new_ids(&mut self, new_ids: ChunkedVec<HashId>) {
+    fn mark_new_ids(&mut self, new_ids: ChunkedVec<HashId, NEW_IDS_CHUNK_CAPACITY>) {
         for hash_id in new_ids.iter() {
             self.global_counter
                 .insert_at(*hash_id, Some(self.counter))
@@ -350,7 +358,11 @@ impl GCThread {
         }
     }
 
-    fn mark_reused(&mut self, new_ids: ChunkedVec<HashId>, commit_hash_id: HashId) {
+    fn mark_reused(
+        &mut self,
+        new_ids: ChunkedVec<HashId, NEW_IDS_CHUNK_CAPACITY>,
+        commit_hash_id: HashId,
+    ) {
         let now = std::time::Instant::now();
 
         self.mark_new_ids(new_ids);
