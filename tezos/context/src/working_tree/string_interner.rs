@@ -89,7 +89,7 @@ pub struct SerializeStrings {
 #[derive(Clone, Debug)]
 struct BigStrings {
     hashes: SortedMap<u64, u32>,
-    strings: ChunkedString<{ 64 * 1024 * 1024 }>,
+    strings: ChunkedString<{ 64 * 1024 * 1024 }>, // ~67MB
     offsets: ChunkedVec<(u32, u32)>,
     to_serialize_index: usize,
 }
