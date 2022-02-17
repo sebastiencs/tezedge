@@ -10,15 +10,12 @@ use clap::{App, Arg};
 use slog::*;
 use tezos_interop::runtime::OCamlBlockPanic;
 
+#[cfg(not(target_env = "msvc"))]
+use tikv_jemallocator::Jemalloc;
+
+#[cfg(not(target_env = "msvc"))]
 #[global_allocator]
-static ALLOC: rpmalloc::RpMalloc = rpmalloc::RpMalloc;
-
-// #[cfg(not(target_env = "msvc"))]
-// use tikv_jemallocator::Jemalloc;
-
-// #[cfg(not(target_env = "msvc"))]
-// #[global_allocator]
-// static GLOBAL: Jemalloc = Jemalloc;
+static GLOBAL: Jemalloc = Jemalloc;
 
 fn create_logger(log_level: Level, endpoint_name: String) -> Logger {
     let drain = slog_async::Async::new(

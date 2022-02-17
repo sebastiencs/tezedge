@@ -760,43 +760,43 @@ impl Drop for InMemory {
 }
 
 pub fn debug_jemalloc() {
-    // use tikv_jemalloc_ctl::{background_thread, epoch, stats};
+    use tikv_jemalloc_ctl::{background_thread, epoch, stats};
 
-    // let bg = background_thread::mib().unwrap();
-    // // let s = bg.read().unwrap();
-    // // println!("background_threads enabled: {}", s);
-    // // assert!(!s);
+    let bg = background_thread::mib().unwrap();
+    // let s = bg.read().unwrap();
+    // println!("background_threads enabled: {}", s);
+    // assert!(!s);
 
-    // // println!("background_threads enabled: {}", s);
-    // // let p = background_thread::update(!s).unwrap();
-    // // println!("background_threads enabled: {} => {}", p, bg.read().unwrap());
-    // // assert_eq!(p, s);
-    // background_thread::write(true).unwrap();
-    // println!("background_threads enabled: {}", bg.read().unwrap());
-    // // assert_eq!(p, s);
+    // println!("background_threads enabled: {}", s);
+    // let p = background_thread::update(!s).unwrap();
+    // println!("background_threads enabled: {} => {}", p, bg.read().unwrap());
+    // assert_eq!(p, s);
+    background_thread::write(true).unwrap();
+    println!("background_threads enabled: {}", bg.read().unwrap());
+    // assert_eq!(p, s);
 
-    // // Obtain a MIB for the `epoch`, `stats.allocated`, and
-    // // `atats.resident` keys:
-    // let e = epoch::mib().unwrap();
-    // let active = stats::active::mib().unwrap();
-    // let allocated = stats::allocated::mib().unwrap();
-    // let mapped = stats::mapped::mib().unwrap();
-    // let metadata = stats::metadata::mib().unwrap();
-    // let resident = stats::resident::mib().unwrap();
-    // let retained = stats::retained::mib().unwrap();
+    // Obtain a MIB for the `epoch`, `stats.allocated`, and
+    // `atats.resident` keys:
+    let e = epoch::mib().unwrap();
+    let active = stats::active::mib().unwrap();
+    let allocated = stats::allocated::mib().unwrap();
+    let mapped = stats::mapped::mib().unwrap();
+    let metadata = stats::metadata::mib().unwrap();
+    let resident = stats::resident::mib().unwrap();
+    let retained = stats::retained::mib().unwrap();
 
-    // e.advance().unwrap();
-    // // Read statistics using MIB key:
-    // let active = active.read().unwrap();
-    // let allocated = allocated.read().unwrap();
-    // let mapped = mapped.read().unwrap();
-    // let metadata = metadata.read().unwrap();
-    // let resident = resident.read().unwrap();
-    // let retained = retained.read().unwrap();
-    // println!(
-    //     "active={} allocated={} mapped={} metadata={} resident={} retained={}",
-    //     active, allocated, mapped, metadata, resident, retained
-    // );
+    e.advance().unwrap();
+    // Read statistics using MIB key:
+    let active = active.read().unwrap();
+    let allocated = allocated.read().unwrap();
+    let mapped = mapped.read().unwrap();
+    let metadata = metadata.read().unwrap();
+    let resident = resident.read().unwrap();
+    let retained = retained.read().unwrap();
+    println!(
+        "active={} allocated={} mapped={} metadata={} resident={} retained={}",
+        active, allocated, mapped, metadata, resident, retained
+    );
 }
 
 #[cfg(test)]
@@ -809,15 +809,12 @@ mod tests {
             // return;
         }
 
+        #[cfg(not(target_env = "msvc"))]
+        use tikv_jemallocator::Jemalloc;
+
+        #[cfg(not(target_env = "msvc"))]
         #[global_allocator]
-        static ALLOC: rpmalloc::RpMalloc = rpmalloc::RpMalloc;
-
-        // #[cfg(not(target_env = "msvc"))]
-        // use tikv_jemallocator::Jemalloc;
-
-        // #[cfg(not(target_env = "msvc"))]
-        // #[global_allocator]
-        // static GLOBAL: Jemalloc = Jemalloc;
+        static GLOBAL: Jemalloc = Jemalloc;
 
         println!("RELOADED in {:?}", now.elapsed());
         std::thread::sleep_ms(60000);
