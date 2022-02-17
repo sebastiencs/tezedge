@@ -4,7 +4,7 @@
 //! Serialization/deserialization for objects in the Working Tree so that they can be
 //! saved/loaded to/from the repository.
 
-use std::{borrow::Cow, convert::TryInto, io::Write, sync::Arc};
+use std::{borrow::Cow, convert::TryInto, io::Write};
 
 use modular_bitfield::prelude::*;
 use serde::{Deserialize, Serialize};

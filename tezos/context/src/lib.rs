@@ -150,10 +150,8 @@ use std::array::TryFromSliceError;
 use std::num::TryFromIntError;
 use std::sync::PoisonError;
 
-use chunks::ChunkedVec;
 use gc::GarbageCollectionError;
 pub use kv_store::persistent::Persistent;
-use kv_store::HashId;
 
 use persistent::{DBError, KeyValueStoreBackend};
 use tezos_context_api::{ContextKey, ContextKeyOwned, ContextValue, StringTreeObject};
