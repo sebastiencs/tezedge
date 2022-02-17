@@ -366,8 +366,13 @@ impl<T: std::fmt::Debug + Eq> SharedChunkedVec<Option<T>> {
     fn clear(&self, index: usize) -> (Option<T>, bool) {
         let (list_index, chunk_index) = self.get_indexes_at(index);
 
+        let chunk = match self.list_of_chunks.get(list_index) {
+            Some(chunk) => chunk,
+            None => return (None, false),
+        };
         let is_last_chunk = list_index + 1 == self.list_of_chunks.len();
-        self.list_of_chunks[list_index].clear(chunk_index, is_last_chunk)
+
+        chunk.clear(chunk_index, is_last_chunk)
     }
 
     pub fn push(&mut self, elem: Option<T>) -> usize {
