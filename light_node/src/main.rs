@@ -51,10 +51,8 @@ mod notification_integration;
 mod snapshot_command;
 mod system;
 
-use tcmalloc::TCMalloc;
-
 #[global_allocator]
-static GLOBAL: TCMalloc = TCMalloc;
+static ALLOC: rpmalloc::RpMalloc = rpmalloc::RpMalloc;
 
 // #[cfg(not(target_env = "msvc"))]
 // use tikv_jemallocator::Jemalloc;

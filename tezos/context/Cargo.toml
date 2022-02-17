@@ -35,7 +35,8 @@ crypto = { path = "../../crypto" }
 tezos_timing = { path = "../timing" }
 # tikv-jemallocator = "0.4.1"
 # tikv-jemalloc-ctl = "0.4.2"
-tcmalloc = { version = "0.3.0", features = ["bundled"] }
+rpmalloc = "0.2.2"
+# tcmalloc = { version = "0.3.0", features = ["bundled"] }
 
 [dev-dependencies]
 flate2 = "1.0"
