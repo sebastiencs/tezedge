@@ -6,23 +6,23 @@ use std::{borrow::Cow, ops::Range, sync::Arc};
 use super::DEFAULT_LIST_LENGTH;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum SliceOfString<const CHUNK_CAPACITY: usize> {
+enum MaybeSharedString<const CHUNK_CAPACITY: usize> {
     Immutable(Arc<str>),
     Mutable(String),
 }
 
-impl<const CHUNK_CAPACITY: usize> std::ops::Deref for SliceOfString<CHUNK_CAPACITY> {
+impl<const CHUNK_CAPACITY: usize> std::ops::Deref for MaybeSharedString<CHUNK_CAPACITY> {
     type Target = str;
 
     fn deref(&self) -> &Self::Target {
         match self {
-            SliceOfString::Immutable(s) => s,
-            SliceOfString::Mutable(s) => s.as_str(),
+            MaybeSharedString::Immutable(s) => s,
+            MaybeSharedString::Mutable(s) => s.as_str(),
         }
     }
 }
 
-impl<const CHUNK_CAPACITY: usize> SliceOfString<CHUNK_CAPACITY> {
+impl<const CHUNK_CAPACITY: usize> MaybeSharedString<CHUNK_CAPACITY> {
     fn clear(&mut self) {
         if let Self::Mutable(s) = self {
             s.clear();
@@ -35,9 +35,17 @@ impl<const CHUNK_CAPACITY: usize> SliceOfString<CHUNK_CAPACITY> {
 /// Structure similar to `ChunkedVec` but using `String` instead of `Vec<T>`
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChunkedString<const CHUNK_CAPACITY: usize> {
-    list_of_chunks: Vec<SliceOfString<CHUNK_CAPACITY>>,
+    /// List of `MaybeSharedString`, all elements are `MaybeSharedString::Immutable`
+    /// except the last one, which is a `MaybeSharedString::Mutable`
+    list_of_chunks: Vec<MaybeSharedString<CHUNK_CAPACITY>>,
     /// Number of bytes
     nbytes: usize,
+}
+
+impl<const CHUNK_CAPACITY: usize> Default for ChunkedString<CHUNK_CAPACITY> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<const CHUNK_CAPACITY: usize> ChunkedString<CHUNK_CAPACITY> {
@@ -52,9 +60,9 @@ impl<const CHUNK_CAPACITY: usize> ChunkedString<CHUNK_CAPACITY> {
     pub fn new() -> Self {
         assert_ne!(CHUNK_CAPACITY, 0);
 
-        let chunk = SliceOfString::Mutable(String::with_capacity(CHUNK_CAPACITY));
+        let chunk = MaybeSharedString::Mutable(String::with_capacity(CHUNK_CAPACITY));
 
-        let mut list_of_vec: Vec<SliceOfString<CHUNK_CAPACITY>> =
+        let mut list_of_vec: Vec<MaybeSharedString<CHUNK_CAPACITY>> =
             Vec::with_capacity(DEFAULT_LIST_LENGTH);
         list_of_vec.push(chunk);
 
@@ -69,43 +77,44 @@ impl<const CHUNK_CAPACITY: usize> ChunkedString<CHUNK_CAPACITY> {
     }
 
     pub fn extend_from(&mut self, other: &Self) {
-        let mut last_immutable = 0;
+        use MaybeSharedString::*;
 
-        while let Some(SliceOfString::Immutable(_)) = self.list_of_chunks.get(last_immutable) {
+        let mut last_immutable = 0;
+        while let Some(Immutable(_)) = self.list_of_chunks.get(last_immutable) {
             last_immutable += 1;
         }
 
         let index_to_clone = last_immutable;
         let chunks_to_clone = other.list_of_chunks.get(index_to_clone..).unwrap_or(&[]);
 
-        for (index, chunk) in chunks_to_clone.iter().enumerate() {
+        for (index, other_chunk) in chunks_to_clone.iter().enumerate() {
             match self.list_of_chunks.get_mut(index_to_clone + index) {
                 Some(mut self_chunk) => {
                     self.nbytes -= self_chunk.len();
-                    self.nbytes += chunk.len();
+                    self.nbytes += other_chunk.len();
 
-                    match (&mut self_chunk, chunk) {
-                        (SliceOfString::Mutable(_), SliceOfString::Immutable(_)) => {
-                            *self_chunk = chunk.clone();
+                    match (&mut self_chunk, other_chunk) {
+                        (Mutable(_), Immutable(_)) => {
+                            *self_chunk = other_chunk.clone();
                         }
-                        (SliceOfString::Mutable(s), SliceOfString::Mutable(_)) => {
+                        (Mutable(s), Mutable(_)) => {
                             let our_length = s.len();
-                            let other_length = chunk.len();
+                            let other_length = other_chunk.len();
 
                             if our_length != other_length {
                                 assert!(our_length < other_length);
-                                s.push_str(&chunk[our_length..]);
+                                s.push_str(&other_chunk[our_length..]);
                             }
                         }
-                        (SliceOfString::Immutable(_), _) => unreachable!(),
+                        (Immutable(_), _) => unreachable!(),
                     }
                 }
                 None => {
-                    let new = match chunk {
-                        SliceOfString::Mutable(owned) => {
+                    let new = match other_chunk {
+                        Mutable(owned) => {
                             let mut s = String::with_capacity(CHUNK_CAPACITY);
                             s.push_str(owned);
-                            SliceOfString::Mutable(s)
+                            Mutable(s)
                         }
                         s => s.clone(), // Clone the Arc
                     };
@@ -152,6 +161,8 @@ impl<const CHUNK_CAPACITY: usize> ChunkedString<CHUNK_CAPACITY> {
     /// - The last chunk has reached `Self::chunk_capacity` limit
     /// - `Self::list_of_chunks` is empty
     fn get_next_chunk(&mut self) -> &mut String {
+        use MaybeSharedString::*;
+
         let must_alloc_new_chunk = self
             .list_of_chunks
             .last()
@@ -167,26 +178,27 @@ impl<const CHUNK_CAPACITY: usize> ChunkedString<CHUNK_CAPACITY> {
             assert!(empty_owned.is_empty());
             assert_eq!(empty_owned.capacity(), CHUNK_CAPACITY);
 
-            self.list_of_chunks
-                .push(SliceOfString::Mutable(empty_owned));
+            self.list_of_chunks.push(Mutable(empty_owned));
         }
 
         // Never fail, we just allocated one in case it's empty
         match self.list_of_chunks.last_mut().unwrap() {
-            SliceOfString::Mutable(owned) => owned,
-            SliceOfString::Immutable(_) => panic!("Invalid state"),
+            Mutable(owned) => owned,
+            Immutable(_) => panic!("Invalid state"),
         }
     }
 
     fn convert_last_owned_to_shared(&mut self) -> String {
+        use MaybeSharedString::*;
+
         let last = match self.list_of_chunks.last_mut() {
             Some(last) => last,
             None => return String::with_capacity(CHUNK_CAPACITY),
         };
 
         let owned = match last {
-            SliceOfString::Mutable(owned) => owned,
-            SliceOfString::Immutable(_) => panic!("Invalid state"),
+            Mutable(owned) => owned,
+            Immutable(_) => panic!("Invalid state"),
         };
 
         assert_eq!(owned.capacity(), CHUNK_CAPACITY);
@@ -194,11 +206,11 @@ impl<const CHUNK_CAPACITY: usize> ChunkedString<CHUNK_CAPACITY> {
         let shared = Arc::<str>::from(owned.as_str());
         owned.clear();
 
-        let owned = std::mem::replace(last, SliceOfString::Immutable(shared));
+        let owned = std::mem::replace(last, Immutable(shared));
 
         match owned {
-            SliceOfString::Mutable(owned) => owned,
-            SliceOfString::Immutable(_) => panic!("Invalid state"),
+            Mutable(owned) => owned,
+            Immutable(_) => panic!("Invalid state"),
         }
     }
 
