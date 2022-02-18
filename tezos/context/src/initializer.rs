@@ -57,9 +57,27 @@ pub enum IndexInitializationError {
     ThreadJoinError { reason: String },
 }
 
+fn configure_jemalloc() -> tikv_jemalloc_ctl::Result<()> {
+    use tikv_jemalloc_ctl::background_thread;
+
+    // Enable `background_thread`, the jemalloc devs recommend to disable
+    // them only on "esoteric situations"
+    //
+    // https://github.com/jemalloc/jemalloc/issues/956
+    background_thread::write(true)?;
+    let bg = background_thread::mib()?;
+    log!("background_threads enabled: {}", bg.read()?);
+
+    Ok(())
+}
+
 fn spawn_reload_database(
     repository: Arc<RwLock<ContextKeyValueStore>>,
 ) -> std::io::Result<JoinHandle<()>> {
+    if let Err(e) = configure_jemalloc() {
+        eprintln!("Failed to configure jemalloc: {:?}", e);
+    };
+
     let thread = std::thread::Builder::new().name("db-reload".to_string());
     let (sender, recv) = std::sync::mpsc::channel();
 
