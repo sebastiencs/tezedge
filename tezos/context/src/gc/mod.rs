@@ -30,7 +30,9 @@ macro_rules! elog {
     })
 }
 
+pub mod jemalloc;
 mod sorted_map;
+mod stats;
 pub(crate) mod worker;
 
 // TODO: Use const default when the feature is stabilized, it will be in 1.59.0:
