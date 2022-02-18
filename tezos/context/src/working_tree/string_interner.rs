@@ -221,7 +221,7 @@ pub struct StringInterner {
     /// This is never cleared/deallocated
     all_strings: ChunkedString<{ 512 * 1024 }>,
     /// List of `StringId` that needs to be commited
-    pub all_strings_to_serialize: Vec<StringId>,
+    pub all_strings_to_serialize: ChunkedVec<StringId, 2048>,
     /// Concatenation of big strings. This is cleared/deallocated
     /// before every checkouts
     big_strings: BigStrings,
@@ -232,7 +232,7 @@ impl Default for StringInterner {
         Self {
             string_to_offset: SortedMap::default(),
             all_strings: ChunkedString::new(), // ~512KB
-            all_strings_to_serialize: Vec::with_capacity(1024),
+            all_strings_to_serialize: ChunkedVec::default(),
             big_strings: BigStrings::default(),
         } // Total ~69MB
     }
@@ -276,7 +276,7 @@ impl StringInterner {
             self.all_strings.extend_from(&other.all_strings);
 
             self.all_strings_to_serialize
-                .extend_from_slice(&other.all_strings_to_serialize);
+                .extend_from_chunks(&other.all_strings_to_serialize);
         }
 
         debug_assert_eq!(self.all_strings, other.all_strings);
@@ -369,7 +369,7 @@ impl StringInterner {
             strings: Vec::with_capacity(1000),
         };
 
-        for id in &self.all_strings_to_serialize {
+        for id in self.all_strings_to_serialize.iter() {
             let (start, end) = id.get_start_end();
 
             let string = self.all_strings.get(start..end).unwrap();
@@ -383,7 +383,6 @@ impl StringInterner {
         }
 
         self.all_strings_to_serialize.clear();
-
         self.big_strings.serialize_big_strings(&mut output);
 
         output
@@ -442,10 +441,6 @@ impl StringInterner {
     pub fn shrink_to_fit(&mut self) {
         self.string_to_offset.shrink_to_fit();
         self.big_strings.hashes.shrink_to_fit();
-        if self.all_strings_to_serialize.capacity() > 1024 {
-            assert!(self.all_strings_to_serialize.is_empty());
-            self.all_strings_to_serialize = Vec::with_capacity(1024);
-        }
     }
 }
 

@@ -93,6 +93,12 @@ where
         (start, slice_length)
     }
 
+    pub fn extend_from_chunks(&mut self, other: &Self) {
+        for chunk in &other.list_of_chunks {
+            self.extend_from_slice(chunk);
+        }
+    }
+
     /// Appends `other` in the last chunk.
     ///
     /// Return the index of the slice in the chunks, and its length
