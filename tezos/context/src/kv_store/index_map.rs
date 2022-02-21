@@ -104,7 +104,7 @@ where
 
 impl<K, V, const CHUNK_CAPACITY: usize> IndexMap<K, V, CHUNK_CAPACITY>
 where
-    K: TryInto<usize>,
+    K: TryInto<usize> + Copy,
     K: TryFrom<usize>,
     V: Default,
 {
@@ -121,6 +121,19 @@ where
         }
 
         Ok(std::mem::replace(&mut self.entries[index], value))
+    }
+
+    pub fn entry(&mut self, key: K) -> Result<&mut V, <K as TryInto<usize>>::Error> {
+        if self.contains_key(key)? {
+            return Ok(self.get_mut(key)?.unwrap());
+        }
+
+        let index: usize = key.try_into()?;
+        if index >= self.entries.len() {
+            self.entries.resize_with(index + 1, V::default);
+        }
+
+        Ok(self.get_mut(key)?.unwrap())
     }
 }
 

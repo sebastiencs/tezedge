@@ -36,6 +36,8 @@ pub const NEW_IDS_CHUNK_CAPACITY: usize = 20_000;
 /// Number of items in `GCThread::pending`.
 pub(crate) static GC_PENDING_HASHIDS: AtomicUsize = AtomicUsize::new(0);
 
+type ChunkIndex = u32;
+
 pub(crate) struct GCThread {
     free_ids: Producer<HashId>,
     recv: Receiver<Command>,
@@ -47,6 +49,9 @@ pub(crate) struct GCThread {
 
     global_counter: IndexMap<HashId, Option<u8>, 1_000_000>,
     counter: u8,
+
+    nalives_per_chunk: IndexMap<ChunkIndex, u32, 1_000_000>,
+    nids_in_commit: usize,
 }
 
 assert_eq_size!([u8; 16], Option<Box<[u8]>>);
@@ -83,6 +88,8 @@ impl GCThread {
             counter: 0,
             objects_view,
             hashes_view,
+            nalives_per_chunk: IndexMap::default(),
+            nids_in_commit: 0,
         }
     }
 
@@ -103,7 +110,7 @@ impl GCThread {
                     self.add_chunks(objects_chunks, hashes_chunks);
                 }
                 Ok(Command::MarkNewIds { new_ids }) => {
-                    self.send_unused(None);
+                    // self.send_unused(None);
                     self.mark_new_ids(new_ids);
                 }
                 Ok(Command::Commit {
@@ -160,7 +167,7 @@ impl GCThread {
         &mut self,
         unused: impl Into<Option<ChunkedVec<HashId, { UNUSED_CHUNK_CAPACITY }>>>,
     ) -> usize {
-        let unused: Option<ChunkedVec<HashId, { UNUSED_CHUNK_CAPACITY }>> = unused.into();
+        let unused = unused.into();
         let unused_is_none = unused.is_none();
 
         let sent = self.send_unused_impl(unused);
@@ -173,6 +180,15 @@ impl GCThread {
         sent
     }
 
+    fn is_in_dead_chunk(&self, hash_id: HashId) -> bool {
+        let chunk_index = self.hashes_view.chunk_index_of(hash_id).unwrap() as u32;
+        self.nalives_per_chunk
+            .get(chunk_index)
+            .unwrap()
+            .map(|n| *n == 0)
+            .unwrap_or(true)
+    }
+
     fn send_unused_impl(
         &mut self,
         unused: Option<ChunkedVec<HashId, { UNUSED_CHUNK_CAPACITY }>>,
@@ -181,33 +197,81 @@ impl GCThread {
             self.pending.append_chunks(unused);
         };
 
-        let mut sent = 0;
-
-        loop {
-            if self.pending.is_empty() {
-                return sent;
-            }
-
-            let navailable = self.free_ids.available();
-
-            if navailable < PENDING_CHUNK_CAPACITY {
-                // We send chunk by chunk
-                return sent;
-            }
-
-            let chunk = match self.pending.pop_first_chunk() {
-                Some(chunk) => chunk,
-                None => return sent,
-            };
-
-            if let Err(e) = self.free_ids.push_slice(&chunk) {
-                elog!("GC: Fail to send free ids {:?}", e);
-                self.pending.extend_from_slice(&chunk);
-                return sent;
-            } else {
-                sent += chunk.len()
-            }
+        if self.free_ids.len() > 20_000 {
+            return 0;
         }
+
+        let navailable = self.free_ids.available();
+        let npending = self.pending.len();
+
+        if npending == 0 || navailable == 0 {
+            return 0;
+        }
+
+        let nto_send = npending.min(navailable);
+        let mut to_send = Vec::<HashId>::with_capacity(nto_send);
+        let mut nchunk_pending = self.pending.nchunks();
+
+        'outer: while let Some(chunk) = self.pending.pop_first_chunk() {
+            for hash_id in chunk {
+                if nchunk_pending > 0 && self.is_in_dead_chunk(hash_id) {
+                    self.pending.push(hash_id);
+                } else {
+                    to_send.push(hash_id);
+                }
+
+                if nchunk_pending == 0 && to_send.len() > 1000 {
+                    break 'outer;
+                }
+
+                if to_send.len() == nto_send {
+                    break 'outer;
+                }
+            }
+            nchunk_pending = nchunk_pending.saturating_sub(1);
+        }
+
+        if let Err(e) = self.free_ids.push_slice(&to_send) {
+            elog!("GC: Fail to send free ids {:?}", e);
+            eprintln!(
+                "TO_SEND={:?} AVAIL={:?} NTO_SEND={:?}",
+                to_send.len(),
+                navailable,
+                nto_send
+            );
+            self.pending.extend_from_slice(&to_send);
+            0
+        } else {
+            to_send.len()
+        }
+
+        // let mut sent = 0;
+
+        // loop {
+        //     if self.pending.is_empty() {
+        //         return sent;
+        //     }
+
+        //     let navailable = self.free_ids.available();
+
+        //     if navailable < PENDING_CHUNK_CAPACITY {
+        //         // We send chunk by chunk
+        //         return sent;
+        //     }
+
+        //     let chunk = match self.pending.pop_first_chunk() {
+        //         Some(chunk) => chunk,
+        //         None => return sent,
+        //     };
+
+        //     if let Err(e) = self.free_ids.push_slice(&chunk) {
+        //         elog!("GC: Fail to send free ids {:?}", e);
+        //         self.pending.extend_from_slice(&chunk);
+        //         return sent;
+        //     } else {
+        //         sent += chunk.len()
+        //     }
+        // }
     }
 
     fn traverse_and_mark_tree_impl(
@@ -222,7 +286,7 @@ impl GCThread {
         *nobjects += 1;
         *max_depth = depth.max(*max_depth);
 
-        let mut hash_ids: [Option<HashId>; 256] = [None; 256];
+        let mut hash_ids = [None::<HashId>; 256];
 
         self.objects_view
             .with(hash_id, |object_bytes| {
@@ -304,10 +368,12 @@ impl GCThread {
         assert_eq!(set.len(), unused.len());
 
         for hash_id in unused.iter() {
-            let (_, is_obj_dealloc) = self.objects_view.clear(*hash_id).unwrap();
-            let (_, is_hash_dealloc) = self.hashes_view.clear(*hash_id).unwrap();
+            let hash_id = *hash_id;
 
-            // let chunk = self.hashes_view.chunk_index_of(*hash_id);
+            let (_, is_obj_dealloc) = self.objects_view.clear(hash_id).unwrap();
+            let (_, is_hash_dealloc) = self.hashes_view.clear(hash_id).unwrap();
+
+            // let chunk = self.hashes_view.chunk_index_of(hash_id);
 
             // assert_eq!(obj_dealloc, hash_dealloc);
 
@@ -315,7 +381,11 @@ impl GCThread {
             //     println!("DEALLOCATED CHUNK({:?})", chunk);
             // }
 
-            self.global_counter.insert_at(*hash_id, None).unwrap();
+            self.global_counter.insert_at(hash_id, None).unwrap();
+
+            let chunk_index = self.hashes_view.chunk_index_of(hash_id).unwrap() as u32;
+            let nalive = self.nalives_per_chunk.entry(chunk_index).unwrap();
+            *nalive = nalive.checked_sub(1).unwrap();
         }
 
         unused
@@ -323,9 +393,17 @@ impl GCThread {
 
     fn mark_new_ids(&mut self, new_ids: ChunkedVec<HashId, NEW_IDS_CHUNK_CAPACITY>) {
         for hash_id in new_ids.iter() {
+            self.nids_in_commit += 1;
+
+            let hash_id = *hash_id;
+
             self.global_counter
-                .insert_at(*hash_id, Some(self.counter))
+                .insert_at(hash_id, Some(self.counter))
                 .unwrap();
+
+            let chunk_index = self.hashes_view.chunk_index_of(hash_id).unwrap() as u32;
+            let nalive = self.nalives_per_chunk.entry(chunk_index).unwrap();
+            *nalive += 1;
         }
     }
 
@@ -339,11 +417,15 @@ impl GCThread {
         self.mark_new_ids(new_ids);
 
         if !self.recv.is_empty() {
-            // println!("DONT MARK");
+            println!("NIDS_IN_COMMIT={:?}", self.nids_in_commit);
+            self.nids_in_commit = 0;
             // self.send_unused(hashid_without_value);
-            self.send_unused(None);
+            // self.send_unused(None);
             return;
         }
+        self.nids_in_commit = 0;
+
+        self.send_unused(None);
 
         let mut nobjects = 0;
         let mut max_depth = 0;
@@ -362,13 +444,19 @@ impl GCThread {
         let unused_found = unused.len();
 
         // self.send_unused(hashid_without_value);
-        let nsent_to_main_thread = self.send_unused(unused);
+        let nsent_to_main_thread = 0;
+        self.pending.append_chunks(unused);
+        // let nsent_to_main_thread = self.send_unused(unused);
 
         self.counter = self.counter.wrapping_add(1);
 
         if self.debug {
+            let gc_duration = now.elapsed();
+
+            let now = std::time::Instant::now();
             let (objects_chunks_alive, objects_chunks_dead) = self.objects_view.alive_dead();
             let (hashes_chunks_alive, hashes_chunks_dead) = self.hashes_view.alive_dead();
+            println!("Find alive and dead: {:?}", now.elapsed());
 
             let stats = OnCommitStatistics {
                 unused_found,
