@@ -266,6 +266,10 @@ impl<T, const CHUNK_CAPACITY: usize> ChunkedVec<T, CHUNK_CAPACITY> {
         (list_index, chunk_index)
     }
 
+    pub fn nchunks(&self) -> usize {
+        self.list_of_chunks.len()
+    }
+
     pub fn iter(&self) -> ChunkedVecIter<T, CHUNK_CAPACITY> {
         ChunkedVecIter {
             chunks: self,
