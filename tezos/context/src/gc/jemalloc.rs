@@ -1,7 +1,8 @@
 use std::time::Duration;
 
-use tikv_jemalloc_ctl::{background_thread, epoch, stats, Access, AsName, Mib, Name};
+use tikv_jemalloc_ctl::{background_thread, epoch, stats, Access, AsName, Name};
 
+#[allow(dead_code)]
 #[derive(Debug)]
 struct JeMallocStatistics {
     active: usize,

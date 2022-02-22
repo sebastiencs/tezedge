@@ -95,7 +95,7 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
 
         if let Some(hash_id) = hash_id.and_then(|h| h.get_in_working_tree().ok()?) {
             self.hashes
-                .get_hash(hash_id)?
+                .get_hash(hash_id)
                 .map(Cow::Owned)
                 .ok_or(DBError::HashNotFound { object_ref })
         } else {
