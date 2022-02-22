@@ -34,9 +34,8 @@ impl std::fmt::Debug for Command {
 }
 
 #[derive(Debug)]
-pub struct OnCommitStatistics {
+pub struct CollectorStatistics {
     pub unused_found: usize,
-    pub nsent_to_main_thread: usize,
     pub nobjects: usize,
     pub max_depth: usize,
     pub object_total_bytes: usize,
@@ -45,6 +44,11 @@ pub struct OnCommitStatistics {
     pub objects_chunks_dead: usize,
     pub hashes_chunks_alive: usize,
     pub hashes_chunks_dead: usize,
+}
+
+#[derive(Debug)]
+pub struct CommitStatistics {
+    pub new_hash_id: usize,
 }
 
 pub struct OnMessageStatistics<'a> {
