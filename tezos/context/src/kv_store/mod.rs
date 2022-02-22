@@ -14,6 +14,8 @@ use crate::{
     ObjectHash,
 };
 
+use self::in_memory::OBJECTS_CHUNK_CAPACITY;
+
 pub mod hashes;
 pub mod in_memory;
 pub mod index_map;
@@ -141,11 +143,11 @@ enum Vacant<'a> {
         hash_id: HashId,
     },
     Push {
-        map: &'a mut SharedIndexMap<HashId, Option<Box<ObjectHash>>>,
+        map: &'a mut SharedIndexMap<HashId, Option<Box<ObjectHash>>, OBJECTS_CHUNK_CAPACITY>,
         new_ids: &'a mut ChunkedVec<HashId, { NEW_IDS_CHUNK_CAPACITY }>,
     },
     UseFreeId {
-        map: &'a mut SharedIndexMap<HashId, Option<Box<ObjectHash>>>,
+        map: &'a mut SharedIndexMap<HashId, Option<Box<ObjectHash>>, OBJECTS_CHUNK_CAPACITY>,
         hash_id: HashId,
     },
 }
@@ -164,7 +166,7 @@ impl<'a> VacantObjectHash<'a> {
     }
 
     pub fn new_existing_id(
-        map: &'a mut SharedIndexMap<HashId, Option<Box<ObjectHash>>>,
+        map: &'a mut SharedIndexMap<HashId, Option<Box<ObjectHash>>, OBJECTS_CHUNK_CAPACITY>,
         hash_id: HashId,
     ) -> Self {
         Self {
@@ -174,7 +176,7 @@ impl<'a> VacantObjectHash<'a> {
     }
 
     pub fn new_push(
-        map: &'a mut SharedIndexMap<HashId, Option<Box<ObjectHash>>>,
+        map: &'a mut SharedIndexMap<HashId, Option<Box<ObjectHash>>, OBJECTS_CHUNK_CAPACITY>,
         new_ids: &'a mut ChunkedVec<HashId, NEW_IDS_CHUNK_CAPACITY>,
     ) -> Self {
         Self {
