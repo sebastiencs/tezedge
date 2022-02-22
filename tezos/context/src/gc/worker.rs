@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 use std::{
-    collections::HashSet,
-    iter::FromIterator,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -28,9 +26,13 @@ use crate::{
 use tezos_spsc::Producer;
 
 pub(crate) const PRESERVE_CYCLE_COUNT: usize = 2;
+
 const PENDING_CHUNK_CAPACITY: usize = 100_000;
 const UNUSED_CHUNK_CAPACITY: usize = 20_000;
 pub const NEW_IDS_CHUNK_CAPACITY: usize = 20_000;
+
+const MAX_SEND_TO_MAIN_THREAD: usize = 200_000;
+const LIMIT_ON_EMPTY_CHANNEL: usize = 20_000;
 
 /// Used for statistics
 ///
@@ -169,7 +171,7 @@ impl GCThread {
     /// We have to do this when the channel `Self::free_ids` is empty
     /// or the main thread will allocate new chunks
     fn send_unused_on_empty_channel(&mut self) {
-        if self.free_ids.len() >= 20_000 {
+        if self.free_ids.len() >= LIMIT_ON_EMPTY_CHANNEL {
             // `Self::free_ids` is not empty, don't send anything
             return;
         }
@@ -179,9 +181,12 @@ impl GCThread {
             _ => return,
         };
 
-        let send_at = pending.len().saturating_sub(20_000);
+        let send_at = pending.len().saturating_sub(LIMIT_ON_EMPTY_CHANNEL);
 
-        log!(
+        // This is not an error, but if we reach this code, the constants
+        // LIMIT_ON_EMPTY_CHANNEL or/and MAX_SEND_TO_MAIN_THREAD should
+        // probably be changed
+        elog!(
             "GCThread::free_ids is empty, sending {:?} HashId",
             pending.len() - send_at
         );
@@ -221,7 +226,7 @@ impl GCThread {
     }
 
     fn send_unused_impl(&mut self) -> usize {
-        if self.free_ids.len() > 200_000 {
+        if self.free_ids.len() > MAX_SEND_TO_MAIN_THREAD {
             return 0;
         }
 
@@ -232,7 +237,7 @@ impl GCThread {
             return 0;
         }
 
-        let nto_send = npending.min(navailable).min(200_000);
+        let nto_send = npending.min(navailable).min(MAX_SEND_TO_MAIN_THREAD);
         let mut to_send = Vec::<HashId>::with_capacity(nto_send);
         let mut nchunk_pending = self.pending.nchunks();
 
@@ -246,7 +251,7 @@ impl GCThread {
 
                 if nchunk_pending == 0 && to_send.len() > 50_000 {
                     // `nchunk_pending` is zero, it means we already sent all `HashId` in
-                    // a non-dead chunk
+                    // non-dead chunks
                     break 'outer;
                 }
 
