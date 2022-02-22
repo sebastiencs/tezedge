@@ -2,15 +2,14 @@
 // SPDX-License-Identifier: MIT
 
 use std::{
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
+    num::TryFromIntError,
+    sync::atomic::{AtomicUsize, Ordering},
     time::Instant,
 };
 
 use crossbeam_channel::{Receiver, RecvError};
 use static_assertions::assert_eq_size;
+use thiserror::Error;
 
 use crate::{
     chunks::{ChunkedVec, SharedChunk, SharedIndexMapView},
@@ -18,7 +17,7 @@ use crate::{
         jemalloc::debug_jemalloc,
         stats::{CollectorStatistics, CommitStatistics, OnMessageStatistics},
     },
-    kv_store::{in_memory::OBJECTS_CHUNK_CAPACITY, index_map::IndexMap, HashId},
+    kv_store::{in_memory::OBJECTS_CHUNK_CAPACITY, index_map::IndexMap, HashId, HashIdError},
     serialize::in_memory::iter_hash_ids,
     ObjectHash,
 };
@@ -46,20 +45,39 @@ pub(crate) struct GCThread {
     recv: Receiver<Command>,
     pending: ChunkedVec<HashId, PENDING_CHUNK_CAPACITY>,
     debug: bool,
+    new_ids_in_commit: usize,
+    last_gc_timestamp: Option<Instant>,
 
     objects_view: SharedIndexMapView<HashId, Option<Box<[u8]>>, OBJECTS_CHUNK_CAPACITY>,
     hashes_view: SharedIndexMapView<HashId, Option<Box<ObjectHash>>, OBJECTS_CHUNK_CAPACITY>,
 
-    global_counter: IndexMap<HashId, Option<u8>, 1_000_000>,
-    counter: u8,
+    objects_generation: IndexMap<HashId, Option<u8>, 1_000_000>,
+    current_generation: u8,
 
     nalives_per_chunk: IndexMap<ChunkIndex, u32, 1_000_000>,
-    new_ids_in_commit: usize,
-    last_gc_timestamp: Option<Instant>,
 }
 
 assert_eq_size!([u8; 16], Option<Box<[u8]>>);
-assert_eq_size!([u8; 16], Option<Arc<[u8]>>);
+assert_eq_size!([u8; 8], Option<Box<ObjectHash>>);
+
+#[derive(Debug, Error)]
+enum GCError {
+    #[error("HashId conversion failed")]
+    HashIdFailed,
+    #[error("Failed to traverse tree")]
+    TraverseTreeError,
+    #[error("Int conversion failed")]
+    FromIntFailed {
+        #[from]
+        e: TryFromIntError,
+    },
+}
+
+impl From<HashIdError> for GCError {
+    fn from(_: HashIdError) -> Self {
+        GCError::HashIdFailed
+    }
+}
 
 pub enum Command {
     MarkNewIds {
@@ -88,8 +106,8 @@ impl GCThread {
             free_ids: producer,
             pending: ChunkedVec::default(),
             debug: false,
-            global_counter: IndexMap::default(),
-            counter: 0,
+            objects_generation: IndexMap::default(),
+            current_generation: 0,
             objects_view,
             hashes_view,
             nalives_per_chunk: IndexMap::default(),
@@ -121,7 +139,11 @@ impl GCThread {
                 Ok(Command::Commit {
                     new_ids,
                     commit_hash_id,
-                }) => self.handle_commit(new_ids, commit_hash_id),
+                }) => {
+                    if let Err(e) = self.handle_commit(new_ids, commit_hash_id) {
+                        elog!("handle_commit failed: {:?}", e);
+                    }
+                }
                 Ok(Command::Close) => {
                     elog!("GC received Command::Close");
                     break;
@@ -134,6 +156,8 @@ impl GCThread {
         }
         elog!("GC exited");
     }
+
+    // fn handle_message(&mut self, msg: Result<Command, Rec>)
 
     fn add_chunks(
         &mut self,
@@ -160,7 +184,7 @@ impl GCThread {
             pending_hash_ids_capacity: self.pending.capacity(),
             objects_nchunks: self.objects_view.nchunks(),
             hashes_nchunks: self.hashes_view.nchunks(),
-            counter_nchunks: self.global_counter.entries.list_of_chunks.len(),
+            counter_nchunks: self.objects_generation.entries.list_of_chunks.len(),
         };
 
         log!("{:?}", stats);
@@ -205,36 +229,38 @@ impl GCThread {
     /// reallocating them.
     ///
     /// Returns the number of `HashId` sent
-    fn send_unused(&mut self) -> usize {
-        let sent = self.send_unused_impl();
+    fn send_unused(&mut self) -> Result<usize, GCError> {
+        let sent = self.send_unused_impl()?;
 
         if sent > 0 {
             log!("GC_DEBUG SENT={:?}", sent);
         }
 
         GC_PENDING_HASHIDS.store(self.pending.len(), Ordering::Release);
-        sent
+        Ok(sent)
     }
 
-    fn is_in_dead_chunk(&self, hash_id: HashId) -> bool {
-        let chunk_index = self.hashes_view.chunk_index_of(hash_id).unwrap() as u32;
-        self.nalives_per_chunk
-            .get(chunk_index)
-            .unwrap()
+    fn is_in_dead_chunk(&self, hash_id: HashId) -> Result<bool, GCError> {
+        let chunk_index = self.hashes_view.chunk_index_of(hash_id)? as u32;
+        let is_chunk_dead = self
+            .nalives_per_chunk
+            .get(chunk_index)?
             .map(|n| *n == 0)
-            .unwrap_or(true)
+            .unwrap_or(true);
+
+        Ok(is_chunk_dead)
     }
 
-    fn send_unused_impl(&mut self) -> usize {
+    fn send_unused_impl(&mut self) -> Result<usize, GCError> {
         if self.free_ids.len() > MAX_SEND_TO_MAIN_THREAD {
-            return 0;
+            return Ok(0);
         }
 
         let navailable = self.free_ids.available();
         let npending = self.pending.len();
 
         if npending == 0 || navailable == 0 {
-            return 0;
+            return Ok(0);
         }
 
         let nto_send = npending.min(navailable).min(MAX_SEND_TO_MAIN_THREAD);
@@ -243,7 +269,7 @@ impl GCThread {
 
         'outer: while let Some(chunk) = self.pending.pop_first_chunk() {
             for hash_id in chunk {
-                if nchunk_pending > 0 && self.is_in_dead_chunk(hash_id) {
+                if nchunk_pending > 0 && self.is_in_dead_chunk(hash_id)? {
                     self.pending.push(hash_id);
                 } else {
                     to_send.push(hash_id);
@@ -265,68 +291,9 @@ impl GCThread {
         if let Err(e) = self.free_ids.push_slice(&to_send) {
             elog!("GC: Fail to send free ids {:?}", e);
             self.pending.extend_from_slice(&to_send);
-            0
+            Ok(0)
         } else {
-            to_send.len()
-        }
-    }
-
-    fn traverse_and_mark_tree_impl(
-        &mut self,
-        hash_id: HashId,
-        counter: u8,
-        nobjects: &mut usize,
-        depth: usize,
-        max_depth: &mut usize,
-        objets_total_bytes: &mut usize,
-    ) {
-        *nobjects += 1;
-        *max_depth = depth.max(*max_depth);
-
-        let mut hash_ids = [None::<HashId>; 256];
-
-        self.objects_view
-            .with(hash_id, |object_bytes| {
-                let object_bytes = match object_bytes {
-                    Some(Some(object_bytes)) => object_bytes,
-                    _ => {
-                        let chunk = self.objects_view.chunk_index_of(hash_id).unwrap();
-                        panic!("Missing Object {:?} chunk={:?}", hash_id, chunk);
-                    }
-                };
-
-                *objets_total_bytes += object_bytes.len();
-
-                for (index, hash_id) in iter_hash_ids(object_bytes).enumerate() {
-                    hash_ids[index] = Some(hash_id);
-                }
-            })
-            .unwrap();
-
-        {
-            let value_counter = self
-                .global_counter
-                .get_mut(hash_id)
-                .unwrap()
-                .unwrap()
-                .as_mut()
-                .unwrap();
-            *value_counter = counter;
-        }
-
-        for hash_id in hash_ids {
-            let hash_id = match hash_id {
-                Some(hash_id) => hash_id,
-                None => break,
-            };
-            self.traverse_and_mark_tree_impl(
-                hash_id,
-                counter,
-                nobjects,
-                depth + 1,
-                max_depth,
-                objets_total_bytes,
-            );
+            Ok(to_send.len())
         }
     }
 
@@ -335,25 +302,64 @@ impl GCThread {
         hash_id: HashId,
         counter: u8,
         nobjects: &mut usize,
+        depth: usize,
         max_depth: &mut usize,
         objets_total_bytes: &mut usize,
-    ) {
-        self.traverse_and_mark_tree_impl(
-            hash_id,
-            counter,
-            nobjects,
-            1,
-            max_depth,
-            objets_total_bytes,
-        );
+    ) -> Result<(), GCError> {
+        *nobjects += 1;
+        *max_depth = depth.max(*max_depth);
+
+        let mut hash_ids = [None::<HashId>; 256];
+
+        self.objects_view.with(hash_id, |object_bytes| {
+            let object_bytes = match object_bytes {
+                Some(Some(object_bytes)) => object_bytes,
+                _ => {
+                    elog!("Missing Object object={:?}", object_bytes);
+                    return Err(GCError::TraverseTreeError);
+                }
+            };
+
+            *objets_total_bytes += object_bytes.len();
+
+            for (index, hash_id) in iter_hash_ids(object_bytes).enumerate() {
+                hash_ids[index] = Some(hash_id);
+            }
+
+            Ok(())
+        })??;
+
+        {
+            let value_counter = self.objects_generation.entry(hash_id)?;
+            *value_counter = Some(counter);
+        }
+
+        for hash_id in hash_ids {
+            let hash_id = match hash_id {
+                Some(hash_id) => hash_id,
+                None => break,
+            };
+            self.traverse_and_mark_tree(
+                hash_id,
+                counter,
+                nobjects,
+                depth + 1,
+                max_depth,
+                objets_total_bytes,
+            )?;
+        }
+
+        Ok(())
     }
 
-    fn take_unused(&mut self) -> ChunkedVec<HashId, { UNUSED_CHUNK_CAPACITY }> {
-        let unused_at = self.counter.wrapping_sub(3);
+    fn take_unused(&mut self) -> Result<ChunkedVec<HashId, { UNUSED_CHUNK_CAPACITY }>, GCError> {
+        // Mark all objects/hashes at `current_generation - 3` as unused/reusable
+
+        let unused_at = self.current_generation.wrapping_sub(3);
 
         let mut unused = ChunkedVec::default();
 
-        for (hash_id, hash_id_counter) in self.global_counter.iter_with_keys() {
+        for (hash_id, hash_id_counter) in self.objects_generation.iter_with_keys() {
             if !matches!(hash_id_counter, Some(counter) if *counter == unused_at) {
                 continue;
             }
@@ -362,25 +368,25 @@ impl GCThread {
         }
 
         for hash_id in unused.iter().copied() {
-            let (_, is_obj_dealloc) = self.objects_view.clear(hash_id).unwrap();
-            let (_, is_hash_dealloc) = self.hashes_view.clear(hash_id).unwrap();
+            let (_, _is_obj_dealloc) = self.objects_view.clear(hash_id)?;
+            let (_, _is_hash_dealloc) = self.hashes_view.clear(hash_id)?;
 
-            self.global_counter.insert_at(hash_id, None).unwrap();
+            self.objects_generation.insert_at(hash_id, None)?;
 
-            let chunk_index = self.hashes_view.chunk_index_of(hash_id).unwrap() as u32;
-            let nalive = self.nalives_per_chunk.entry(chunk_index).unwrap();
+            let chunk_index = self.hashes_view.chunk_index_of(hash_id)? as u32;
+            let nalive = self.nalives_per_chunk.entry(chunk_index)?;
             *nalive = nalive.checked_sub(1).unwrap();
         }
 
-        unused
+        Ok(unused)
     }
 
     fn mark_new_ids(&mut self, new_ids: ChunkedVec<HashId, NEW_IDS_CHUNK_CAPACITY>) {
         self.new_ids_in_commit += new_ids.len();
 
         for hash_id in new_ids.iter().copied() {
-            self.global_counter
-                .insert_at(hash_id, Some(self.counter))
+            self.objects_generation
+                .insert_at(hash_id, Some(self.current_generation))
                 .unwrap();
 
             let chunk_index = self.hashes_view.chunk_index_of(hash_id).unwrap() as u32;
@@ -393,7 +399,7 @@ impl GCThread {
         &mut self,
         new_ids: ChunkedVec<HashId, NEW_IDS_CHUNK_CAPACITY>,
         commit_hash_id: HashId,
-    ) {
+    ) -> Result<(), GCError> {
         let now = std::time::Instant::now();
 
         self.mark_new_ids(new_ids);
@@ -411,27 +417,28 @@ impl GCThread {
             // There are still messages in the channel,
             // process them all first, before running the garbage collector
             self.send_unused_on_empty_channel();
-            return;
+            return Ok(());
         }
 
-        self.send_unused();
+        self.send_unused()?;
 
         let mut nobjects = 0;
         let mut max_depth = 0;
         let mut object_total_bytes = 0;
         self.traverse_and_mark_tree(
             commit_hash_id,
-            self.counter,
+            self.current_generation,
             &mut nobjects,
+            1,
             &mut max_depth,
             &mut object_total_bytes,
-        );
+        )?;
 
-        let unused = self.take_unused();
+        let unused = self.take_unused()?;
         let unused_found = unused.len();
 
         self.pending.append_chunks(unused);
-        self.counter = self.counter.wrapping_add(1);
+        self.current_generation = self.current_generation.wrapping_add(1);
 
         if self.debug {
             let gc_duration = now.elapsed();
@@ -460,5 +467,7 @@ impl GCThread {
 
             debug_jemalloc();
         }
+
+        Ok(())
     }
 }
