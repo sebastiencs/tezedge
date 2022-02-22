@@ -8,6 +8,7 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
+    time::Instant,
 };
 
 use crossbeam_channel::{Receiver, RecvError};
@@ -52,6 +53,7 @@ pub(crate) struct GCThread {
 
     nalives_per_chunk: IndexMap<ChunkIndex, u32, 1_000_000>,
     new_ids_in_commit: usize,
+    last_gc_timestamp: Option<Instant>,
 }
 
 assert_eq_size!([u8; 16], Option<Box<[u8]>>);
@@ -90,6 +92,7 @@ impl GCThread {
             hashes_view,
             nalives_per_chunk: IndexMap::default(),
             new_ids_in_commit: 0,
+            last_gc_timestamp: None,
         }
     }
 
@@ -166,7 +169,7 @@ impl GCThread {
     /// We have to do this when the channel `Self::free_ids` is empty
     /// or the main thread will allocate new chunks
     fn send_unused_on_empty_channel(&mut self) {
-        if self.free_ids.len() >= 10_000 {
+        if self.free_ids.len() >= 20_000 {
             // `Self::free_ids` is not empty, don't send anything
             return;
         }
@@ -176,7 +179,7 @@ impl GCThread {
             _ => return,
         };
 
-        let send_at = pending.len().saturating_sub(10_000);
+        let send_at = pending.len().saturating_sub(20_000);
 
         log!(
             "GCThread::free_ids is empty, sending {:?} HashId",
@@ -218,7 +221,7 @@ impl GCThread {
     }
 
     fn send_unused_impl(&mut self) -> usize {
-        if self.free_ids.len() > 50_000 {
+        if self.free_ids.len() > 200_000 {
             return 0;
         }
 
@@ -229,7 +232,7 @@ impl GCThread {
             return 0;
         }
 
-        let nto_send = npending.min(navailable).min(50_000);
+        let nto_send = npending.min(navailable).min(200_000);
         let mut to_send = Vec::<HashId>::with_capacity(nto_send);
         let mut nchunk_pending = self.pending.nchunks();
 
@@ -241,7 +244,7 @@ impl GCThread {
                     to_send.push(hash_id);
                 }
 
-                if nchunk_pending == 0 && to_send.len() > 20_000 {
+                if nchunk_pending == 0 && to_send.len() > 50_000 {
                     // `nchunk_pending` is zero, it means we already sent all `HashId` in
                     // a non-dead chunk
                     break 'outer;
@@ -427,6 +430,8 @@ impl GCThread {
 
         if self.debug {
             let gc_duration = now.elapsed();
+            let delay_since_last_gc = self.last_gc_timestamp.map(|t| t.elapsed());
+            self.last_gc_timestamp.replace(std::time::Instant::now());
 
             let now = std::time::Instant::now();
             let (objects_chunks_alive, objects_chunks_dead) = self.objects_view.alive_dead();
@@ -443,6 +448,7 @@ impl GCThread {
                 objects_chunks_dead,
                 hashes_chunks_alive,
                 hashes_chunks_dead,
+                delay_since_last_gc,
             };
 
             log!("{:?}", stats);

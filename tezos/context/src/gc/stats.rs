@@ -44,6 +44,7 @@ pub struct CollectorStatistics {
     pub objects_chunks_dead: usize,
     pub hashes_chunks_alive: usize,
     pub hashes_chunks_dead: usize,
+    pub delay_since_last_gc: Option<std::time::Duration>,
 }
 
 #[derive(Debug)]
