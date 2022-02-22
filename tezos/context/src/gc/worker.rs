@@ -66,6 +66,8 @@ enum GCError {
     HashIdFailed,
     #[error("Failed to traverse tree")]
     TraverseTreeError,
+    #[error("Alive counter is in an invalid state")]
+    InvalidAliveState,
     #[error("Int conversion failed")]
     FromIntFailed {
         #[from]
@@ -133,7 +135,9 @@ impl GCThread {
                     self.add_chunks(objects_chunks, hashes_chunks);
                 }
                 Ok(Command::MarkNewIds { new_ids }) => {
-                    self.mark_new_ids(new_ids);
+                    if let Err(e) = self.mark_new_ids(new_ids) {
+                        elog!("mark_new_ids failed: {:?}", e);
+                    }
                     self.send_unused_on_empty_channel();
                 }
                 Ok(Command::Commit {
@@ -375,24 +379,28 @@ impl GCThread {
 
             let chunk_index = self.hashes_view.chunk_index_of(hash_id)? as u32;
             let nalive = self.nalives_per_chunk.entry(chunk_index)?;
-            *nalive = nalive.checked_sub(1).unwrap();
+            *nalive = nalive.checked_sub(1).ok_or(GCError::InvalidAliveState)?;
         }
 
         Ok(unused)
     }
 
-    fn mark_new_ids(&mut self, new_ids: ChunkedVec<HashId, NEW_IDS_CHUNK_CAPACITY>) {
+    fn mark_new_ids(
+        &mut self,
+        new_ids: ChunkedVec<HashId, NEW_IDS_CHUNK_CAPACITY>,
+    ) -> Result<(), GCError> {
         self.new_ids_in_commit += new_ids.len();
 
         for hash_id in new_ids.iter().copied() {
             self.objects_generation
-                .insert_at(hash_id, Some(self.current_generation))
-                .unwrap();
+                .insert_at(hash_id, Some(self.current_generation))?;
 
-            let chunk_index = self.hashes_view.chunk_index_of(hash_id).unwrap() as u32;
-            let nalive = self.nalives_per_chunk.entry(chunk_index).unwrap();
+            let chunk_index = self.hashes_view.chunk_index_of(hash_id)? as u32;
+            let nalive = self.nalives_per_chunk.entry(chunk_index)?;
             *nalive += 1;
         }
+
+        Ok(())
     }
 
     fn handle_commit(
@@ -402,7 +410,7 @@ impl GCThread {
     ) -> Result<(), GCError> {
         let now = std::time::Instant::now();
 
-        self.mark_new_ids(new_ids);
+        self.mark_new_ids(new_ids)?;
 
         if self.debug {
             let stats = CommitStatistics {
