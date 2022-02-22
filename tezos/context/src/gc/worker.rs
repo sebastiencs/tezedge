@@ -17,7 +17,7 @@ use crate::{
     chunks::{ChunkedVec, SharedChunk, SharedIndexMapView},
     gc::{
         jemalloc::debug_jemalloc,
-        stats::{OnCommitStatistics, OnMessageStatistics},
+        stats::{CollectorStatistics, CommitStatistics, OnMessageStatistics},
     },
     kv_store::{index_map::IndexMap, HashId},
     serialize::in_memory::iter_hash_ids,
@@ -51,7 +51,7 @@ pub(crate) struct GCThread {
     counter: u8,
 
     nalives_per_chunk: IndexMap<ChunkIndex, u32, 1_000_000>,
-    nids_in_commit: usize,
+    new_ids_in_commit: usize,
 }
 
 assert_eq_size!([u8; 16], Option<Box<[u8]>>);
@@ -89,7 +89,7 @@ impl GCThread {
             objects_view,
             hashes_view,
             nalives_per_chunk: IndexMap::default(),
-            nids_in_commit: 0,
+            new_ids_in_commit: 0,
         }
     }
 
@@ -110,8 +110,8 @@ impl GCThread {
                     self.add_chunks(objects_chunks, hashes_chunks);
                 }
                 Ok(Command::MarkNewIds { new_ids }) => {
-                    // self.send_unused(None);
                     self.mark_new_ids(new_ids);
+                    self.send_unused_on_empty_channel();
                 }
                 Ok(Command::Commit {
                     new_ids,
@@ -161,18 +161,46 @@ impl GCThread {
         log!("{:?}", stats);
     }
 
+    /// This method send some `HashId` without checking if they are
+    /// in a dead chunk or not.
+    /// We have to do this when the channel `Self::free_ids` is empty
+    /// or the main thread will allocate new chunks
+    fn send_unused_on_empty_channel(&mut self) {
+        if self.free_ids.len() >= 10_000 {
+            // `Self::free_ids` is not empty, don't send anything
+            return;
+        }
+
+        let pending = match self.pending.pop_first_chunk() {
+            Some(pending) if !pending.is_empty() => pending,
+            _ => return,
+        };
+
+        let send_at = pending.len().saturating_sub(10_000);
+
+        log!(
+            "GCThread::free_ids is empty, sending {:?} HashId",
+            pending.len() - send_at
+        );
+
+        if let Err(e) = self.free_ids.push_slice(&pending[send_at..]) {
+            elog!("GC: Fail to send free ids {:?}", e);
+            self.pending.extend_from_slice(&pending);
+        } else {
+            self.pending.extend_from_slice(&pending[..send_at]);
+        }
+    }
+
     /// Notify the main thread that the ids are free to reused
+    ///
+    /// This prioritize HashId that are not in dead chunks, to avoid
+    /// reallocating them.
+    ///
     /// Returns the number of `HashId` sent
-    fn send_unused(
-        &mut self,
-        unused: impl Into<Option<ChunkedVec<HashId, { UNUSED_CHUNK_CAPACITY }>>>,
-    ) -> usize {
-        let unused = unused.into();
-        let unused_is_none = unused.is_none();
+    fn send_unused(&mut self) -> usize {
+        let sent = self.send_unused_impl();
 
-        let sent = self.send_unused_impl(unused);
-
-        if unused_is_none && sent > 0 {
+        if sent > 0 {
             log!("GC_DEBUG SENT={:?}", sent);
         }
 
@@ -189,15 +217,8 @@ impl GCThread {
             .unwrap_or(true)
     }
 
-    fn send_unused_impl(
-        &mut self,
-        unused: Option<ChunkedVec<HashId, { UNUSED_CHUNK_CAPACITY }>>,
-    ) -> usize {
-        if let Some(unused) = unused {
-            self.pending.append_chunks(unused);
-        };
-
-        if self.free_ids.len() > 20_000 {
+    fn send_unused_impl(&mut self) -> usize {
+        if self.free_ids.len() > 50_000 {
             return 0;
         }
 
@@ -208,7 +229,7 @@ impl GCThread {
             return 0;
         }
 
-        let nto_send = npending.min(navailable);
+        let nto_send = npending.min(navailable).min(50_000);
         let mut to_send = Vec::<HashId>::with_capacity(nto_send);
         let mut nchunk_pending = self.pending.nchunks();
 
@@ -220,7 +241,9 @@ impl GCThread {
                     to_send.push(hash_id);
                 }
 
-                if nchunk_pending == 0 && to_send.len() > 1000 {
+                if nchunk_pending == 0 && to_send.len() > 20_000 {
+                    // `nchunk_pending` is zero, it means we already sent all `HashId` in
+                    // a non-dead chunk
                     break 'outer;
                 }
 
@@ -233,45 +256,11 @@ impl GCThread {
 
         if let Err(e) = self.free_ids.push_slice(&to_send) {
             elog!("GC: Fail to send free ids {:?}", e);
-            eprintln!(
-                "TO_SEND={:?} AVAIL={:?} NTO_SEND={:?}",
-                to_send.len(),
-                navailable,
-                nto_send
-            );
             self.pending.extend_from_slice(&to_send);
             0
         } else {
             to_send.len()
         }
-
-        // let mut sent = 0;
-
-        // loop {
-        //     if self.pending.is_empty() {
-        //         return sent;
-        //     }
-
-        //     let navailable = self.free_ids.available();
-
-        //     if navailable < PENDING_CHUNK_CAPACITY {
-        //         // We send chunk by chunk
-        //         return sent;
-        //     }
-
-        //     let chunk = match self.pending.pop_first_chunk() {
-        //         Some(chunk) => chunk,
-        //         None => return sent,
-        //     };
-
-        //     if let Err(e) = self.free_ids.push_slice(&chunk) {
-        //         elog!("GC: Fail to send free ids {:?}", e);
-        //         self.pending.extend_from_slice(&chunk);
-        //         return sent;
-        //     } else {
-        //         sent += chunk.len()
-        //     }
-        // }
     }
 
     fn traverse_and_mark_tree_impl(
@@ -364,22 +353,9 @@ impl GCThread {
             unused.push(hash_id);
         }
 
-        let set = HashSet::<&HashId>::from_iter(unused.iter());
-        assert_eq!(set.len(), unused.len());
-
-        for hash_id in unused.iter() {
-            let hash_id = *hash_id;
-
+        for hash_id in unused.iter().copied() {
             let (_, is_obj_dealloc) = self.objects_view.clear(hash_id).unwrap();
             let (_, is_hash_dealloc) = self.hashes_view.clear(hash_id).unwrap();
-
-            // let chunk = self.hashes_view.chunk_index_of(hash_id);
-
-            // assert_eq!(obj_dealloc, hash_dealloc);
-
-            // if obj_dealloc {
-            //     println!("DEALLOCATED CHUNK({:?})", chunk);
-            // }
 
             self.global_counter.insert_at(hash_id, None).unwrap();
 
@@ -392,11 +368,9 @@ impl GCThread {
     }
 
     fn mark_new_ids(&mut self, new_ids: ChunkedVec<HashId, NEW_IDS_CHUNK_CAPACITY>) {
-        for hash_id in new_ids.iter() {
-            self.nids_in_commit += 1;
+        self.new_ids_in_commit += new_ids.len();
 
-            let hash_id = *hash_id;
-
+        for hash_id in new_ids.iter().copied() {
             self.global_counter
                 .insert_at(hash_id, Some(self.counter))
                 .unwrap();
@@ -416,16 +390,23 @@ impl GCThread {
 
         self.mark_new_ids(new_ids);
 
+        if self.debug {
+            let stats = CommitStatistics {
+                new_hash_id: self.new_ids_in_commit,
+            };
+            log!("{:?}", stats);
+        }
+
+        self.new_ids_in_commit = 0;
+
         if !self.recv.is_empty() {
-            println!("NIDS_IN_COMMIT={:?}", self.nids_in_commit);
-            self.nids_in_commit = 0;
-            // self.send_unused(hashid_without_value);
-            // self.send_unused(None);
+            // There are still messages in the channel,
+            // process them all first, before running the garbage collector
+            self.send_unused_on_empty_channel();
             return;
         }
-        self.nids_in_commit = 0;
 
-        self.send_unused(None);
+        self.send_unused();
 
         let mut nobjects = 0;
         let mut max_depth = 0;
@@ -439,15 +420,9 @@ impl GCThread {
         );
 
         let unused = self.take_unused();
-
-        // let mut sent = hashid_without_value.len();
         let unused_found = unused.len();
 
-        // self.send_unused(hashid_without_value);
-        let nsent_to_main_thread = 0;
         self.pending.append_chunks(unused);
-        // let nsent_to_main_thread = self.send_unused(unused);
-
         self.counter = self.counter.wrapping_add(1);
 
         if self.debug {
@@ -458,13 +433,12 @@ impl GCThread {
             let (hashes_chunks_alive, hashes_chunks_dead) = self.hashes_view.alive_dead();
             println!("Find alive and dead: {:?}", now.elapsed());
 
-            let stats = OnCommitStatistics {
+            let stats = CollectorStatistics {
                 unused_found,
-                nsent_to_main_thread,
                 nobjects,
                 max_depth,
                 object_total_bytes,
-                gc_duration: now.elapsed(),
+                gc_duration,
                 objects_chunks_alive,
                 objects_chunks_dead,
                 hashes_chunks_alive,
