@@ -151,28 +151,14 @@ impl HashValueStore {
         self.values.insert_at(hash_id, value)
     }
 
-    pub(crate) fn get_hash(&self, hash_id: HashId) -> Result<Option<ObjectHash>, HashIdError> {
-        let hash = self
-            .hashes
+    pub(crate) fn get_hash(&self, hash_id: HashId) -> Option<ObjectHash> {
+        self.hashes
             .with(hash_id, |hash| match hash {
                 Some(Some(hash)) => Some(**hash),
-                _ => panic!(),
-                // Some(Some(hash)) => Some(**hash),
-                // Some(None) => {
-                //     panic!(
-                //         "AAAAAA {:?} {:?} LEN={:?}",
-                //         hash_id,
-                //         hash,
-                //         self.hashes.len()
-                //     );
-                // }
-                // None => return panic!(),
+                _ => None,
             })
-            .unwrap();
-
-        Ok(hash)
-
-        // self.hashes.get(hash_id)
+            .ok()
+            .flatten()
     }
 
     pub(crate) fn with_value<F, R>(&self, hash_id: HashId, fun: F) -> Result<R, DBError>
@@ -181,13 +167,6 @@ impl HashValueStore {
     {
         Ok(self.values.with(hash_id, fun)?)
     }
-
-    // pub(crate) fn get_value(&self, hash_id: HashId) -> Result<Option<&[u8]>, HashIdError> {
-    //     match self.values.get(hash_id)? {
-    //         Some(value) => Ok(value.as_ref().map(|v| v.as_ref())),
-    //         None => Ok(None),
-    //     }
-    // }
 
     pub(crate) fn contains(&self, hash_id: HashId) -> Result<bool, HashIdError> {
         self.values.with(hash_id, |v| matches!(v, Some(Some(_))))
@@ -309,21 +288,10 @@ impl KeyValueStoreBackend for InMemory {
         self.with_value(object_ref.hash_id(), |value| {
             let object_bytes = match value {
                 Some(Some(value)) => value,
-                _ => {
-                    let got_key = self.hashes.values.contains_key(object_ref.hash_id());
-                    println!(
-                        "OBJECT NOT FOUND HASH_ID={:?} VALUE={:?} GOT_KEY={:?}",
-                        object_ref, value, got_key,
-                    );
-                    println!("VALUES_LEN={:?}", self.hashes.values.len());
-                    todo!();
-                }
+                _ => return Err(DBError::MissingObject { object_ref }),
             };
             in_memory::deserialize_object(object_bytes, storage, strings, self).map_err(Into::into)
         })?
-
-        // let object_bytes = self.get_value(object_ref.hash_id())?.unwrap_or(&[]);
-        // in_memory::deserialize_object(object_bytes, storage, strings, self).map_err(Into::into)
     }
 
     fn get_inode(
@@ -335,13 +303,10 @@ impl KeyValueStoreBackend for InMemory {
         self.with_value(object_ref.hash_id(), |value| {
             let object_bytes = match value {
                 Some(Some(value)) => value,
-                _ => todo!(),
+                _ => return Err(DBError::MissingObject { object_ref }),
             };
             in_memory::deserialize_inode(object_bytes, storage, strings, self).map_err(Into::into)
         })?
-
-        // let object_bytes = self.get_value(object_ref.hash_id())?.unwrap_or(&[]);
-        // in_memory::deserialize_inode(object_bytes, storage, strings, self).map_err(Into::into)
     }
 
     fn get_object_bytes<'a>(
@@ -355,13 +320,7 @@ impl KeyValueStoreBackend for InMemory {
             if let Some(Some(value)) = value {
                 buffer.extend_from_slice(value)
             };
-        })
-        .unwrap();
-
-        // let slice = self.get_value(object_ref.hash_id())?.unwrap_or(&[]);
-
-        // buffer.clear();
-        // buffer.extend_from_slice(slice);
+        })?;
 
         Ok(buffer)
     }
@@ -540,7 +499,7 @@ impl InMemory {
         self.string_interner.shrink_to_fit();
         self.shapes.shrink_to_fit();
 
-        println!("AFTER_RELOAD MEMORY_USAGE={:#?}", self.memory_usage());
+        log!("[after reload] memory_usage={:#?}", self.memory_usage());
         debug_jemalloc();
 
         Ok(())
@@ -559,12 +518,12 @@ impl InMemory {
             return;
         }
 
-        sender
-            .send(Command::NewChunks {
-                objects_chunks,
-                hashes_chunks,
-            })
-            .unwrap();
+        if let Err(e) = sender.send(Command::NewChunks {
+            objects_chunks,
+            hashes_chunks,
+        }) {
+            elog!("Failed to send `Command::NewChunks` to GC thread: {:?}", e);
+        }
     }
 
     fn commit_impl(
@@ -599,13 +558,10 @@ impl InMemory {
         self.write_batch(batch)?;
         self.maybe_send_new_chunks_to_gc();
 
-        // println!("AFTER_BATCH={:?}", self.hashes.values.len());
-
         self.put_context_hash(commit_ref)?;
-        // if mark_as_applied {
+
         let commit_hash_id = commit_ref.hash_id();
         self.block_applied(commit_hash_id);
-        // }
 
         let commit_hash = get_commit_hash(commit_ref, self).map_err(Box::new)?;
         Ok((commit_hash, serialize_stats))
@@ -631,7 +587,7 @@ impl InMemory {
 
     pub(crate) fn get_hash(&self, hash_id: HashId) -> Result<ObjectHash, DBError> {
         self.hashes
-            .get_hash(hash_id)?
+            .get_hash(hash_id)
             .ok_or_else(|| DBError::HashNotFound {
                 object_ref: hash_id.into(),
             })
@@ -644,10 +600,6 @@ impl InMemory {
         Ok(self.hashes.values.with(hash_id, fun)?)
     }
 
-    // pub(crate) fn get_value(&self, hash_id: HashId) -> Result<Option<&[u8]>, DBError> {
-    //     self.hashes.get_value(hash_id).map_err(Into::into)
-    // }
-
     fn contains(&self, hash_id: HashId) -> Result<bool, DBError> {
         self.hashes.contains(hash_id).map_err(Into::into)
     }
@@ -659,34 +611,18 @@ impl InMemory {
         while let Some(chunk) = batch.pop_first_chunk() {
             for (hash_id, value) in chunk.into_iter() {
                 self.hashes.insert_value_at(hash_id, value)?;
-                // self.current_cycle.push((hash_id, value));
             }
         }
         Ok(())
     }
 
     pub fn new_cycle_started(&mut self) {
-        if let Some(sender) = &self.sender {
-            // let values_in_cycle = std::mem::replace(
-            //     &mut self.current_cycle,
-            //     ChunkedVec::with_chunk_capacity(512 * 1024),
-            // );
-            // let new_ids = self.hashes.take_new_ids();
-
-            // if let Err(e) = sender.try_send(Command::StartNewCycle {
-            //     values_in_cycle,
-            //     new_ids,
-            // }) {
-            //     eprintln!("Fail to send Command::StartNewCycle to GC worker: {:?}", e);
-            // }
-
-            if let Some(unused) = self.context_hashes_cycles.pop_front() {
-                for hash in unused {
-                    self.context_hashes.remove(&hash);
-                }
+        if let Some(unused) = self.context_hashes_cycles.pop_front() {
+            for hash in unused {
+                self.context_hashes.remove(&hash);
             }
-            self.context_hashes_cycles.push_back(Default::default());
         }
+        self.context_hashes_cycles.push_back(Default::default());
     }
 
     pub fn block_applied(&mut self, commit_hash_id: HashId) {
@@ -695,15 +631,9 @@ impl InMemory {
             None => return,
         };
 
-        // let values_in_block = std::mem::replace(
-        //     &mut self.current_cycle,
-        //     ChunkedVec::with_chunk_capacity(512 * 1024),
-        // );
         let new_ids = self.hashes.take_new_ids();
 
         if let Err(e) = sender.send(Command::Commit {
-            // reused,
-            // values_in_block,
             new_ids,
             commit_hash_id,
         }) {
@@ -722,7 +652,7 @@ impl InMemory {
     pub fn put_context_hash_impl(&mut self, commit_hash_id: HashId) -> Result<(), DBError> {
         let commit_hash = self
             .hashes
-            .get_hash(commit_hash_id)?
+            .get_hash(commit_hash_id)
             .ok_or(DBError::MissingObject {
                 object_ref: commit_hash_id.into(),
             })?;
