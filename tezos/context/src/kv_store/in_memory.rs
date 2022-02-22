@@ -51,21 +51,16 @@ use super::{HashId, VacantObjectHash};
 
 pub const BATCH_CHUNK_CAPACITY: usize = 8 * 1024;
 
-// const NEW_IDS_CHUNK_CAPACITY: usize = 512 * 1024;
-// const CURRENT_CYCLE_CHUNK_CAPACITY: usize = 512 * 1024;
-
 #[derive(Debug)]
 pub struct HashValueStore {
-    hashes: SharedIndexMap<HashId, Option<Box<ObjectHash>>>,
-    values: SharedIndexMap<HashId, Option<Box<[u8]>>>,
+    hashes: SharedIndexMap<HashId, Option<Box<ObjectHash>>, OBJECTS_CHUNK_CAPACITY>,
+    values: SharedIndexMap<HashId, Option<Box<[u8]>>, OBJECTS_CHUNK_CAPACITY>,
     free_ids: Option<Consumer<HashId>>,
     new_ids: ChunkedVec<HashId, NEW_IDS_CHUNK_CAPACITY>,
     values_bytes: usize,
 }
 
-// pub const VALUES_LENGTH: usize = 100;
-// pub const NEW_IDS_LIMIT: usize = 1000;
-pub const VALUES_LENGTH: usize = 1_000;
+pub const OBJECTS_CHUNK_CAPACITY: usize = 1_000;
 pub const NEW_IDS_LIMIT: usize = 20_000;
 
 impl HashValueStore {
@@ -74,8 +69,8 @@ impl HashValueStore {
         T: Into<Option<Consumer<HashId>>>,
     {
         Self {
-            hashes: SharedIndexMap::with_chunk_capacity(VALUES_LENGTH), // ~320MB
-            values: SharedIndexMap::with_chunk_capacity(VALUES_LENGTH), // ~80MB
+            hashes: SharedIndexMap::new(), // ~320MB
+            values: SharedIndexMap::new(), // ~80MB
             free_ids: consumer.into(),
             new_ids: ChunkedVec::default(), // ~8KB
             values_bytes: 0,
@@ -333,7 +328,7 @@ impl KeyValueStoreBackend for InMemory {
         message: String,
         date: u64,
     ) -> Result<(ContextHash, Box<SerializeStats>), DBError> {
-        self.commit_impl(working_tree, parent_commit_ref, author, message, date, true)
+        self.commit_impl(working_tree, parent_commit_ref, author, message, date)
     }
 
     fn get_hash_id(&self, object_ref: ObjectReference) -> Result<HashId, DBError> {
@@ -486,7 +481,6 @@ impl InMemory {
             commit.author,
             commit.message,
             commit.time,
-            false,
         )
         .map_err(|error| ReloadError::CommitFailed { error })?;
 
@@ -533,7 +527,6 @@ impl InMemory {
         author: String,
         message: String,
         date: u64,
-        mark_as_applied: bool,
     ) -> Result<(ContextHash, Box<SerializeStats>), DBError> {
         self.maybe_send_new_chunks_to_gc();
 

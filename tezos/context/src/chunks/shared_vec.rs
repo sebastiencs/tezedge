@@ -39,13 +39,13 @@ impl<T> VecAliveCounter<T> {
 }
 
 #[derive(Debug)]
-pub struct SharedChunk<T> {
+pub struct SharedChunk<T, const CHUNK_CAPACITY: usize> {
     inner: Arc<RwLock<VecAliveCounter<T>>>,
 }
 
 assert_eq_size!([u8; 40], RwLock<VecAliveCounter<u8>>);
 
-impl<T> Clone for SharedChunk<T> {
+impl<T, const CHUNK_CAPACITY: usize> Clone for SharedChunk<T, CHUNK_CAPACITY> {
     fn clone(&self) -> Self {
         Self {
             inner: Arc::clone(&self.inner),
@@ -53,10 +53,10 @@ impl<T> Clone for SharedChunk<T> {
     }
 }
 
-impl<T> SharedChunk<T> {
-    fn with_capacity(chunk_capacity: usize) -> Self {
+impl<T, const CHUNK_CAPACITY: usize> SharedChunk<T, CHUNK_CAPACITY> {
+    fn new() -> Self {
         Self {
-            inner: Arc::new(RwLock::new(VecAliveCounter::with_capacity(chunk_capacity))),
+            inner: Arc::new(RwLock::new(VecAliveCounter::with_capacity(CHUNK_CAPACITY))),
         }
     }
 
@@ -74,57 +74,7 @@ impl<T> SharedChunk<T> {
     }
 }
 
-// impl SharedChunk<ObjectHash> {
-//     fn clear(&self, index: usize, is_last_chunk: bool) -> bool {
-//         let mut inner = self.inner.write();
-
-//         // let old = match std::mem::take(&mut inner[index]) {
-//         //     Some(old) => old,
-//         //     None => return (None, false),
-//         // };
-
-//         inner.alive_counter = inner.alive_counter.checked_sub(1).unwrap();
-
-//         if inner.alive_counter == 0 && !is_last_chunk {
-//             inner.inner = Vec::new();
-//             return true;
-//         }
-
-//         false
-//     }
-
-//     fn push(&self, elem: ObjectHash, is_alive: bool) -> usize {
-//         let mut inner = self.inner.write();
-
-//         let index = inner.len();
-
-//         if is_alive {
-//             inner.alive_counter += 1;
-//         }
-//         inner.push(elem);
-
-//         index
-//     }
-
-//     fn insert_alive_at(&self, index: usize, value: ObjectHash, chunk_capacity: usize) {
-//         let mut inner = self.inner.write();
-
-//         if inner.capacity() == 0 {
-//             assert_eq!(inner.alive_counter, 0);
-//             inner.inner = Vec::with_capacity(chunk_capacity);
-//             inner.resize_with(chunk_capacity, Default::default);
-//         }
-
-//         inner[index] = value;
-//         // if std::mem::replace(&mut inner[index], value).is_none() {
-//         inner.alive_counter += 1;
-//         // }
-
-//         assert!(inner.alive_counter as usize <= chunk_capacity);
-//     }
-// }
-
-impl<T: std::fmt::Debug + Eq> SharedChunk<Option<T>> {
+impl<T: Eq, const CHUNK_CAPACITY: usize> SharedChunk<Option<T>, CHUNK_CAPACITY> {
     fn push(&self, elem: Option<T>) -> usize {
         let mut inner = self.inner.write();
 
@@ -134,15 +84,6 @@ impl<T: std::fmt::Debug + Eq> SharedChunk<Option<T>> {
             inner.alive_counter += 1;
         }
         inner.push(elem);
-
-        // let count = inner.iter().fold(0, |acc, v| {
-        //     if v.is_some() {
-        //         acc + 1
-        //     } else {
-        //         acc
-        //     }
-        // });
-        // assert_eq!(inner.alive_counter, count);
 
         index
     }
@@ -168,15 +109,6 @@ impl<T: std::fmt::Debug + Eq> SharedChunk<Option<T>> {
     fn insert_alive_at(&self, index: usize, value: Option<T>, chunk_capacity: usize) {
         let mut inner = self.inner.write();
 
-        // let count = inner.iter().fold(0, |acc, v| {
-        //     if v.is_some() {
-        //         acc + 1
-        //     } else {
-        //         acc
-        //     }
-        // });
-        // assert_eq!(inner.alive_counter, count);
-
         if inner.capacity() == 0 {
             assert_eq!(inner.alive_counter, 0);
             inner.inner = Vec::with_capacity(chunk_capacity);
@@ -187,73 +119,62 @@ impl<T: std::fmt::Debug + Eq> SharedChunk<Option<T>> {
             inner.alive_counter += 1;
         }
 
-        // let count = inner.iter().fold(0, |acc, v| {
-        //     if v.is_some() {
-        //         acc + 1
-        //     } else {
-        //         acc
-        //     }
-        // });
-        // assert_eq!(inner.alive_counter, count);
-
         assert!(inner.alive_counter as usize <= chunk_capacity);
     }
 }
 
 #[derive(Debug)]
-pub struct SharedChunkedVec<T> {
-    pub list_of_chunks: Vec<SharedChunk<T>>,
-    chunk_capacity: usize,
+pub struct SharedChunkedVec<T, const CHUNK_CAPACITY: usize> {
+    pub list_of_chunks: Vec<SharedChunk<T, CHUNK_CAPACITY>>,
     /// Number of elements in the chunks
     nelems: usize,
 
     synced_at: usize,
 }
 
-impl<T> SharedChunkedVec<T> {
+impl<T, const CHUNK_CAPACITY: usize> SharedChunkedVec<T, CHUNK_CAPACITY> {
     pub fn empty() -> Self {
         Self {
             list_of_chunks: Vec::new(),
-            chunk_capacity: 1_000,
             nelems: 0,
             synced_at: 0,
         }
     }
 
-    pub fn with_chunk_capacity(chunk_capacity: usize) -> Self {
-        assert_ne!(chunk_capacity, 0);
+    pub fn new() -> Self {
+        assert_ne!(CHUNK_CAPACITY, 0);
 
-        let chunk: SharedChunk<T> = SharedChunk::with_capacity(chunk_capacity);
+        let chunk = SharedChunk::<T, CHUNK_CAPACITY>::new();
 
-        let mut list_of_chunks: Vec<SharedChunk<T>> = Vec::with_capacity(DEFAULT_LIST_LENGTH);
+        let mut list_of_chunks =
+            Vec::<SharedChunk<T, CHUNK_CAPACITY>>::with_capacity(DEFAULT_LIST_LENGTH);
         list_of_chunks.push(chunk);
 
         Self {
             list_of_chunks,
-            chunk_capacity,
             nelems: 0,
             synced_at: 0,
         }
     }
 
-    pub fn with_chunk_capacity_empty(chunk_capacity: usize) -> Self {
-        assert_ne!(chunk_capacity, 0);
+    pub fn new_empty() -> Self {
+        assert_ne!(CHUNK_CAPACITY, 0);
 
-        let list_of_chunks: Vec<SharedChunk<T>> = Vec::with_capacity(DEFAULT_LIST_LENGTH);
+        let list_of_chunks =
+            Vec::<SharedChunk<T, CHUNK_CAPACITY>>::with_capacity(DEFAULT_LIST_LENGTH);
 
         Self {
             list_of_chunks,
-            chunk_capacity,
             nelems: 0,
             synced_at: 0,
         }
     }
 
-    fn append_chunks(&mut self, mut chunks: Vec<SharedChunk<T>>) {
+    fn append_chunks(&mut self, mut chunks: Vec<SharedChunk<T, CHUNK_CAPACITY>>) {
         self.list_of_chunks.append(&mut chunks)
     }
 
-    pub fn clone_new_chunks(&mut self) -> Option<Vec<SharedChunk<T>>> {
+    pub fn clone_new_chunks(&mut self) -> Option<Vec<SharedChunk<T, CHUNK_CAPACITY>>> {
         let new_chunks = self.list_of_chunks.get(self.synced_at..)?;
 
         if new_chunks.is_empty() {
@@ -270,21 +191,18 @@ impl<T> SharedChunkedVec<T> {
     /// Allocates one more chunk in 2 cases:
     /// - The last chunk has reached `Self::chunk_capacity` limit
     /// - `Self::list_of_chunks` is empty
-    fn get_next_chunk(&mut self) -> &mut SharedChunk<T> {
-        let chunk_capacity = self.chunk_capacity;
-
+    fn get_next_chunk(&mut self) -> &mut SharedChunk<T, CHUNK_CAPACITY> {
         let must_alloc_new_chunk = self
             .list_of_chunks
             .last()
             .map(|chunk| {
-                debug_assert!(chunk.len() <= chunk_capacity);
-                chunk.len() == chunk_capacity
+                debug_assert!(chunk.len() <= CHUNK_CAPACITY);
+                chunk.len() == CHUNK_CAPACITY
             })
             .unwrap_or(true);
 
         if must_alloc_new_chunk {
-            self.list_of_chunks
-                .push(SharedChunk::with_capacity(self.chunk_capacity));
+            self.list_of_chunks.push(SharedChunk::new());
         }
 
         // Never fail, we just allocated one in case it's empty
@@ -292,12 +210,12 @@ impl<T> SharedChunkedVec<T> {
     }
 
     pub fn capacity(&self) -> usize {
-        self.chunk_capacity * self.list_of_chunks.len()
+        CHUNK_CAPACITY * self.list_of_chunks.len()
     }
 
     fn get_indexes_at(&self, index: usize) -> (usize, usize) {
-        let list_index = index / self.chunk_capacity;
-        let chunk_index = index % self.chunk_capacity;
+        let list_index = index / CHUNK_CAPACITY;
+        let chunk_index = index % CHUNK_CAPACITY;
 
         (list_index, chunk_index)
     }
@@ -320,43 +238,7 @@ impl<T> SharedChunkedVec<T> {
     }
 }
 
-// impl SharedChunkedVec<ObjectHash> {
-//     fn clear(&self, index: usize) -> bool {
-//         let (list_index, chunk_index) = self.get_indexes_at(index);
-
-//         let is_last_chunk = list_index + 1 == self.list_of_chunks.len();
-//         self.list_of_chunks[list_index].clear(chunk_index, is_last_chunk)
-//     }
-
-//     fn insert_at(&self, index: usize, value: ObjectHash) {
-//         let (list_index, chunk_index) = self.get_indexes_at(index);
-//         self.list_of_chunks[list_index].insert_alive_at(chunk_index, value, self.chunk_capacity);
-//     }
-
-//     pub fn resize_with(&mut self, new_len: usize) {
-//         while self.nelems < new_len {
-//             self.push_impl(Default::default(), false);
-//         }
-//     }
-
-//     pub fn push(&mut self, elem: ObjectHash) -> usize {
-//         self.push_impl(elem, true)
-//     }
-
-//     pub fn push_impl(&mut self, elem: ObjectHash, is_alive: bool) -> usize {
-//         let index = self.len();
-//         self.nelems += 1;
-
-//         let index_in_chunk = self.get_next_chunk().push(elem, is_alive);
-//         let list_index = self.list_of_chunks.len() - 1;
-
-//         assert_eq!((list_index * self.chunk_capacity) + index_in_chunk, index);
-
-//         index
-//     }
-// }
-
-impl<T: std::fmt::Debug + Eq> SharedChunkedVec<Option<T>> {
+impl<T: Eq, const CHUNK_CAPACITY: usize> SharedChunkedVec<Option<T>, CHUNK_CAPACITY> {
     fn clear(&self, index: usize) -> (Option<T>, bool) {
         let (list_index, chunk_index) = self.get_indexes_at(index);
 
@@ -376,7 +258,7 @@ impl<T: std::fmt::Debug + Eq> SharedChunkedVec<Option<T>> {
         let index_in_chunk = self.get_next_chunk().push(elem);
         let list_index = self.list_of_chunks.len() - 1;
 
-        assert_eq!((list_index * self.chunk_capacity) + index_in_chunk, index);
+        assert_eq!((list_index * CHUNK_CAPACITY) + index_in_chunk, index);
 
         index
     }
@@ -389,17 +271,17 @@ impl<T: std::fmt::Debug + Eq> SharedChunkedVec<Option<T>> {
 
     fn insert_at(&self, index: usize, value: Option<T>) {
         let (list_index, chunk_index) = self.get_indexes_at(index);
-        self.list_of_chunks[list_index].insert_alive_at(chunk_index, value, self.chunk_capacity);
+        self.list_of_chunks[list_index].insert_alive_at(chunk_index, value, CHUNK_CAPACITY);
     }
 }
 
 #[derive(Debug)]
-pub struct SharedIndexMap<K, V> {
-    pub entries: SharedChunkedVec<V>,
+pub struct SharedIndexMap<K, V, const CHUNK_CAPACITY: usize> {
+    pub entries: SharedChunkedVec<V, CHUNK_CAPACITY>,
     _phantom: PhantomData<K>,
 }
 
-impl<K, V> SharedIndexMap<K, V> {
+impl<K, V, const CHUNK_CAPACITY: usize> SharedIndexMap<K, V, CHUNK_CAPACITY> {
     pub fn empty() -> Self {
         Self {
             entries: SharedChunkedVec::empty(),
@@ -407,31 +289,31 @@ impl<K, V> SharedIndexMap<K, V> {
         }
     }
 
-    pub fn with_chunk_capacity(cap: usize) -> Self {
+    pub fn new() -> Self {
         Self {
-            entries: SharedChunkedVec::with_chunk_capacity(cap),
+            entries: SharedChunkedVec::new(),
             _phantom: PhantomData,
         }
     }
 
-    fn with_chunk_capacity_empty(chunk_capacity: usize) -> Self {
+    fn new_empty() -> Self {
         Self {
-            entries: SharedChunkedVec::with_chunk_capacity_empty(chunk_capacity),
+            entries: SharedChunkedVec::new_empty(),
             _phantom: PhantomData,
         }
     }
 
-    pub fn get_view(&self) -> SharedIndexMapView<K, V> {
+    pub fn get_view(&self) -> SharedIndexMapView<K, V, CHUNK_CAPACITY> {
         SharedIndexMapView {
-            inner: Self::with_chunk_capacity_empty(self.entries.chunk_capacity),
+            inner: Self::new_empty(),
         }
     }
 
-    pub fn append_chunks(&mut self, chunks: Vec<SharedChunk<V>>) {
+    fn append_chunks(&mut self, chunks: Vec<SharedChunk<V, CHUNK_CAPACITY>>) {
         self.entries.append_chunks(chunks)
     }
 
-    pub fn clone_new_chunks(&mut self) -> Option<Vec<SharedChunk<V>>> {
+    pub fn clone_new_chunks(&mut self) -> Option<Vec<SharedChunk<V, CHUNK_CAPACITY>>> {
         self.entries.clone_new_chunks()
     }
 
@@ -447,7 +329,7 @@ impl<K, V> SharedIndexMap<K, V> {
         self.entries.capacity()
     }
 
-    pub fn alive_dead(&self) -> (usize, usize) {
+    pub fn count_alives_and_deads(&self) -> (usize, usize) {
         let mut alive = 0;
         let mut dead = 0;
 
@@ -463,7 +345,7 @@ impl<K, V> SharedIndexMap<K, V> {
     }
 }
 
-impl<K, V> SharedIndexMap<K, V>
+impl<K, V, const CHUNK_CAPACITY: usize> SharedIndexMap<K, V, CHUNK_CAPACITY>
 where
     K: TryInto<usize>,
 {
@@ -482,21 +364,21 @@ where
 
     pub fn chunk_index_of(&self, key: K) -> Result<usize, K::Error> {
         let index: usize = key.try_into()?;
-        Ok(index / self.entries.chunk_capacity)
+        Ok(index / CHUNK_CAPACITY)
     }
 }
 
-impl<K, V: std::fmt::Debug + Eq> SharedIndexMap<K, Option<V>>
+impl<K, V: Eq, const CHUNK_CAPACITY: usize> SharedIndexMap<K, Option<V>, CHUNK_CAPACITY>
 where
     K: TryFrom<usize>,
     K: TryInto<usize>,
-    K: std::fmt::Debug + Clone,
+    K: Clone,
 {
     pub fn push(&mut self, value: V) -> Result<K, <K as TryFrom<usize>>::Error> {
         let index = self.entries.push(Some(value));
         let key = K::try_from(index);
 
-        assert!(self
+        debug_assert!(self
             .with(key.as_ref().ok().unwrap().clone(), |v| v.is_some())
             .ok()
             .unwrap());
@@ -505,50 +387,9 @@ where
     }
 }
 
-// impl<K> SharedIndexMap<K, ObjectHash>
-// where
-//     K: TryInto<usize> + std::fmt::Debug + Clone,
-// {
-//     pub fn clear(&self, key: K) -> Result<bool, K::Error> {
-//         let index = key.try_into()?;
-//         Ok(self.entries.clear(index))
-//     }
-
-//     pub fn insert_at(&mut self, key: K, value: ObjectHash) -> Result<(), K::Error> {
-//         let index: usize = key.try_into()?;
-
-//         if index >= self.entries.len() {
-//             self.entries.resize_with(index + 1);
-//         }
-
-//         self.entries.insert_at(index, value);
-
-//         Ok(())
-//     }
-// }
-
-// impl<K> SharedIndexMap<K, ObjectHash>
-// where
-//     K: TryFrom<usize>,
-//     K: TryInto<usize>,
-//     K: std::fmt::Debug + Clone,
-// {
-//     pub fn push(&mut self, value: ObjectHash) -> Result<K, <K as TryFrom<usize>>::Error> {
-//         let index = self.entries.push(value);
-//         let key = K::try_from(index);
-
-//         assert!(self
-//             .with(key.as_ref().ok().unwrap().clone(), |v| v.is_some())
-//             .ok()
-//             .unwrap());
-
-//         key
-//     }
-// }
-
-impl<K, V: std::fmt::Debug + Eq> SharedIndexMap<K, Option<V>>
+impl<K, V: Eq, const CHUNK_CAPACITY: usize> SharedIndexMap<K, Option<V>, CHUNK_CAPACITY>
 where
-    K: TryInto<usize> + std::fmt::Debug + Clone,
+    K: TryInto<usize> + Clone,
 {
     pub fn clear(&self, key: K) -> Result<(Option<V>, bool), K::Error> {
         let index = key.try_into()?;
@@ -568,12 +409,19 @@ where
     }
 }
 
-pub struct SharedIndexMapView<K, V> {
-    inner: SharedIndexMap<K, V>,
+/// It's a `SharedIndexMap` with a limited API
+///
+/// Compared to `SharedIndexMap`, it cannot modify the number of elements
+/// in the container
+///
+/// `SharedIndexMap` and `SharedIndexMapView` must be synchronized with
+/// `SharedIndexMap::clone_new_chunks` and `SharedIndexMapView::append_chunks`
+pub struct SharedIndexMapView<K, V, const CHUNK_CAPACITY: usize> {
+    inner: SharedIndexMap<K, V, CHUNK_CAPACITY>,
 }
 
-impl<K, V> SharedIndexMapView<K, V> {
-    pub fn append_chunks(&mut self, chunks: Vec<SharedChunk<V>>) {
+impl<K, V, const CHUNK_CAPACITY: usize> SharedIndexMapView<K, V, CHUNK_CAPACITY> {
+    pub fn append_chunks(&mut self, chunks: Vec<SharedChunk<V, CHUNK_CAPACITY>>) {
         self.inner.append_chunks(chunks)
     }
 
@@ -581,30 +429,21 @@ impl<K, V> SharedIndexMapView<K, V> {
         self.inner.entries.list_of_chunks.len()
     }
 
-    pub fn alive_dead(&self) -> (usize, usize) {
-        self.inner.alive_dead()
+    pub fn count_alives_and_deads(&self) -> (usize, usize) {
+        self.inner.count_alives_and_deads()
     }
 }
 
-impl<K, V: std::fmt::Debug + Eq> SharedIndexMapView<K, Option<V>>
+impl<K, V: Eq, const CHUNK_CAPACITY: usize> SharedIndexMapView<K, Option<V>, CHUNK_CAPACITY>
 where
-    K: TryInto<usize> + std::fmt::Debug + Clone,
+    K: TryInto<usize> + Clone,
 {
     pub fn clear(&self, key: K) -> Result<(Option<V>, bool), K::Error> {
         self.inner.clear(key)
     }
 }
 
-// impl<K> SharedIndexMapView<K, ObjectHash>
-// where
-//     K: TryInto<usize> + std::fmt::Debug + Clone,
-// {
-//     pub fn clear(&self, key: K) -> Result<bool, K::Error> {
-//         self.inner.clear(key)
-//     }
-// }
-
-impl<K, V> SharedIndexMapView<K, V>
+impl<K, V, const CHUNK_CAPACITY: usize> SharedIndexMapView<K, V, CHUNK_CAPACITY>
 where
     K: TryInto<usize>,
 {

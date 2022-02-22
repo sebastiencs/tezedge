@@ -18,7 +18,7 @@ use crate::{
         jemalloc::debug_jemalloc,
         stats::{CollectorStatistics, CommitStatistics, OnMessageStatistics},
     },
-    kv_store::{index_map::IndexMap, HashId},
+    kv_store::{in_memory::OBJECTS_CHUNK_CAPACITY, index_map::IndexMap, HashId},
     serialize::in_memory::iter_hash_ids,
     ObjectHash,
 };
@@ -47,8 +47,8 @@ pub(crate) struct GCThread {
     pending: ChunkedVec<HashId, PENDING_CHUNK_CAPACITY>,
     debug: bool,
 
-    objects_view: SharedIndexMapView<HashId, Option<Box<[u8]>>>,
-    hashes_view: SharedIndexMapView<HashId, Option<Box<ObjectHash>>>,
+    objects_view: SharedIndexMapView<HashId, Option<Box<[u8]>>, OBJECTS_CHUNK_CAPACITY>,
+    hashes_view: SharedIndexMapView<HashId, Option<Box<ObjectHash>>, OBJECTS_CHUNK_CAPACITY>,
 
     global_counter: IndexMap<HashId, Option<u8>, 1_000_000>,
     counter: u8,
@@ -70,8 +70,8 @@ pub enum Command {
         commit_hash_id: HashId,
     },
     NewChunks {
-        objects_chunks: Option<Vec<SharedChunk<Option<Box<[u8]>>>>>,
-        hashes_chunks: Option<Vec<SharedChunk<Option<Box<ObjectHash>>>>>,
+        objects_chunks: Option<Vec<SharedChunk<Option<Box<[u8]>>, OBJECTS_CHUNK_CAPACITY>>>,
+        hashes_chunks: Option<Vec<SharedChunk<Option<Box<ObjectHash>>, OBJECTS_CHUNK_CAPACITY>>>,
     },
     Close,
 }
@@ -80,8 +80,8 @@ impl GCThread {
     pub fn new(
         recv: Receiver<Command>,
         producer: Producer<HashId>,
-        objects_view: SharedIndexMapView<HashId, Option<Box<[u8]>>>,
-        hashes_view: SharedIndexMapView<HashId, Option<Box<ObjectHash>>>,
+        objects_view: SharedIndexMapView<HashId, Option<Box<[u8]>>, OBJECTS_CHUNK_CAPACITY>,
+        hashes_view: SharedIndexMapView<HashId, Option<Box<ObjectHash>>, OBJECTS_CHUNK_CAPACITY>,
     ) -> Self {
         Self {
             recv,
@@ -137,8 +137,8 @@ impl GCThread {
 
     fn add_chunks(
         &mut self,
-        objects_chunks: Option<Vec<SharedChunk<Option<Box<[u8]>>>>>,
-        hashes_chunks: Option<Vec<SharedChunk<Option<Box<ObjectHash>>>>>,
+        objects_chunks: Option<Vec<SharedChunk<Option<Box<[u8]>>, OBJECTS_CHUNK_CAPACITY>>>,
+        hashes_chunks: Option<Vec<SharedChunk<Option<Box<ObjectHash>>, OBJECTS_CHUNK_CAPACITY>>>,
     ) {
         if let Some(objects_chunks) = objects_chunks {
             self.objects_view.append_chunks(objects_chunks);
@@ -438,10 +438,10 @@ impl GCThread {
             let delay_since_last_gc = self.last_gc_timestamp.map(|t| t.elapsed());
             self.last_gc_timestamp.replace(std::time::Instant::now());
 
-            let now = std::time::Instant::now();
-            let (objects_chunks_alive, objects_chunks_dead) = self.objects_view.alive_dead();
-            let (hashes_chunks_alive, hashes_chunks_dead) = self.hashes_view.alive_dead();
-            println!("Find alive and dead: {:?}", now.elapsed());
+            let (objects_chunks_alive, objects_chunks_dead) =
+                self.objects_view.count_alives_and_deads();
+            let (hashes_chunks_alive, hashes_chunks_dead) =
+                self.hashes_view.count_alives_and_deads();
 
             let stats = CollectorStatistics {
                 unused_found,
