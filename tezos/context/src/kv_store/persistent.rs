@@ -11,6 +11,8 @@ use std::{
 };
 
 #[cfg(test)]
+use super::in_memory::BoxOrInlined;
+#[cfg(test)]
 use std::sync::Arc;
 
 use blake2::{
@@ -1153,7 +1155,7 @@ impl KeyValueStoreBackend for Persistent {
     #[cfg(test)]
     fn synchronize_data(
         &mut self,
-        _batch: &[(HashId, Box<[u8]>)],
+        _batch: &[(HashId, BoxOrInlined)],
         output: &[u8],
     ) -> Result<Option<AbsoluteOffset>, DBError> {
         self.commit_to_disk(output)?;
