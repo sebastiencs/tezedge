@@ -74,7 +74,7 @@ impl<T, const CHUNK_CAPACITY: usize> SharedChunk<T, CHUNK_CAPACITY> {
     }
 }
 
-impl<T: Eq, const CHUNK_CAPACITY: usize> SharedChunk<Option<T>, CHUNK_CAPACITY> {
+impl<T, const CHUNK_CAPACITY: usize> SharedChunk<Option<T>, CHUNK_CAPACITY> {
     fn push(&self, elem: Option<T>) -> usize {
         let mut inner = self.inner.write();
 
@@ -238,7 +238,7 @@ impl<T, const CHUNK_CAPACITY: usize> SharedChunkedVec<T, CHUNK_CAPACITY> {
     }
 }
 
-impl<T: Eq, const CHUNK_CAPACITY: usize> SharedChunkedVec<Option<T>, CHUNK_CAPACITY> {
+impl<T, const CHUNK_CAPACITY: usize> SharedChunkedVec<Option<T>, CHUNK_CAPACITY> {
     fn clear(&self, index: usize) -> (Option<T>, bool) {
         let (list_index, chunk_index) = self.get_indexes_at(index);
 
@@ -368,7 +368,7 @@ where
     }
 }
 
-impl<K, V: Eq, const CHUNK_CAPACITY: usize> SharedIndexMap<K, Option<V>, CHUNK_CAPACITY>
+impl<K, V, const CHUNK_CAPACITY: usize> SharedIndexMap<K, Option<V>, CHUNK_CAPACITY>
 where
     K: TryFrom<usize>,
     K: TryInto<usize>,
@@ -387,7 +387,7 @@ where
     }
 }
 
-impl<K, V: Eq, const CHUNK_CAPACITY: usize> SharedIndexMap<K, Option<V>, CHUNK_CAPACITY>
+impl<K, V, const CHUNK_CAPACITY: usize> SharedIndexMap<K, Option<V>, CHUNK_CAPACITY>
 where
     K: TryInto<usize> + Clone,
 {
@@ -434,7 +434,7 @@ impl<K, V, const CHUNK_CAPACITY: usize> SharedIndexMapView<K, V, CHUNK_CAPACITY>
     }
 }
 
-impl<K, V: Eq, const CHUNK_CAPACITY: usize> SharedIndexMapView<K, Option<V>, CHUNK_CAPACITY>
+impl<K, V, const CHUNK_CAPACITY: usize> SharedIndexMapView<K, Option<V>, CHUNK_CAPACITY>
 where
     K: TryInto<usize> + Clone,
 {

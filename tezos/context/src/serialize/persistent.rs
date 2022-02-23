@@ -13,7 +13,10 @@ use tezos_timing::SerializeStats;
 
 use crate::{
     chunks::ChunkedVec,
-    kv_store::{in_memory::BATCH_CHUNK_CAPACITY, HashId},
+    kv_store::{
+        in_memory::{BoxOrInlined, BATCH_CHUNK_CAPACITY},
+        HashId,
+    },
     serialize::{deserialize_hash_id, serialize_hash_id, ObjectTag},
     working_tree::{
         shape::ShapeStrings,
@@ -432,7 +435,7 @@ pub fn serialize_object(
     storage: &Storage,
     strings: &StringInterner,
     stats: &mut SerializeStats,
-    _batch: &mut ChunkedVec<(HashId, Box<[u8]>), { BATCH_CHUNK_CAPACITY }>,
+    _batch: &mut ChunkedVec<(HashId, BoxOrInlined), { BATCH_CHUNK_CAPACITY }>,
     repository: &mut ContextKeyValueStore,
     file_offset: Option<AbsoluteOffset>,
 ) -> Result<Option<AbsoluteOffset>, SerializationError> {
@@ -712,8 +715,8 @@ fn serialize_inode(
                 PointersOffsetsHeader::from_pointers(offset, *pointers, storage)?;
             output.write_all(&bitfield_offsets.to_bytes())?;
 
-            for (_, index) in pointers.iter() {
-                let pointer = storage.pointer_copy(index)?;
+            for (_, thin_pointer_id) in pointers.iter() {
+                let pointer = storage.pointer_copy(thin_pointer_id)?;
 
                 let pointer_offset = storage
                     .pointer_retrieve_offset(&pointer)?

@@ -6,8 +6,10 @@
 use std::{
     borrow::Cow,
     collections::{hash_map::DefaultHasher, VecDeque},
+    convert::TryInto,
     hash::Hasher,
     mem::size_of,
+    num::NonZeroU8,
     rc::Rc,
     sync::{atomic::Ordering, Arc, RwLock},
     thread::JoinHandle,
@@ -18,6 +20,7 @@ use crate::serialize::persistent::AbsoluteOffset;
 
 use crossbeam_channel::Sender;
 use crypto::hash::ContextHash;
+use static_assertions::assert_eq_size;
 use tezos_timing::{RepositoryMemoryUsage, SerializeStats};
 
 use crate::{
@@ -52,9 +55,171 @@ use super::{HashId, VacantObjectHash};
 pub const BATCH_CHUNK_CAPACITY: usize = 8 * 1024;
 
 #[derive(Debug)]
+pub struct BoxOrInlined {
+    id: NonZeroU8,
+    bytes: [u8; 11],
+}
+
+impl std::ops::Deref for BoxOrInlined {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_slice()
+    }
+}
+
+impl From<&[u8]> for BoxOrInlined {
+    fn from(slice: &[u8]) -> Self {
+        Self::from_slice(slice)
+    }
+}
+
+impl Clone for BoxOrInlined {
+    fn clone(&self) -> Self {
+        println!("CLONE");
+
+        let s = Self::from_slice(self.as_slice());
+
+        assert_eq!(s.as_slice(), self.as_slice());
+        assert_ne!(s.as_slice().as_ptr(), self.as_slice().as_ptr());
+
+        s
+    }
+}
+
+impl Drop for BoxOrInlined {
+    fn drop(&mut self) {
+        if !self.is_boxed() {
+            return;
+        }
+
+        let mut ptr: [u8; 8] = Default::default();
+        ptr[1..].copy_from_slice(&self.bytes[0..7]);
+
+        // println!("PTR={:?}", ptr);
+
+        let ptr = u64::from_be_bytes(ptr);
+
+        // println!("AS PTR={:08X}", ptr);
+
+        let length = u32::from_le_bytes(self.bytes[7..11].try_into().unwrap());
+
+        println!("DROP {:?}", length);
+
+        // let boxed = unsafe { Box::from_raw(std::slice::from_raw_parts_mut(ptr as *mut u8, length as usize)) };
+
+        // println!("LEN={:?}", boxed.len());
+
+        // let slice = self.as_slice();
+        // let slice_len = slice.len();
+
+        // println!("DROP {:?}", slice_len);
+
+        // // let boxed = unsafe {
+        // //     Box::from_raw(slice as *const [u8] as *mut [u8])
+        // // };
+
+        // println!("DROP DONE1");
+
+        // // assert_ne!(boxed.as_ptr(), slice.as_ptr());
+        // // assert_eq!(boxed.len(), slice_len);
+        // // assert_eq!(&*boxed, slice);
+        // // std::mem::drop(boxed);
+
+        // println!("DROP DONE2");
+    }
+}
+
+impl BoxOrInlined {
+    fn is_boxed(&self) -> bool {
+        self.id.get() >> 6 == 0b11
+    }
+
+    fn from_slice(slice: &[u8]) -> Self {
+        let mut bytes: [u8; 11] = Default::default();
+        let length = slice.len();
+
+        let mut aaa = None;
+
+        let id = if length < 12 {
+            assert_eq!(length & 0b11000000, 0);
+
+            let id = NonZeroU8::new((0b1 << 6) | length as u8).unwrap();
+
+            // bytes[0] = (1 << 7) | length as u8;
+            bytes[0..length].copy_from_slice(slice);
+            id
+        } else {
+            let boxed = Box::<[u8]>::from(slice);
+
+            let ptr = boxed.as_ptr() as u64;
+            let length = length as u32;
+
+            aaa = Some(ptr.to_be_bytes());
+
+            // println!("FROM PTR={:08X}", ptr);
+
+            let id = NonZeroU8::new(0b11 << 6).unwrap();
+            bytes[0..7].copy_from_slice(&ptr.to_be_bytes()[1..]);
+            bytes[7..11].copy_from_slice(&length.to_le_bytes());
+
+            std::mem::forget(boxed);
+            // let _ = Box::into_raw(boxed);
+
+            id
+        };
+
+        let res = Self { id, bytes };
+        assert_eq!(
+            slice,
+            res.as_slice(),
+            "BOXED_OR_INLINED={:?} AAA={:?} LENGTH={:?}",
+            res,
+            aaa,
+            length
+        );
+
+        res
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        if !self.is_boxed() {
+            // inlined
+
+            let length = self.id.get() & 0x3F;
+            let length = length as usize;
+
+            &self.bytes[0..length]
+        } else {
+            // boxed
+
+            let mut ptr: [u8; 8] = Default::default();
+            ptr[1..].copy_from_slice(&self.bytes[0..7]);
+
+            // println!("PTR={:?}", ptr);
+
+            let ptr = u64::from_be_bytes(ptr);
+
+            // println!("AS PTR={:08X}", ptr);
+
+            let length = u32::from_le_bytes(self.bytes[7..11].try_into().unwrap());
+
+            // let ptr = u64::from_be_bytes(self.bytes[0..8].try_into().unwrap());
+            // let length = u32::from_le_bytes(self.bytes[8..12].try_into().unwrap());
+
+            unsafe { std::slice::from_raw_parts(ptr as *const u8, length as usize) }
+        }
+    }
+}
+
+assert_eq_size!([u8; 16], Box<[u8]>);
+assert_eq_size!([u8; 12], BoxOrInlined);
+assert_eq_size!([u8; 12], Option<BoxOrInlined>);
+
+#[derive(Debug)]
 pub struct HashValueStore {
     hashes: SharedIndexMap<HashId, Option<Box<ObjectHash>>, OBJECTS_CHUNK_CAPACITY>,
-    values: SharedIndexMap<HashId, Option<Box<[u8]>>, OBJECTS_CHUNK_CAPACITY>,
+    values: SharedIndexMap<HashId, Option<BoxOrInlined>, OBJECTS_CHUNK_CAPACITY>,
     free_ids: Option<Consumer<HashId>>,
     new_ids: ChunkedVec<HashId, NEW_IDS_CHUNK_CAPACITY>,
     values_bytes: usize,
@@ -141,7 +306,7 @@ impl HashValueStore {
     pub(crate) fn insert_value_at(
         &mut self,
         hash_id: HashId,
-        value: Box<[u8]>,
+        value: BoxOrInlined,
     ) -> Result<(), HashIdError> {
         self.values.insert_at(hash_id, value)
     }
@@ -158,7 +323,7 @@ impl HashValueStore {
 
     pub(crate) fn with_value<F, R>(&self, hash_id: HashId, fun: F) -> Result<R, DBError>
     where
-        F: FnOnce(Option<&Option<Box<[u8]>>>) -> R,
+        F: FnOnce(Option<&Option<BoxOrInlined>>) -> R,
     {
         Ok(self.values.with(hash_id, fun)?)
     }
@@ -360,7 +525,7 @@ impl KeyValueStoreBackend for InMemory {
     #[cfg(test)]
     fn synchronize_data(
         &mut self,
-        batch: &[(HashId, Box<[u8]>)],
+        batch: &[(HashId, BoxOrInlined)],
         _output: &[u8],
     ) -> Result<Option<AbsoluteOffset>, DBError> {
         let mut vec = ChunkedVec::<_, BATCH_CHUNK_CAPACITY>::default();
@@ -588,7 +753,7 @@ impl InMemory {
 
     pub(crate) fn with_value<F, R>(&self, hash_id: HashId, fun: F) -> Result<R, DBError>
     where
-        F: FnOnce(Option<&Option<Box<[u8]>>>) -> R,
+        F: FnOnce(Option<&Option<BoxOrInlined>>) -> R,
     {
         Ok(self.hashes.values.with(hash_id, fun)?)
     }
@@ -599,7 +764,7 @@ impl InMemory {
 
     pub fn write_batch(
         &mut self,
-        mut batch: ChunkedVec<(HashId, Box<[u8]>), BATCH_CHUNK_CAPACITY>,
+        mut batch: ChunkedVec<(HashId, BoxOrInlined), BATCH_CHUNK_CAPACITY>,
     ) -> Result<(), DBError> {
         while let Some(chunk) = batch.pop_first_chunk() {
             for (hash_id, value) in chunk.into_iter() {
@@ -692,6 +857,26 @@ impl Drop for InMemory {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn boxed_or_inlined() {
+        // let p = BoxOrInlined::from_slice(&[1,2,3,4,5]);
+        // assert!(!p.is_boxed());
+        // assert_eq!(&*p, &[1,2,3,4,5][..]);
+
+        // let slice = &[1,2,3,4,5,6,7,8,9,10,11,12];
+        // let p = BoxOrInlined::from_slice(slice);
+        // assert!(p.is_boxed());
+        // assert_eq!(&*p, slice);
+
+        // BOXED_OR_INLINED=BoxOrInlined { id: 192, bytes: [0, 127, 189, 168, 128, 49, 32, 34, 0, 0, 0] } AAA=Some([0, 0, 127, 189, 168, 128, 49, 32])'
+
+        let a = BoxOrInlined {
+            id: NonZeroU8::new(192).unwrap(),
+            bytes: [0, 127, 189, 168, 128, 49, 32, 34, 0, 0, 0],
+        };
+        a.as_slice();
+    }
 
     #[test]
     fn reload_from_disk() {
