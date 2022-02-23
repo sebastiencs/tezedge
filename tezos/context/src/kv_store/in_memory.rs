@@ -60,6 +60,10 @@ pub struct BoxOrInlined {
     bytes: [u8; 11],
 }
 
+assert_eq_size!([u8; 16], Box<[u8]>);
+assert_eq_size!([u8; 12], BoxOrInlined);
+assert_eq_size!([u8; 12], Option<BoxOrInlined>);
+
 impl std::ops::Deref for BoxOrInlined {
     type Target = [u8];
 
@@ -76,14 +80,7 @@ impl From<&[u8]> for BoxOrInlined {
 
 impl Clone for BoxOrInlined {
     fn clone(&self) -> Self {
-        println!("CLONE");
-
-        let s = Self::from_slice(self.as_slice());
-
-        assert_eq!(s.as_slice(), self.as_slice());
-        assert_ne!(s.as_slice().as_ptr(), self.as_slice().as_ptr());
-
-        s
+        Self::from_slice(self.as_slice())
     }
 }
 
@@ -93,40 +90,9 @@ impl Drop for BoxOrInlined {
             return;
         }
 
-        let mut ptr: [u8; 8] = Default::default();
-        ptr[1..].copy_from_slice(&self.bytes[0..7]);
-
-        // println!("PTR={:?}", ptr);
-
-        let ptr = u64::from_be_bytes(ptr);
-
-        // println!("AS PTR={:08X}", ptr);
-
-        let length = u32::from_le_bytes(self.bytes[7..11].try_into().unwrap());
-
-        println!("DROP {:?}", length);
-
-        // let boxed = unsafe { Box::from_raw(std::slice::from_raw_parts_mut(ptr as *mut u8, length as usize)) };
-
-        // println!("LEN={:?}", boxed.len());
-
-        // let slice = self.as_slice();
-        // let slice_len = slice.len();
-
-        // println!("DROP {:?}", slice_len);
-
-        // // let boxed = unsafe {
-        // //     Box::from_raw(slice as *const [u8] as *mut [u8])
-        // // };
-
-        // println!("DROP DONE1");
-
-        // // assert_ne!(boxed.as_ptr(), slice.as_ptr());
-        // // assert_eq!(boxed.len(), slice_len);
-        // // assert_eq!(&*boxed, slice);
-        // // std::mem::drop(boxed);
-
-        // println!("DROP DONE2");
+        let slice = self.as_slice();
+        let boxed = unsafe { Box::from_raw(slice as *const [u8] as *mut [u8]) };
+        std::mem::drop(boxed);
     }
 }
 
@@ -139,32 +105,24 @@ impl BoxOrInlined {
         let mut bytes: [u8; 11] = Default::default();
         let length = slice.len();
 
-        let mut aaa = None;
-
         let id = if length < 12 {
             assert_eq!(length & 0b11000000, 0);
 
             let id = NonZeroU8::new((0b1 << 6) | length as u8).unwrap();
 
-            // bytes[0] = (1 << 7) | length as u8;
             bytes[0..length].copy_from_slice(slice);
             id
         } else {
             let boxed = Box::<[u8]>::from(slice);
 
             let ptr = boxed.as_ptr() as u64;
-            let length = length as u32;
-
-            aaa = Some(ptr.to_be_bytes());
-
-            // println!("FROM PTR={:08X}", ptr);
+            let length = boxed.len() as u32;
 
             let id = NonZeroU8::new(0b11 << 6).unwrap();
             bytes[0..7].copy_from_slice(&ptr.to_be_bytes()[1..]);
             bytes[7..11].copy_from_slice(&length.to_le_bytes());
 
             std::mem::forget(boxed);
-            // let _ = Box::into_raw(boxed);
 
             id
         };
@@ -173,9 +131,8 @@ impl BoxOrInlined {
         assert_eq!(
             slice,
             res.as_slice(),
-            "BOXED_OR_INLINED={:?} AAA={:?} LENGTH={:?}",
+            "BOXED_OR_INLINED={:?} LENGTH={:?}",
             res,
-            aaa,
             length
         );
 
@@ -196,25 +153,13 @@ impl BoxOrInlined {
             let mut ptr: [u8; 8] = Default::default();
             ptr[1..].copy_from_slice(&self.bytes[0..7]);
 
-            // println!("PTR={:?}", ptr);
-
             let ptr = u64::from_be_bytes(ptr);
-
-            // println!("AS PTR={:08X}", ptr);
-
             let length = u32::from_le_bytes(self.bytes[7..11].try_into().unwrap());
-
-            // let ptr = u64::from_be_bytes(self.bytes[0..8].try_into().unwrap());
-            // let length = u32::from_le_bytes(self.bytes[8..12].try_into().unwrap());
 
             unsafe { std::slice::from_raw_parts(ptr as *const u8, length as usize) }
         }
     }
 }
-
-assert_eq_size!([u8; 16], Box<[u8]>);
-assert_eq_size!([u8; 12], BoxOrInlined);
-assert_eq_size!([u8; 12], Option<BoxOrInlined>);
 
 #[derive(Debug)]
 pub struct HashValueStore {
@@ -860,22 +805,26 @@ mod tests {
 
     #[test]
     fn boxed_or_inlined() {
-        // let p = BoxOrInlined::from_slice(&[1,2,3,4,5]);
-        // assert!(!p.is_boxed());
-        // assert_eq!(&*p, &[1,2,3,4,5][..]);
+        let mut vec = Vec::with_capacity(100);
 
-        // let slice = &[1,2,3,4,5,6,7,8,9,10,11,12];
-        // let p = BoxOrInlined::from_slice(slice);
-        // assert!(p.is_boxed());
-        // assert_eq!(&*p, slice);
+        for i in 0..=255 {
+            let boxed = BoxOrInlined::from_slice(vec.as_slice());
+            assert_eq!(&*boxed, &vec);
+            std::mem::drop(boxed);
 
-        // BOXED_OR_INLINED=BoxOrInlined { id: 192, bytes: [0, 127, 189, 168, 128, 49, 32, 34, 0, 0, 0] } AAA=Some([0, 0, 127, 189, 168, 128, 49, 32])'
+            vec.push(i);
+        }
 
-        let a = BoxOrInlined {
-            id: NonZeroU8::new(192).unwrap(),
-            bytes: [0, 127, 189, 168, 128, 49, 32, 34, 0, 0, 0],
-        };
-        a.as_slice();
+        let mut vec = Vec::with_capacity(10_000);
+
+        for _ in 0..10_000 {
+            let boxed = BoxOrInlined::from_slice(vec.as_slice());
+            assert_eq!(&*boxed, &vec);
+            std::mem::drop(boxed);
+
+            // Fully filled byte
+            vec.push(0xFF);
+        }
     }
 
     #[test]
