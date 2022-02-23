@@ -13,7 +13,10 @@ use thiserror::Error;
 use crate::{
     chunks::ChunkedVec,
     hash::HashingError,
-    kv_store::{in_memory::BATCH_CHUNK_CAPACITY, HashId},
+    kv_store::{
+        in_memory::{BoxOrInlined, BATCH_CHUNK_CAPACITY},
+        HashId,
+    },
     persistent::DBError,
     working_tree::{
         shape::DirectoryShapeError,
@@ -35,15 +38,15 @@ const FULL_47_BITS: u64 = 0x7FFFFFFFFFFF;
 const FULL_31_BITS: u64 = 0x7FFFFFFF;
 
 pub type SerializeObjectSignature = fn(
-    &Object,                                                        // object
-    HashId,                                                         // object_hash_id
-    &mut Vec<u8>,                                                   // output
-    &Storage,                                                       // storage
-    &StringInterner,                                                // strings
-    &mut SerializeStats,                                            // statistics
-    &mut ChunkedVec<(HashId, Box<[u8]>), { BATCH_CHUNK_CAPACITY }>, // batch
-    &mut ContextKeyValueStore,                                      // repository
-    Option<AbsoluteOffset>,                                         // offset
+    &Object,                                                           // object
+    HashId,                                                            // object_hash_id
+    &mut Vec<u8>,                                                      // output
+    &Storage,                                                          // storage
+    &StringInterner,                                                   // strings
+    &mut SerializeStats,                                               // statistics
+    &mut ChunkedVec<(HashId, BoxOrInlined), { BATCH_CHUNK_CAPACITY }>, // batch
+    &mut ContextKeyValueStore,                                         // repository
+    Option<AbsoluteOffset>,                                            // offset
 ) -> Result<Option<AbsoluteOffset>, SerializationError>;
 
 #[derive(BitfieldSpecifier)]

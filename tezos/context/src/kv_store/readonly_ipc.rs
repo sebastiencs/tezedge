@@ -8,6 +8,8 @@
 use std::{borrow::Cow, path::Path};
 
 #[cfg(test)]
+use super::in_memory::BoxOrInlined;
+#[cfg(test)]
 use crate::serialize::persistent::AbsoluteOffset;
 #[cfg(test)]
 use std::sync::Arc;
@@ -282,7 +284,7 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
     #[cfg(test)]
     fn synchronize_data(
         &mut self,
-        _batch: &[(HashId, Box<[u8]>)],
+        _batch: &[(HashId, BoxOrInlined)],
         _output: &[u8],
     ) -> Result<Option<AbsoluteOffset>, DBError> {
         Ok(None) // no-op

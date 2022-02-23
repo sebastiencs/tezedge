@@ -62,7 +62,7 @@ use tezos_timing::SerializeStats;
 use crate::{
     chunks::ChunkedVec,
     gc::GarbageCollectionError,
-    kv_store::in_memory::BATCH_CHUNK_CAPACITY,
+    kv_store::in_memory::{BoxOrInlined, BATCH_CHUNK_CAPACITY},
     serialize::{
         persistent::AbsoluteOffset, DeserializationError, SerializationError,
         SerializeObjectSignature,
@@ -89,7 +89,7 @@ use super::{
 
 pub struct PostCommitData {
     pub commit_ref: ObjectReference,
-    pub batch: ChunkedVec<(HashId, Box<[u8]>), { BATCH_CHUNK_CAPACITY }>,
+    pub batch: ChunkedVec<(HashId, BoxOrInlined), { BATCH_CHUNK_CAPACITY }>,
     pub serialize_stats: Box<SerializeStats>,
     pub output: Vec<u8>,
 }
@@ -470,7 +470,7 @@ pub enum CheckObjectHashError {
 }
 
 struct SerializingData<'a> {
-    batch: ChunkedVec<(HashId, Box<[u8]>), { BATCH_CHUNK_CAPACITY }>,
+    batch: ChunkedVec<(HashId, BoxOrInlined), { BATCH_CHUNK_CAPACITY }>,
     repository: &'a mut ContextKeyValueStore,
     serialized: Vec<u8>,
     stats: Box<SerializeStats>,

@@ -12,7 +12,10 @@ use tezos_timing::SerializeStats;
 
 use crate::{
     chunks::ChunkedVec,
-    kv_store::{in_memory::BATCH_CHUNK_CAPACITY, HashId},
+    kv_store::{
+        in_memory::{BoxOrInlined, BATCH_CHUNK_CAPACITY},
+        HashId,
+    },
     serialize::{deserialize_hash_id, ObjectHeader, ObjectTag},
     working_tree::{
         shape::ShapeStrings,
@@ -183,7 +186,7 @@ pub fn serialize_object(
     storage: &Storage,
     strings: &StringInterner,
     stats: &mut SerializeStats,
-    batch: &mut ChunkedVec<(HashId, Box<[u8]>), { BATCH_CHUNK_CAPACITY }>,
+    batch: &mut ChunkedVec<(HashId, BoxOrInlined), { BATCH_CHUNK_CAPACITY }>,
     repository: &mut ContextKeyValueStore,
     _object_offset: Option<AbsoluteOffset>,
 ) -> Result<Option<AbsoluteOffset>, SerializationError> {
@@ -207,7 +210,7 @@ pub fn serialize_object(
 
                 serialize_directory(dir.as_ref(), output, storage, strings, repository, stats)?;
 
-                batch.push((object_hash_id, Box::from(output.as_slice())));
+                batch.push((object_hash_id, BoxOrInlined::from(output.as_slice())));
             }
         }
         Object::Blob(blob_id) => {
@@ -225,7 +228,7 @@ pub fn serialize_object(
 
             stats.add_blob(blob.len());
 
-            batch.push((object_hash_id, Box::from(output.as_slice())));
+            batch.push((object_hash_id, BoxOrInlined::from(output.as_slice())));
         }
         Object::Commit(commit) => {
             let header: [u8; 1] = ObjectHeader::new()
@@ -250,7 +253,7 @@ pub fn serialize_object(
             // It's until the end of the slice
             output.write_all(commit.message.as_bytes())?;
 
-            batch.push((object_hash_id, Box::from(output.as_slice())));
+            batch.push((object_hash_id, BoxOrInlined::from(output.as_slice())));
         }
     }
 
@@ -267,7 +270,7 @@ fn serialize_inode(
     storage: &Storage,
     strings: &StringInterner,
     stats: &mut SerializeStats,
-    batch: &mut ChunkedVec<(HashId, Box<[u8]>), { BATCH_CHUNK_CAPACITY }>,
+    batch: &mut ChunkedVec<(HashId, BoxOrInlined), { BATCH_CHUNK_CAPACITY }>,
     repository: &mut ContextKeyValueStore,
 ) -> Result<(), SerializationError> {
     use SerializationError::*;
@@ -311,7 +314,7 @@ fn serialize_inode(
                 serialize_hash_id(hash_id, output, repository, stats)?;
             }
 
-            batch.push((hash_id, Box::from(output.as_slice())));
+            batch.push((hash_id, BoxOrInlined::from(output.as_slice())));
 
             // Recursively serialize all children
             for (_, thin_pointer_id) in pointers.iter() {
@@ -343,7 +346,7 @@ fn serialize_inode(
             let dir = storage.get_small_dir(dir_id)?;
             serialize_directory(dir.as_ref(), output, storage, strings, repository, stats)?;
 
-            batch.push((hash_id, Box::from(output.as_slice())));
+            batch.push((hash_id, BoxOrInlined::from(output.as_slice())));
         }
     };
 
@@ -971,8 +974,11 @@ mod tests {
 
             let hash_id = HashId::new((index + 1) as u64).unwrap();
 
-            let mut vec = ChunkedVec::<(HashId, Box<[u8]>), BATCH_CHUNK_CAPACITY>::default();
-            vec.push((hash_id, Box::new(ObjectHeader::new().into_bytes())));
+            let mut vec = ChunkedVec::<(HashId, BoxOrInlined), BATCH_CHUNK_CAPACITY>::default();
+            vec.push((
+                hash_id,
+                BoxOrInlined::from(&ObjectHeader::new().into_bytes()[..]),
+            ));
 
             repo.write_batch(vec).unwrap();
 
