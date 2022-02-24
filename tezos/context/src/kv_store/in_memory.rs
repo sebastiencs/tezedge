@@ -57,12 +57,13 @@ pub const BATCH_CHUNK_CAPACITY: usize = 8 * 1024;
 #[derive(Debug)]
 pub struct BoxOrInlined {
     id: NonZeroU8,
-    bytes: [u8; 11],
+    bytes: [u8; 15],
 }
 
 assert_eq_size!([u8; 16], Box<[u8]>);
-assert_eq_size!([u8; 12], BoxOrInlined);
-assert_eq_size!([u8; 12], Option<BoxOrInlined>);
+assert_eq_size!([u8; 16], BoxOrInlined);
+assert_eq_size!([u8; 16], Option<BoxOrInlined>);
+
 
 impl std::ops::Deref for BoxOrInlined {
     type Target = [u8];
@@ -102,10 +103,10 @@ impl BoxOrInlined {
     }
 
     fn from_slice(slice: &[u8]) -> Self {
-        let mut bytes: [u8; 11] = Default::default();
+        let mut bytes: [u8; 15] = Default::default();
         let length = slice.len();
 
-        let id = if length < 12 {
+        let id = if length < 16 {
             assert_eq!(length & 0b11000000, 0);
 
             let id = NonZeroU8::new((0b1 << 6) | length as u8).unwrap();
