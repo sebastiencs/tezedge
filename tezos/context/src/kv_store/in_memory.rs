@@ -18,7 +18,7 @@ use crate::serialize::persistent::AbsoluteOffset;
 
 use crossbeam_channel::Sender;
 use crypto::hash::ContextHash;
-use static_assertions::assert_eq_size;
+
 use tezos_timing::{RepositoryMemoryUsage, SerializeStats};
 
 use crate::{

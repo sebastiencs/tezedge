@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     num::TryFromIntError,
     sync::atomic::{AtomicUsize, Ordering},
     time::Instant,

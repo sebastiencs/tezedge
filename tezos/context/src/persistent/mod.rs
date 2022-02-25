@@ -10,8 +10,6 @@ use tezos_timing::{RepositoryMemoryUsage, SerializeStats};
 
 #[cfg(test)]
 use crate::serialize::persistent::AbsoluteOffset;
-#[cfg(test)]
-use std::sync::Arc;
 
 use crate::{
     initializer::IndexInitializationError,
