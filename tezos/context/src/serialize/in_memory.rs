@@ -756,7 +756,7 @@ impl<'a> Iterator for HashIdIterator<'a> {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashSet, convert::TryFrom, iter::FromIterator};
+    use std::convert::TryFrom;
 
     use tezos_timing::SerializeStats;
 
