@@ -6,10 +6,8 @@
 use std::{
     borrow::Cow,
     collections::{hash_map::DefaultHasher, VecDeque},
-    convert::TryInto,
     hash::Hasher,
     mem::size_of,
-    num::NonZeroU8,
     rc::Rc,
     sync::{atomic::Ordering, Arc, RwLock},
     thread::JoinHandle,
@@ -49,277 +47,17 @@ use crate::{persistent::get_commit_hash, serialize::in_memory};
 
 use tezos_spsc::Consumer;
 
-use super::{persistent::PersistentConfiguration, HashIdError};
+use super::{
+    inline_boxed_slice::InlinedBoxedSlice, persistent::PersistentConfiguration, HashIdError,
+};
 use super::{HashId, VacantObjectHash};
 
 pub const BATCH_CHUNK_CAPACITY: usize = 8 * 1024;
 
-// #[derive(Debug)]
-// pub struct BoxOrInlined {
-//     id: NonZeroU8,
-//     bytes: [u8; 11],
-// }
-
-pub type BoxOrInlined = SuperBox;
-
-// enum SuperBox {
-//     Inlined { bytes: [u8; 15] },
-//     B16 { length: u32, boxed: Box<[u8; 16]> },
-//     B32 { length: u32, boxed: Box<[u8; 32]> },
-//     B48 { length: u32, boxed: Box<[u8; 48]> },
-//     B64 { length: u32, boxed: Box<[u8; 64]> },
-//     B80 { length: u32, boxed: Box<[u8; 80]> },
-//     B96 { length: u32, boxed: Box<[u8; 96]> },
-//     B112 { length: u32, boxed: Box<[u8; 112]> },
-//     B128 { length: u32, boxed: Box<[u8; 128]> },
-//     B160 { length: u32, boxed: Box<[u8; 160]> },
-//     B192 { length: u32, boxed: Box<[u8; 192]> },
-//     B224 { length: u32, boxed: Box<[u8; 224]> },
-//     B256 { length: u32, boxed: Box<[u8; 256]> },
-//     B320 { length: u32, boxed: Box<[u8; 320]> },
-//     B48 { length: u32, boxed: Box<[u8; 48]> },
-//     B48 { length: u32, boxed: Box<[u8; 48]> },
-//     B48 { length: u32, boxed: Box<[u8; 48]> },
-//     B48 { length: u32, boxed: Box<[u8; 48]> },
-//     B48 { length: u32, boxed: Box<[u8; 48]> },
-//     B48 { length: u32, boxed: Box<[u8; 48]> },
-// }
-
-macro_rules! super_box (
-    (
-        $( { $name:tt, $N:expr } ),*
-    ) => (
-        mod super_default {
-            $(pub const $name: [u8; $N] = [0; $N];)*
-        }
-
-        #[derive(Debug)]
-        pub enum SuperBox {
-            Inlined { bytes: [u8; 15] },
-            $($name { length: u32, boxed: Box<[u8; $N]> },)*
-            Huge { boxed: Box<Box<[u8]>> },
-        }
-
-        impl SuperBox {
-            fn from_slice(slice: &[u8]) -> Self {
-                let length = slice.len();
-
-                match length {
-                    x if x < 15 => {
-                        let mut bytes = <[u8; 15]>::default();
-                        bytes[0] = length as u8;
-                        bytes[1..1 + length].copy_from_slice(slice);
-                        Self::Inlined { bytes }
-                    }
-                    $(x if x <= $N => {
-                        let mut boxed = Box::<[u8; $N]>::from(super_default::$name);
-                        boxed[0..length].copy_from_slice(slice);
-                        let length = length as u32;
-                        Self::$name { length, boxed }
-                    })*
-                    _ => {
-                        let boxed = Box::from(slice);
-                        Self::Huge { boxed: Box::new(boxed) }
-                    }
-                }
-            }
-
-            fn as_slice(&self) -> &[u8] {
-                match self {
-                    SuperBox::Inlined { bytes } => {
-                        let length = bytes[0] as usize;
-                        &bytes[1..1 + length]
-                    },
-                    $(SuperBox::$name { length, boxed } => {
-                        &boxed[0..*length as usize]
-                    },)*
-                    SuperBox::Huge { boxed } => &**boxed,
-                }
-            }
-
-        }
-    )
-);
-
-super_box! {
-    { B16, 16 }, { B32, 32 }, { B48, 48 }, { B64, 64 }, { B80, 80 }, { B96, 96 }, { B112, 112 },
-    { B128, 128 }, { B160, 160 }, { B192, 192 }, { B224, 224 }, { B256, 256 }, { B320, 320 },
-    { B384, 384 }, { B448, 448 }, { B512, 512 }, { B640, 640 }, { B768, 768 }, { B896, 896 },
-    { B1024, 1024 }, { B1280, 1280 }, { B1536, 1536 }, { B1792, 1792 }, { B2048, 2048 },
-    { B2560, 2560 }, { B3072, 3072 }, { B3584, 3584 }, { B4096, 4096 }, { B5120, 5120 },
-    { B6144, 6144 }, { B7168, 7168 }, { B8192, 8192 }, { B10240, 10240 }, { B12288, 12288 },
-    { B14336, 14336 }, { B16384, 16384 }, { B20480, 20480 }, { B24576, 24576 }, { B28672, 28672 },
-    { B32768, 32768 }, { B40960, 40960 }, { B49152, 49152 }, { B57344, 57344 }, { B65536, 65536 },
-    { B81920, 81920 }, { B98304, 98304 }, { B114688, 114688 }
-}
-
-impl std::ops::Deref for SuperBox {
-    type Target = [u8];
-
-    fn deref(&self) -> &Self::Target {
-        self.as_slice()
-    }
-}
-
-impl From<&[u8]> for SuperBox {
-    fn from(slice: &[u8]) -> Self {
-        Self::from_slice(slice)
-    }
-}
-
-impl Clone for SuperBox {
-    fn clone(&self) -> Self {
-        Self::from_slice(self.as_slice())
-    }
-}
-
-impl SuperBox {
-    // fn from_slice(slice: &[u8]) -> Self {
-    //     let length = slice.len();
-
-    //     match length {
-    //         x if x < 15 => {
-    //             let mut bytes = <[u8; 15]>::default();
-    //             bytes[0] = length as u8;
-    //             bytes[1..length].copy_from_slice(slice);
-    //             Self::Inlined { bytes }
-    //         }
-    //         x if x <= 16 => {
-    //             let mut boxed = Box::<[u8; 16]>::default();
-    //             boxed[0..length].copy_from_slice(slice);
-    //             let length = length as u32;
-    //             Self::B16 { length, boxed }
-    //         }
-    //         _ => {
-    //             let boxed = Box::from(slice);
-    //             Self::Huge { boxed: Box::new(boxed) }
-    //         }
-    //     }
-    // }
-
-    // fn as_slice(&self) -> &[u8] {
-    //     match self {
-    //         SuperBox::Inlined { bytes } => {
-    //             let length = bytes[0] as usize;
-    //             &bytes[0..length]
-    //         },
-    //         SuperBox::B16 { length, boxed } => {
-    //             &boxed[0..*length as usize]
-    //         },
-    //         SuperBox::Huge { boxed } => &**boxed,
-    //         _ => todo!()
-    //     }
-    // }
-}
-
-assert_eq_size!([u8; 16], Box<[u8]>);
-// assert_eq_size!([u8; 12], BoxOrInlined);
-// assert_eq_size!([u8; 12], Option<BoxOrInlined>);
-
-assert_eq_size!([u8; 16], SuperBox);
-assert_eq_size!([u8; 16], Option<SuperBox>);
-
-// impl std::ops::Deref for BoxOrInlined {
-//     type Target = [u8];
-
-//     fn deref(&self) -> &Self::Target {
-//         self.as_slice()
-//     }
-// }
-
-// impl From<&[u8]> for BoxOrInlined {
-//     fn from(slice: &[u8]) -> Self {
-//         Self::from_slice(slice)
-//     }
-// }
-
-// impl Clone for BoxOrInlined {
-//     fn clone(&self) -> Self {
-//         Self::from_slice(self.as_slice())
-//     }
-// }
-
-// impl Drop for BoxOrInlined {
-//     fn drop(&mut self) {
-//         if !self.is_boxed() {
-//             return;
-//         }
-
-//         let slice = self.as_slice();
-//         let boxed = unsafe { Box::from_raw(slice as *const [u8] as *mut [u8]) };
-//         std::mem::drop(boxed);
-//     }
-// }
-
-// impl BoxOrInlined {
-//     fn is_boxed(&self) -> bool {
-//         self.id.get() >> 6 == 0b11
-//     }
-
-//     fn from_slice(slice: &[u8]) -> Self {
-//         let mut bytes: [u8; 11] = Default::default();
-//         let length = slice.len();
-
-//         let id = if length < 12 {
-//             assert_eq!(length & 0b11000000, 0);
-
-//             let id = NonZeroU8::new((0b1 << 6) | length as u8).unwrap();
-
-//             bytes[0..length].copy_from_slice(slice);
-//             id
-//         } else {
-//             let boxed = Box::<[u8]>::from(slice);
-
-//             let ptr = boxed.as_ptr() as u64;
-//             let length = boxed.len() as u32;
-
-//             let id = NonZeroU8::new(0b11 << 6).unwrap();
-//             bytes[0..7].copy_from_slice(&ptr.to_be_bytes()[1..]);
-//             bytes[7..11].copy_from_slice(&length.to_le_bytes());
-
-//             std::mem::forget(boxed);
-
-//             id
-//         };
-
-//         let res = Self { id, bytes };
-//         assert_eq!(
-//             slice,
-//             res.as_slice(),
-//             "BOXED_OR_INLINED={:?} LENGTH={:?}",
-//             res,
-//             length
-//         );
-
-//         res
-//     }
-
-//     fn as_slice(&self) -> &[u8] {
-//         if !self.is_boxed() {
-//             // inlined
-
-//             let length = self.id.get() & 0x3F;
-//             let length = length as usize;
-
-//             &self.bytes[0..length]
-//         } else {
-//             // boxed
-
-//             let mut ptr: [u8; 8] = Default::default();
-//             ptr[1..].copy_from_slice(&self.bytes[0..7]);
-
-//             let ptr = u64::from_be_bytes(ptr);
-//             let length = u32::from_le_bytes(self.bytes[7..11].try_into().unwrap());
-
-//             unsafe { std::slice::from_raw_parts(ptr as *const u8, length as usize) }
-//         }
-//     }
-// }
-
 #[derive(Debug)]
 pub struct HashValueStore {
     hashes: SharedIndexMap<HashId, Option<Box<ObjectHash>>, OBJECTS_CHUNK_CAPACITY>,
-    values: SharedIndexMap<HashId, Option<BoxOrInlined>, OBJECTS_CHUNK_CAPACITY>,
+    values: SharedIndexMap<HashId, Option<InlinedBoxedSlice>, OBJECTS_CHUNK_CAPACITY>,
     free_ids: Option<Consumer<HashId>>,
     new_ids: ChunkedVec<HashId, NEW_IDS_CHUNK_CAPACITY>,
     values_bytes: usize,
@@ -406,7 +144,7 @@ impl HashValueStore {
     pub(crate) fn insert_value_at(
         &mut self,
         hash_id: HashId,
-        value: BoxOrInlined,
+        value: InlinedBoxedSlice,
     ) -> Result<(), HashIdError> {
         self.values.insert_at(hash_id, value)
     }
@@ -423,7 +161,7 @@ impl HashValueStore {
 
     pub(crate) fn with_value<F, R>(&self, hash_id: HashId, fun: F) -> Result<R, DBError>
     where
-        F: FnOnce(Option<&Option<BoxOrInlined>>) -> R,
+        F: FnOnce(Option<&Option<InlinedBoxedSlice>>) -> R,
     {
         Ok(self.values.with(hash_id, fun)?)
     }
@@ -625,7 +363,7 @@ impl KeyValueStoreBackend for InMemory {
     #[cfg(test)]
     fn synchronize_data(
         &mut self,
-        batch: &[(HashId, BoxOrInlined)],
+        batch: &[(HashId, InlinedBoxedSlice)],
         _output: &[u8],
     ) -> Result<Option<AbsoluteOffset>, DBError> {
         let mut vec = ChunkedVec::<_, BATCH_CHUNK_CAPACITY>::default();
@@ -853,7 +591,7 @@ impl InMemory {
 
     pub(crate) fn with_value<F, R>(&self, hash_id: HashId, fun: F) -> Result<R, DBError>
     where
-        F: FnOnce(Option<&Option<BoxOrInlined>>) -> R,
+        F: FnOnce(Option<&Option<InlinedBoxedSlice>>) -> R,
     {
         Ok(self.hashes.values.with(hash_id, fun)?)
     }
@@ -864,7 +602,7 @@ impl InMemory {
 
     pub fn write_batch(
         &mut self,
-        mut batch: ChunkedVec<(HashId, BoxOrInlined), BATCH_CHUNK_CAPACITY>,
+        mut batch: ChunkedVec<(HashId, InlinedBoxedSlice), BATCH_CHUNK_CAPACITY>,
     ) -> Result<(), DBError> {
         while let Some(chunk) = batch.pop_first_chunk() {
             for (hash_id, value) in chunk.into_iter() {
@@ -963,8 +701,7 @@ mod tests {
         let mut vec = Vec::with_capacity(100);
 
         for i in 0..=255 {
-            println!("I={:?}", i);
-            let boxed = BoxOrInlined::from_slice(vec.as_slice());
+            let boxed = InlinedBoxedSlice::from(vec.as_slice());
             assert_eq!(&*boxed, &vec);
             std::mem::drop(boxed);
 
@@ -974,7 +711,7 @@ mod tests {
         let mut vec = Vec::with_capacity(10_000);
 
         for _ in 0..10_000 {
-            let boxed = BoxOrInlined::from_slice(vec.as_slice());
+            let boxed = InlinedBoxedSlice::from(vec.as_slice());
             assert_eq!(&*boxed, &vec);
             std::mem::drop(boxed);
 
@@ -982,14 +719,6 @@ mod tests {
             vec.push(0xFF);
         }
     }
-
-    // fn _match(s: SuperBox) {
-    //     match s {
-    //         SuperBox::Inlined { bytes } => todo!(),
-    //         SuperBox::B16 { length, boxed } => todo!(),
-    //         SuperBox::Huge { boxed } => todo!(),
-    //     }
-    // }
 
     #[test]
     fn reload_from_disk() {

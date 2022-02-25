@@ -19,9 +19,8 @@ use crate::{
         stats::{CollectorStatistics, CommitStatistics, OnMessageStatistics},
     },
     kv_store::{
-        in_memory::{BoxOrInlined, OBJECTS_CHUNK_CAPACITY},
-        index_map::IndexMap,
-        HashId, HashIdError,
+        in_memory::OBJECTS_CHUNK_CAPACITY, index_map::IndexMap,
+        inline_boxed_slice::InlinedBoxedSlice, HashId, HashIdError,
     },
     serialize::in_memory::iter_hash_ids,
     ObjectHash,
@@ -53,7 +52,7 @@ pub(crate) struct GCThread {
     new_ids_in_commit: usize,
     last_gc_timestamp: Option<Instant>,
 
-    objects_view: SharedIndexMapView<HashId, Option<BoxOrInlined>, OBJECTS_CHUNK_CAPACITY>,
+    objects_view: SharedIndexMapView<HashId, Option<InlinedBoxedSlice>, OBJECTS_CHUNK_CAPACITY>,
     hashes_view: SharedIndexMapView<HashId, Option<Box<ObjectHash>>, OBJECTS_CHUNK_CAPACITY>,
 
     objects_generation: IndexMap<HashId, Option<u8>, 1_000_000>,
@@ -95,7 +94,7 @@ pub enum Command {
         commit_hash_id: HashId,
     },
     NewChunks {
-        objects_chunks: Option<Vec<SharedChunk<Option<BoxOrInlined>, OBJECTS_CHUNK_CAPACITY>>>,
+        objects_chunks: Option<Vec<SharedChunk<Option<InlinedBoxedSlice>, OBJECTS_CHUNK_CAPACITY>>>,
         hashes_chunks: Option<Vec<SharedChunk<Option<Box<ObjectHash>>, OBJECTS_CHUNK_CAPACITY>>>,
     },
     Close,
@@ -105,7 +104,7 @@ impl GCThread {
     pub fn new(
         recv: Receiver<Command>,
         producer: Producer<HashId>,
-        objects_view: SharedIndexMapView<HashId, Option<BoxOrInlined>, OBJECTS_CHUNK_CAPACITY>,
+        objects_view: SharedIndexMapView<HashId, Option<InlinedBoxedSlice>, OBJECTS_CHUNK_CAPACITY>,
         hashes_view: SharedIndexMapView<HashId, Option<Box<ObjectHash>>, OBJECTS_CHUNK_CAPACITY>,
     ) -> Self {
         Self {
@@ -170,7 +169,7 @@ impl GCThread {
 
     fn add_chunks(
         &mut self,
-        objects_chunks: Option<Vec<SharedChunk<Option<BoxOrInlined>, OBJECTS_CHUNK_CAPACITY>>>,
+        objects_chunks: Option<Vec<SharedChunk<Option<InlinedBoxedSlice>, OBJECTS_CHUNK_CAPACITY>>>,
         hashes_chunks: Option<Vec<SharedChunk<Option<Box<ObjectHash>>, OBJECTS_CHUNK_CAPACITY>>>,
     ) {
         if let Some(objects_chunks) = objects_chunks {
