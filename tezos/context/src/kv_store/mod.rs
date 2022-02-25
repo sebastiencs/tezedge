@@ -19,6 +19,7 @@ use self::in_memory::OBJECTS_CHUNK_CAPACITY;
 pub mod hashes;
 pub mod in_memory;
 pub mod index_map;
+pub mod inline_boxed_slice;
 pub mod persistent;
 pub mod readonly_ipc;
 
