@@ -37,6 +37,8 @@ pub const NEW_IDS_CHUNK_CAPACITY: usize = 20_000;
 const MAX_SEND_TO_MAIN_THREAD: usize = 200_000;
 const LIMIT_ON_EMPTY_CHANNEL: usize = 20_000;
 
+const NCOMMITS_BEFORE_COLLECT: usize = 100;
+
 /// Used for statistics
 ///
 /// Number of items in `GCThread::pending`.
@@ -59,6 +61,8 @@ pub(crate) struct GCThread {
     current_generation: u8,
 
     nalives_per_chunk: IndexMap<ChunkIndex, u32, 1_000_000>,
+
+    commits_since_last_run: usize,
 }
 
 assert_eq_size!([u8; 16], Option<Box<[u8]>>);
@@ -119,6 +123,7 @@ impl GCThread {
             nalives_per_chunk: IndexMap::default(),
             new_ids_in_commit: 0,
             last_gc_timestamp: None,
+            commits_since_last_run: 0,
         }
     }
 
@@ -419,6 +424,7 @@ impl GCThread {
     ) -> Result<(), GCError> {
         let now = std::time::Instant::now();
 
+        self.commits_since_last_run += 1;
         self.mark_new_ids(new_ids)?;
 
         if self.debug {
@@ -430,12 +436,13 @@ impl GCThread {
 
         self.new_ids_in_commit = 0;
 
-        if !self.recv.is_empty() {
+        if !self.recv.is_empty() || self.commits_since_last_run < NCOMMITS_BEFORE_COLLECT {
             // There are still messages in the channel,
             // process them all first, before running the garbage collector
             self.send_unused_on_empty_channel();
             return Ok(());
         }
+        self.commits_since_last_run += 1;
 
         self.send_unused()?;
 
