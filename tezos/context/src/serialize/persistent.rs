@@ -13,10 +13,7 @@ use tezos_timing::SerializeStats;
 
 use crate::{
     chunks::ChunkedVec,
-    kv_store::{
-        in_memory::{BoxOrInlined, BATCH_CHUNK_CAPACITY},
-        HashId,
-    },
+    kv_store::{in_memory::BATCH_CHUNK_CAPACITY, inline_boxed_slice::InlinedBoxedSlice, HashId},
     serialize::{deserialize_hash_id, serialize_hash_id, ObjectTag},
     working_tree::{
         shape::ShapeStrings,
@@ -435,7 +432,7 @@ pub fn serialize_object(
     storage: &Storage,
     strings: &StringInterner,
     stats: &mut SerializeStats,
-    _batch: &mut ChunkedVec<(HashId, BoxOrInlined), { BATCH_CHUNK_CAPACITY }>,
+    _batch: &mut ChunkedVec<(HashId, InlinedBoxedSlice), { BATCH_CHUNK_CAPACITY }>,
     repository: &mut ContextKeyValueStore,
     file_offset: Option<AbsoluteOffset>,
 ) -> Result<Option<AbsoluteOffset>, SerializationError> {
