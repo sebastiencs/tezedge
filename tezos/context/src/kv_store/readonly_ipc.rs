@@ -11,8 +11,6 @@ use std::{borrow::Cow, path::Path};
 use super::inline_boxed_slice::InlinedBoxedSlice;
 #[cfg(test)]
 use crate::serialize::persistent::AbsoluteOffset;
-#[cfg(test)]
-use std::sync::Arc;
 
 use crypto::hash::ContextHash;
 use slog::{error, info};

@@ -12,8 +12,6 @@ use std::{
 
 #[cfg(test)]
 use super::inline_boxed_slice::InlinedBoxedSlice;
-#[cfg(test)]
-use std::sync::Arc;
 
 use blake2::{
     digest::{Update, VariableOutput},
