@@ -442,7 +442,7 @@ impl GCThread {
             self.send_unused_on_empty_channel();
             return Ok(());
         }
-        self.commits_since_last_run += 1;
+        self.commits_since_last_run = 0;
 
         self.send_unused()?;
 
@@ -461,11 +461,11 @@ impl GCThread {
             &mut map_length,
         )?;
 
-        println!(
-            "MAP_LENGTH LENGTH={:?} MAP={:#?}",
-            map_length.len(),
-            map_length
-        );
+        // println!(
+        //     "MAP_LENGTH LENGTH={:?} MAP={:#?}",
+        //     map_length.len(),
+        //     map_length
+        // );
 
         let unused = self.take_unused()?;
         let unused_found = unused.len();
