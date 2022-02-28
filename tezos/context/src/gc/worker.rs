@@ -54,6 +54,8 @@ pub(crate) struct GCThread {
     new_ids_in_commit: usize,
     last_gc_timestamp: Option<Instant>,
 
+    last_cycle_position: Option<u64>,
+
     objects_view: SharedIndexMapView<HashId, Option<InlinedBoxedSlice>, OBJECTS_CHUNK_CAPACITY>,
     hashes_view: SharedIndexMapView<HashId, Option<Box<ObjectHash>>, OBJECTS_CHUNK_CAPACITY>,
 
@@ -125,6 +127,7 @@ impl GCThread {
             new_ids_in_commit: 0,
             last_gc_timestamp: None,
             commits_since_last_run: 0,
+            last_cycle_position: None,
         }
     }
 
@@ -361,7 +364,7 @@ impl GCThread {
     fn take_unused(&mut self) -> Result<ChunkedVec<HashId, { UNUSED_CHUNK_CAPACITY }>, GCError> {
         // Mark all objects/hashes at `current_generation - 4` as unused/reusable
 
-        let unused_at = self.current_generation.wrapping_sub(4);
+        let unused_at = self.current_generation.wrapping_sub(3);
 
         let mut unused = ChunkedVec::default();
 
@@ -416,6 +419,12 @@ impl GCThread {
         self.commits_since_last_run += 1;
         self.mark_new_ids(new_ids)?;
 
+        let increment_generation = self
+            .last_cycle_position
+            .map(|pos| pos.wrapping_add(1) == cycle_position)
+            .unwrap_or(true);
+        self.last_cycle_position = Some(cycle_position);
+
         if self.debug {
             let stats = CommitStatistics {
                 new_hash_id: self.new_ids_in_commit,
@@ -424,7 +433,6 @@ impl GCThread {
         }
 
         self.new_ids_in_commit = 0;
-        self.current_generation = (cycle_position & 0xFF) as u8;
 
         if !self.recv.is_empty() || self.commits_since_last_run < NCOMMITS_BEFORE_COLLECT {
             // There are still messages in the channel,
@@ -461,6 +469,10 @@ impl GCThread {
         let unused_found = unused.len();
 
         self.pending.append_chunks(unused);
+
+        if increment_generation {
+            self.current_generation = self.current_generation.wrapping_add(1);
+        };
 
         if self.debug {
             let gc_duration = now.elapsed();
