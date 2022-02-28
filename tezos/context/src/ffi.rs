@@ -279,7 +279,7 @@ ocaml_export! {
     ) -> OCaml<Result<(), String>> {
         let ocaml_index = rt.get(index);
         let index: &TezedgeIndexFFI = ocaml_index.borrow();
-        let mut index = index.0.borrow().clone();
+        let index = index.0.borrow().clone();
         let cycle_position: Option<i64> = cycle_position.to_rust(rt);
         let context_hash: Option<ContextHash> = context_hash.to_rust(rt);
 

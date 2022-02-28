@@ -172,8 +172,6 @@ impl GCThread {
         elog!("GC exited");
     }
 
-    // fn handle_message(&mut self, msg: Result<Command, Rec>)
-
     fn add_chunks(
         &mut self,
         objects_chunks: Option<Vec<SharedChunk<Option<InlinedBoxedSlice>, OBJECTS_CHUNK_CAPACITY>>>,
@@ -222,14 +220,6 @@ impl GCThread {
 
         let send_at = pending.len().saturating_sub(LIMIT_ON_EMPTY_CHANNEL);
 
-        // This is not an error, but if we reach this code, the constants
-        // LIMIT_ON_EMPTY_CHANNEL or/and MAX_SEND_TO_MAIN_THREAD should
-        // probably be changed
-        elog!(
-            "GCThread::free_ids is empty, sending {:?} HashId",
-            pending.len() - send_at
-        );
-
         if let Err(e) = self.free_ids.push_slice(&pending[send_at..]) {
             elog!("GC: Fail to send free ids {:?}", e);
             self.pending.extend_from_slice(&pending);
@@ -246,10 +236,6 @@ impl GCThread {
     /// Returns the number of `HashId` sent
     fn send_unused(&mut self) -> Result<usize, GCError> {
         let sent = self.send_unused_impl()?;
-
-        if sent > 0 {
-            log!("GC_DEBUG SENT={:?}", sent);
-        }
 
         GC_PENDING_HASHIDS.store(self.pending.len(), Ordering::Release);
         Ok(sent)

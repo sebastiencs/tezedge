@@ -11,8 +11,8 @@ use thiserror::Error;
 
 use crypto::hash::{ContextHash, FromBytesError};
 
+use crate::hash::HashingError;
 use crate::persistent::DBError;
-use crate::{hash::HashingError, working_tree::ObjectReference};
 
 /// Print logs on stdout with the prefix `[tezedge.gc]`
 macro_rules! log {
@@ -59,8 +59,8 @@ impl<T: NotGarbageCollected> GarbageCollector for T {
 
     fn block_applied(
         &mut self,
-        cycle_position: u64,
-        context_hash: &ContextHash,
+        _cycle_position: u64,
+        _context_hash: &ContextHash,
     ) -> Result<(), GarbageCollectionError> {
         Ok(())
     }
