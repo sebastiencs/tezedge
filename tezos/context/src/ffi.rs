@@ -283,15 +283,17 @@ ocaml_export! {
         let cycle_position: Option<i64> = cycle_position.to_rust(rt);
         let context_hash: Option<ContextHash> = context_hash.to_rust(rt);
 
-        // We call `IndexApi::cycle_started` only when `context_hash` is `Some(_)`:
+        // We call `IndexApi::block_applied` only when `context_hash` is `Some(_)`:
         // For a single commit, `tezedge_index_block_applied` is called twice from OCaml
         // Once before the commit, and one more time after the commit.
         // Before the commit, it is called with a `None` `context_hash`, and after
         // the commit, it is called with a `Some(_)` `context_hash`
         let result = match (cycle_position, context_hash) {
-            (Some(0), Some(_)) => index
-                .cycle_started()
-                .map_err(|err| format!("BlockApplied->CycleStarted: {:?}", err)),
+            (Some(cycle_position), Some(ref context_hash)) => {
+                let cycle_position = cycle_position as u64;
+                index.block_applied(cycle_position, context_hash)
+                     .map_err(|err| format!("BlockApplied: {:?}", err))
+            },
             _ => Ok(())
         };
 

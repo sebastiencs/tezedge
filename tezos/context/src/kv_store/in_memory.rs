@@ -193,11 +193,22 @@ impl GarbageCollector for InMemory {
 
     fn block_applied(
         &mut self,
-        // referenced_older_objects: ChunkedVec<HashId>,
+        cycle_position: u64,
+        context_hash: &ContextHash,
     ) -> Result<(), GarbageCollectionError> {
-        panic!()
-        // self.block_applied(referenced_older_objects);
-        // Ok(())
+        let context_hash_id = match self
+            .get_context_hash(context_hash)?
+            .and_then(|c| c.hash_id_opt())
+        {
+            Some(context_hash_id) => context_hash_id,
+            None => {
+                return Err(GarbageCollectionError::ContextHashNotFound {
+                    context_hash: context_hash.clone(),
+                })
+            }
+        };
+        self.block_applied(cycle_position, context_hash_id);
+        Ok(())
     }
 }
 
@@ -556,9 +567,6 @@ impl InMemory {
 
         self.put_context_hash(commit_ref)?;
 
-        let commit_hash_id = commit_ref.hash_id();
-        self.block_applied(commit_hash_id);
-
         let commit_hash = get_commit_hash(commit_ref, self).map_err(Box::new)?;
         Ok((commit_hash, serialize_stats))
     }
@@ -621,7 +629,7 @@ impl InMemory {
         self.context_hashes_cycles.push_back(Default::default());
     }
 
-    pub fn block_applied(&mut self, commit_hash_id: HashId) {
+    pub fn block_applied(&mut self, cycle_position: u64, commit_hash_id: HashId) {
         let sender = match self.sender.as_ref() {
             Some(sender) => sender,
             None => return,
@@ -632,6 +640,7 @@ impl InMemory {
         if let Err(e) = sender.send(Command::Commit {
             new_ids,
             commit_hash_id,
+            cycle_position,
         }) {
             eprintln!("Fail to send Command::MarkReused to GC worker: {:?}", e);
         }

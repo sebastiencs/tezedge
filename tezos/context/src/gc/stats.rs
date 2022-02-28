@@ -12,10 +12,12 @@ impl std::fmt::Debug for Command {
             Self::Commit {
                 new_ids,
                 commit_hash_id,
+                cycle_position,
             } => f
                 .debug_struct("Commit   ")
                 .field("new_ids", &new_ids.len())
                 .field("commit", commit_hash_id)
+                .field("cycle_position", cycle_position)
                 .finish(),
             Self::NewChunks {
                 objects_chunks,

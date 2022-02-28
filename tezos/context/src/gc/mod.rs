@@ -9,10 +9,10 @@ use std::sync::PoisonError;
 use blake2::digest::InvalidOutputSize;
 use thiserror::Error;
 
-use crypto::hash::FromBytesError;
+use crypto::hash::{ContextHash, FromBytesError};
 
-use crate::hash::HashingError;
 use crate::persistent::DBError;
+use crate::{hash::HashingError, working_tree::ObjectReference};
 
 /// Print logs on stdout with the prefix `[tezedge.gc]`
 macro_rules! log {
@@ -45,7 +45,8 @@ pub trait GarbageCollector {
 
     fn block_applied(
         &mut self,
-        // referenced_older_objects: ChunkedVec<HashId>,
+        cycle_position: u64,
+        context_hash: &ContextHash,
     ) -> Result<(), GarbageCollectionError>;
 }
 
@@ -58,7 +59,8 @@ impl<T: NotGarbageCollected> GarbageCollector for T {
 
     fn block_applied(
         &mut self,
-        // _referenced_older_objects: ChunkedVec<HashId>,
+        cycle_position: u64,
+        context_hash: &ContextHash,
     ) -> Result<(), GarbageCollectionError> {
         Ok(())
     }
@@ -90,6 +92,8 @@ pub enum GarbageCollectionError {
     InvalidOutputSize,
     #[error("Expected value instead of `None` for {0}")]
     ValueExpected(&'static str),
+    #[error("ContextHash not found: {context_hash}")]
+    ContextHashNotFound { context_hash: ContextHash },
 }
 
 impl From<DBError> for GarbageCollectionError {
