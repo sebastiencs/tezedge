@@ -96,6 +96,7 @@ pub enum Command {
     Commit {
         new_ids: ChunkedVec<HashId, NEW_IDS_CHUNK_CAPACITY>,
         commit_hash_id: HashId,
+        cycle_position: u64,
     },
     NewChunks {
         objects_chunks: Option<Vec<SharedChunk<Option<InlinedBoxedSlice>, OBJECTS_CHUNK_CAPACITY>>>,
@@ -152,8 +153,9 @@ impl GCThread {
                 Ok(Command::Commit {
                     new_ids,
                     commit_hash_id,
+                    cycle_position,
                 }) => {
-                    if let Err(e) = self.handle_commit(new_ids, commit_hash_id) {
+                    if let Err(e) = self.handle_commit(new_ids, cycle_position, commit_hash_id) {
                         elog!("handle_commit failed: {:?}", e);
                     }
                 }
@@ -371,14 +373,14 @@ impl GCThread {
     }
 
     fn take_unused(&mut self) -> Result<ChunkedVec<HashId, { UNUSED_CHUNK_CAPACITY }>, GCError> {
-        // Mark all objects/hashes at `current_generation - 3` as unused/reusable
+        // Mark all objects/hashes at `current_generation - 4` as unused/reusable
 
-        let unused_at = self.current_generation.wrapping_sub(3);
+        let unused_at = self.current_generation.wrapping_sub(4);
 
         let mut unused = ChunkedVec::default();
 
-        for (hash_id, hash_id_counter) in self.objects_generation.iter_with_keys() {
-            if !matches!(hash_id_counter, Some(counter) if *counter == unused_at) {
+        for (hash_id, generation) in self.objects_generation.iter_with_keys() {
+            if !matches!(generation, Some(generation) if *generation == unused_at) {
                 continue;
             }
 
@@ -420,6 +422,7 @@ impl GCThread {
     fn handle_commit(
         &mut self,
         new_ids: ChunkedVec<HashId, NEW_IDS_CHUNK_CAPACITY>,
+        cycle_position: u64,
         commit_hash_id: HashId,
     ) -> Result<(), GCError> {
         let now = std::time::Instant::now();
@@ -435,6 +438,7 @@ impl GCThread {
         }
 
         self.new_ids_in_commit = 0;
+        self.current_generation = (cycle_position & 0xFF) as u8;
 
         if !self.recv.is_empty() || self.commits_since_last_run < NCOMMITS_BEFORE_COLLECT {
             // There are still messages in the channel,
@@ -471,7 +475,6 @@ impl GCThread {
         let unused_found = unused.len();
 
         self.pending.append_chunks(unused);
-        self.current_generation = self.current_generation.wrapping_add(1);
 
         if self.debug {
             let gc_duration = now.elapsed();
