@@ -362,7 +362,7 @@ impl GCThread {
     }
 
     fn take_unused(&mut self) -> Result<ChunkedVec<HashId, { UNUSED_CHUNK_CAPACITY }>, GCError> {
-        // Mark all objects/hashes at `current_generation - 4` as unused/reusable
+        // Mark all objects/hashes at `current_generation - 3` as unused/reusable
 
         let unused_at = self.current_generation.wrapping_sub(3);
 
@@ -503,5 +503,58 @@ impl GCThread {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::chunks::SharedIndexMap;
+
+    use super::*;
+
+    #[test]
+    fn cycle_generation() {
+        // Make sure that `GCThread::current_generation` is incremented on a new cycle position
+        let mut objects = SharedIndexMap::new();
+        let mut hashes = SharedIndexMap::new();
+
+        objects
+            .insert_at(HashId::new(10).unwrap(), InlinedBoxedSlice::from(&[][..]))
+            .unwrap();
+
+        let (sender, recv) = crossbeam_channel::unbounded();
+        let (producer, consumer) = tezos_spsc::bounded(2_000_000);
+        let objects_view = objects.get_view();
+        let hashes_view = hashes.get_view();
+
+        let mut gc = GCThread::new(recv, producer, objects_view, hashes_view);
+        gc.debug = true;
+        gc.commits_since_last_run = NCOMMITS_BEFORE_COLLECT + 1;
+
+        gc.add_chunks(objects.clone_new_chunks(), None);
+
+        let before = gc.current_generation;
+        gc.handle_commit(ChunkedVec::new(), 10, HashId::new(10).unwrap());
+        assert_eq!(gc.current_generation, before + 1);
+
+        gc.commits_since_last_run = NCOMMITS_BEFORE_COLLECT + 1;
+
+        // Different commits at the same `cycle_position`
+        gc.handle_commit(ChunkedVec::new(), 10, HashId::new(10).unwrap());
+        gc.commits_since_last_run = NCOMMITS_BEFORE_COLLECT + 1;
+        gc.handle_commit(ChunkedVec::new(), 10, HashId::new(10).unwrap());
+        assert_eq!(gc.current_generation, before + 1);
+
+        gc.commits_since_last_run = NCOMMITS_BEFORE_COLLECT + 1;
+
+        // New `cycle_position`
+        gc.handle_commit(ChunkedVec::new(), 11, HashId::new(10).unwrap());
+        assert_eq!(gc.current_generation, before + 2);
+        // Same `cycle_position`
+        gc.commits_since_last_run = NCOMMITS_BEFORE_COLLECT + 1;
+        gc.handle_commit(ChunkedVec::new(), 11, HashId::new(10).unwrap());
+        gc.commits_since_last_run = NCOMMITS_BEFORE_COLLECT + 1;
+        gc.handle_commit(ChunkedVec::new(), 11, HashId::new(10).unwrap());
+        assert_eq!(gc.current_generation, before + 2);
     }
 }
