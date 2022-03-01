@@ -95,7 +95,7 @@ pub enum Command {
     MarkNewIds {
         new_ids: ChunkedVec<HashId, NEW_IDS_CHUNK_CAPACITY>,
     },
-    Commit {
+    BlockApplied {
         new_ids: ChunkedVec<HashId, NEW_IDS_CHUNK_CAPACITY>,
         commit_hash_id: HashId,
         cycle_position: u64,
@@ -153,7 +153,7 @@ impl GCThread {
                     }
                     self.send_unused_on_empty_channel();
                 }
-                Ok(Command::Commit {
+                Ok(Command::BlockApplied {
                     new_ids,
                     commit_hash_id,
                     cycle_position,

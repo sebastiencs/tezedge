@@ -98,6 +98,9 @@ impl<T, const CHUNK_CAPACITY: usize> SharedChunk<Option<T>, CHUNK_CAPACITY> {
 
         inner.alive_counter = inner.alive_counter.checked_sub(1).unwrap();
 
+        // If the chunk is empty, deallocate it
+        // Do not deallocate if we are the last chunk, this will render
+        // `SharedChunkedVec::nelems` invalid
         if inner.alive_counter == 0 && !is_last_chunk {
             inner.inner = Vec::new();
             return (Some(old), true);
@@ -106,20 +109,20 @@ impl<T, const CHUNK_CAPACITY: usize> SharedChunk<Option<T>, CHUNK_CAPACITY> {
         (Some(old), false)
     }
 
-    fn insert_alive_at(&self, index: usize, value: Option<T>, chunk_capacity: usize) {
+    fn insert_alive_at(&self, index: usize, value: Option<T>) {
         let mut inner = self.inner.write();
 
         if inner.capacity() == 0 {
             assert_eq!(inner.alive_counter, 0);
-            inner.inner = Vec::with_capacity(chunk_capacity);
-            inner.resize_with(chunk_capacity, Default::default);
+            inner.inner = Vec::with_capacity(CHUNK_CAPACITY);
+            inner.resize_with(CHUNK_CAPACITY, Default::default);
         }
 
         if std::mem::replace(&mut inner[index], value).is_none() {
             inner.alive_counter += 1;
         }
 
-        assert!(inner.alive_counter as usize <= chunk_capacity);
+        assert!(inner.alive_counter as usize <= CHUNK_CAPACITY);
     }
 }
 
@@ -271,7 +274,7 @@ impl<T, const CHUNK_CAPACITY: usize> SharedChunkedVec<Option<T>, CHUNK_CAPACITY>
 
     fn insert_at(&self, index: usize, value: Option<T>) {
         let (list_index, chunk_index) = self.get_indexes_at(index);
-        self.list_of_chunks[list_index].insert_alive_at(chunk_index, value, CHUNK_CAPACITY);
+        self.list_of_chunks[list_index].insert_alive_at(chunk_index, value);
     }
 }
 
