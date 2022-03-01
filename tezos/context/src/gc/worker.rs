@@ -101,7 +101,7 @@ pub(crate) struct GCThread {
     objects_generation: IndexMap<HashId, Option<u8>, 1_000_000>,
     /// Current generation of the garbage collector
     ///
-    /// This is incremented (and wrapped) _at most_ every time the block level
+    /// This is incremented (wrapping around) _at most_ every time the block level
     /// is incremented.
     ///
     /// Note that a block application does not necessarily increment `current_generation`
