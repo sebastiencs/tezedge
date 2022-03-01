@@ -220,7 +220,7 @@ pub trait IndexApi<T: ShellContextApi + ProtocolContextApi> {
     // called after a block is applied
     fn block_applied(
         &self,
-        cycle_position: u64,
+        block_level: u32,
         context_hash: &ContextHash,
     ) -> Result<(), ContextError>;
     // called when a new cycle starts

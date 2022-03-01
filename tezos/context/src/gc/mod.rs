@@ -45,7 +45,7 @@ pub trait GarbageCollector {
 
     fn block_applied(
         &mut self,
-        cycle_position: u64,
+        block_level: u32,
         context_hash: &ContextHash,
     ) -> Result<(), GarbageCollectionError>;
 }
@@ -59,7 +59,7 @@ impl<T: NotGarbageCollected> GarbageCollector for T {
 
     fn block_applied(
         &mut self,
-        _cycle_position: u64,
+        _block_level: u32,
         _context_hash: &ContextHash,
     ) -> Result<(), GarbageCollectionError> {
         Ok(())

@@ -867,13 +867,13 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
 
     fn block_applied(
         &self,
-        cycle_position: u64,
+        block_level: u32,
         context_hash: &ContextHash,
     ) -> Result<(), ContextError> {
         Ok(self
             .repository
             .write()?
-            .block_applied(cycle_position, context_hash)?)
+            .block_applied(block_level, context_hash)?)
     }
 
     fn cycle_started(&mut self) -> Result<(), ContextError> {

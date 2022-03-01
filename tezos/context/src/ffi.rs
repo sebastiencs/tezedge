@@ -275,12 +275,12 @@ ocaml_export! {
         rt,
         index: OCamlRef<DynBox<TezedgeIndexFFI>>,
         context_hash: OCamlRef<Option<OCamlContextHash>>,
-        cycle_position: OCamlRef<Option<OCamlInt>>,
+        extra_data: OCamlRef<(OCamlInt32, Option<OCamlInt>)>,
     ) -> OCaml<Result<(), String>> {
         let ocaml_index = rt.get(index);
         let index: &TezedgeIndexFFI = ocaml_index.borrow();
         let index = index.0.borrow().clone();
-        let cycle_position: Option<i64> = cycle_position.to_rust(rt);
+        let (block_level, cycle_position): (i32, Option<i64>) = extra_data.to_rust(rt);
         let context_hash: Option<ContextHash> = context_hash.to_rust(rt);
 
         // We call `IndexApi::block_applied` only when `context_hash` is `Some(_)`:
@@ -288,10 +288,10 @@ ocaml_export! {
         // Once before the commit, and one more time after the commit.
         // Before the commit, it is called with a `None` `context_hash`, and after
         // the commit, it is called with a `Some(_)` `context_hash`
-        let result = match (cycle_position, context_hash) {
-            (Some(cycle_position), Some(ref context_hash)) => {
-                let cycle_position = cycle_position as u64;
-                index.block_applied(cycle_position, context_hash)
+        let result = match context_hash {
+            Some(ref context_hash) => {
+                let block_level = block_level as u32;
+                index.block_applied(block_level, context_hash)
                      .map_err(|err| format!("BlockApplied: {:?}", err))
             },
             _ => Ok(())
