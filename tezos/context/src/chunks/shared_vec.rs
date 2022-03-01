@@ -63,6 +63,7 @@ impl<T, const CHUNK_CAPACITY: usize> VecAliveCounter<Option<T>, CHUNK_CAPACITY> 
 impl<T, const CHUNK_CAPACITY: usize> VecAliveCounter<T, CHUNK_CAPACITY> {
     fn deallocate(&mut self) {
         self.inner = None;
+        self.length = 0;
     }
 
     fn is_deallocated(&self) -> bool {
