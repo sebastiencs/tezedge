@@ -69,7 +69,6 @@ impl<T, const CHUNK_CAPACITY: usize> SharedChunk<T, CHUNK_CAPACITY> {
     }
 
     fn len(&self) -> usize {
-        // TODO: Should we optimize this ?
         self.inner.read().len()
     }
 }
@@ -99,7 +98,7 @@ impl<T, const CHUNK_CAPACITY: usize> SharedChunk<Option<T>, CHUNK_CAPACITY> {
         inner.alive_counter = inner.alive_counter.checked_sub(1).unwrap();
 
         // If the chunk is empty, deallocate it
-        // Do not deallocate if we are the last chunk, this will render
+        // Do not deallocate if we are the last chunk, this would render
         // `SharedChunkedVec::nelems` invalid
         if inner.alive_counter == 0 && !is_last_chunk {
             inner.inner = Vec::new();
@@ -115,7 +114,7 @@ impl<T, const CHUNK_CAPACITY: usize> SharedChunk<Option<T>, CHUNK_CAPACITY> {
         if inner.capacity() == 0 {
             assert_eq!(inner.alive_counter, 0);
             inner.inner = Vec::with_capacity(CHUNK_CAPACITY);
-            inner.resize_with(CHUNK_CAPACITY, Default::default);
+            inner.resize_with(CHUNK_CAPACITY, Option::default);
         }
 
         if std::mem::replace(&mut inner[index], value).is_none() {
@@ -131,7 +130,8 @@ pub struct SharedChunkedVec<T, const CHUNK_CAPACITY: usize> {
     pub list_of_chunks: Vec<SharedChunk<T, CHUNK_CAPACITY>>,
     /// Number of elements in the chunks
     nelems: usize,
-
+    /// Index in `Self::list_of_chunks` that was synchronized
+    /// with `Self::clone_new_chunks`
     synced_at: usize,
 }
 

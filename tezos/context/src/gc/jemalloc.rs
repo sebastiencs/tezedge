@@ -63,6 +63,7 @@ fn debug_jemalloc_impl() -> tikv_jemalloc_ctl::Result<JeMallocStatistics> {
     })
 }
 
+#[cfg(not(target_env = "msvc"))]
 pub fn debug_jemalloc() {
     let stats = match debug_jemalloc_impl() {
         Ok(stats) => stats,
@@ -74,3 +75,6 @@ pub fn debug_jemalloc() {
 
     log!("{:?}", stats)
 }
+
+#[cfg(target_env = "msvc")]
+pub fn debug_jemalloc() {}

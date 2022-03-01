@@ -30,14 +30,25 @@ use tezos_spsc::Producer;
 
 pub(crate) const PRESERVE_CYCLE_COUNT: usize = 2;
 
+// Some chunks capacity
 const PENDING_CHUNK_CAPACITY: usize = 100_000;
 const UNUSED_CHUNK_CAPACITY: usize = 20_000;
 pub const NEW_IDS_CHUNK_CAPACITY: usize = 20_000;
 
+/// Maximum number of `HashId` we send to the main thread at once
 const MAX_SEND_TO_MAIN_THREAD: usize = 200_000;
+
+/// Maximum number of `HashId` we send to the main thread when
+/// the queue was empty
 const LIMIT_ON_EMPTY_CHANNEL: usize = 20_000;
 
-const NCOMMITS_BEFORE_COLLECT: usize = 100;
+/// Minimum number of block applieds before we run the
+/// next garbage collection
+const NAPPLIED_BEFORE_COLLECT: usize = 100;
+
+/// Number of block level to keep, before objects/hashes
+/// are garbage collected
+const PRESERVE_BLOCK_LEVEL: u8 = 2;
 
 /// Used for statistics
 ///
@@ -47,24 +58,70 @@ pub(crate) static GC_PENDING_HASHIDS: AtomicUsize = AtomicUsize::new(0);
 type ChunkIndex = u32;
 
 pub(crate) struct GCThread {
+    /// Queue of `HashId` the main thread can reuse
     free_ids: Producer<HashId>,
+    /// Channel to receive `Command` from the main thead
     recv: Receiver<Command>,
+
+    /// List of `HashId` unused and ready to be send to the main thread
+    /// for reuse
     pending: ChunkedVec<HashId, PENDING_CHUNK_CAPACITY>,
+    /// Debug mode, can be set with the environment variable
+    /// `TEZEDGE_GC_DEBUG`
     debug: bool,
+    /// Number of `HashId` used in this block
+    ///
+    /// Used for logging
     new_ids_in_commit: usize,
+    /// Timestamp of the last garbage collection
+    ///
+    /// Used for logging
     last_gc_timestamp: Option<Instant>,
 
+    /// The cycle position of the last block applied
+    ///
+    /// Used to increment, or not, `Self::current_generation`
     last_cycle_position: Option<u64>,
 
+    /// View on `InMemory::objects`
+    ///
+    /// Objects are read and deallocated from this field
     objects_view: SharedIndexMapView<HashId, Option<InlinedBoxedSlice>, OBJECTS_CHUNK_CAPACITY>,
+    /// View on `InMemory::hashes`
+    ///
+    /// Hashes are deallocated from this field
     hashes_view: SharedIndexMapView<HashId, Option<Box<ObjectHash>>, OBJECTS_CHUNK_CAPACITY>,
 
+    /// The generation of each `HashId` (and their objects/hashes)
+    ///
+    /// When a `HashId` is used in a block, its generation is set
+    /// to `Self::current_generation`.
+    ///
+    /// Used to know when a `HashId` can be reused
     objects_generation: IndexMap<HashId, Option<u8>, 1_000_000>,
+    /// Current generation of the garbage collector
+    ///
+    /// This is incremented (and wrapped) _at most_ every time the block level
+    /// is incremented.
+    ///
+    /// Note that a block application does not necessarily increment `current_generation`
+    /// More than 1 consecutive blocks may have the same `current_generation`, it might
+    /// occurs in 2 cases:
+    /// - A fork is created, in that case the block level is not incremented
+    /// - The garbage collector is late, the main thread applied some blocks while
+    ///   the garbage collection was running
     current_generation: u8,
 
+    /// Keep track of how many objects/hashes are alive per chunk
+    ///
+    /// Used to prioritize non-dead chunks when sending re-usable `HashId`
+    /// to the main thread
     nalives_per_chunk: IndexMap<ChunkIndex, u32, 1_000_000>,
-
-    commits_since_last_run: usize,
+    /// Number of block applied since the last garbage collection.
+    ///
+    /// This is used to know when we can run the gc again, we run
+    /// it every `NCOMMITS_BEFORE_COLLECT`
+    napplieds_since_last_run: usize,
 }
 
 assert_eq_size!([u8; 16], Option<Box<[u8]>>);
@@ -126,7 +183,7 @@ impl GCThread {
             nalives_per_chunk: IndexMap::default(),
             new_ids_in_commit: 0,
             last_gc_timestamp: None,
-            commits_since_last_run: 0,
+            napplieds_since_last_run: 0,
             last_cycle_position: None,
         }
     }
@@ -180,6 +237,8 @@ impl GCThread {
         objects_chunks: Option<Vec<SharedChunk<Option<InlinedBoxedSlice>, OBJECTS_CHUNK_CAPACITY>>>,
         hashes_chunks: Option<Vec<SharedChunk<Option<Box<ObjectHash>>, OBJECTS_CHUNK_CAPACITY>>>,
     ) {
+        // `objects_chunks` and `hashes_chunks` are sent from the main thread
+        // we append them to our `Self::objects_view` and `Self::hashes_view`
         if let Some(objects_chunks) = objects_chunks {
             self.objects_view.append_chunks(objects_chunks);
         };
@@ -244,6 +303,8 @@ impl GCThread {
         Ok(sent)
     }
 
+    /// Return `true` when the `HashId` refers to a dead chunk (the chunk was
+    /// deallocated)
     fn is_in_dead_chunk(&self, hash_id: HashId) -> Result<bool, GCError> {
         let chunk_index = self.hashes_view.chunk_index_of(hash_id)? as u32;
         let is_chunk_dead = self
@@ -257,6 +318,7 @@ impl GCThread {
 
     fn send_unused_impl(&mut self) -> Result<usize, GCError> {
         if self.free_ids.len() > MAX_SEND_TO_MAIN_THREAD {
+            // The queue is already filled enough, do not send any `HashId`
             return Ok(0);
         }
 
@@ -271,6 +333,11 @@ impl GCThread {
         let mut to_send = Vec::<HashId>::with_capacity(nto_send);
         let mut nchunk_pending = self.pending.nchunks();
 
+        // Iterate a first time on `Self::pending` and send `HashId` that are in
+        // a non-dead chunk.
+        // If after the first iteration, we didn't send enough `HashId` (`nto_send`),
+        // we iterate a second time on `Self::pending` and send `HashId` that
+        // are in a dead chunk too
         'outer: while let Some(chunk) = self.pending.pop_first_chunk() {
             for hash_id in chunk {
                 if nchunk_pending > 0 && self.is_in_dead_chunk(hash_id)? {
@@ -304,7 +371,7 @@ impl GCThread {
     fn traverse_and_mark_tree(
         &mut self,
         hash_id: HashId,
-        counter: u8,
+        current_generation: u8,
         nobjects: &mut usize,
         depth: usize,
         max_depth: &mut usize,
@@ -314,6 +381,12 @@ impl GCThread {
         *nobjects += 1;
         *max_depth = depth.max(*max_depth);
 
+        // Store the `HashId` of the children in this array, we avoid
+        // allocating a `Vec`
+        // The maximum depth of recursion is currently `16`, so a stack
+        // overflow will not occurs.
+        // Note: We could create a container that allocate a `Vec` when
+        // some `depth` is reached
         let mut hash_ids = [None::<HashId>; 256];
 
         self.objects_view.with(hash_id, |object_bytes| {
@@ -330,6 +403,7 @@ impl GCThread {
             let e = map_length.entry(object_bytes.len()).or_default();
             *e += 1;
 
+            // Store the `HashId` of all the children in `hash_ids`
             for (index, hash_id) in iter_hash_ids(object_bytes).enumerate() {
                 hash_ids[index] = Some(hash_id);
             }
@@ -338,10 +412,12 @@ impl GCThread {
         })??;
 
         {
+            // Update the generation of the HashId (object/hash)
             let value_counter = self.objects_generation.entry(hash_id)?;
-            *value_counter = Some(counter);
+            *value_counter = Some(current_generation);
         }
 
+        // Recursively update generation of all the children
         for hash_id in hash_ids {
             let hash_id = match hash_id {
                 Some(hash_id) => hash_id,
@@ -349,7 +425,7 @@ impl GCThread {
             };
             self.traverse_and_mark_tree(
                 hash_id,
-                counter,
+                current_generation,
                 nobjects,
                 depth + 1,
                 max_depth,
@@ -362,12 +438,15 @@ impl GCThread {
     }
 
     fn take_unused(&mut self) -> Result<ChunkedVec<HashId, { UNUSED_CHUNK_CAPACITY }>, GCError> {
-        // Mark all objects/hashes at `current_generation - 3` as unused/reusable
+        // Mark all objects/hashes at `current_generation - (PRESERVE_BLOCK_LEVEL + 1)` as unused/reusable
 
-        let unused_at = self.current_generation.wrapping_sub(3);
+        let unused_at = self
+            .current_generation
+            .wrapping_sub(PRESERVE_BLOCK_LEVEL + 1);
 
         let mut unused = ChunkedVec::default();
 
+        // Loop on all objects ever created, and push the unused ones in `unused`
         for (hash_id, generation) in self.objects_generation.iter_with_keys() {
             if !matches!(generation, Some(generation) if *generation == unused_at) {
                 continue;
@@ -376,12 +455,19 @@ impl GCThread {
             unused.push(hash_id);
         }
 
+        // Deallocate all unused hashes/objects
         for hash_id in unused.iter().copied() {
+            // `clear()` will deallocate the single hash/object.
+            // If the hash/object was the last alive in the chunk, the chunk
+            // will be deallocated
+
             let (_, _is_obj_dealloc) = self.objects_view.clear(hash_id)?;
             let (_, _is_hash_dealloc) = self.hashes_view.clear(hash_id)?;
 
+            // Remove the generation of the HashId
             self.objects_generation.insert_at(hash_id, None)?;
 
+            // Update `Self::nalives_per_chunks`
             let chunk_index = self.hashes_view.chunk_index_of(hash_id)? as u32;
             let nalive = self.nalives_per_chunk.entry(chunk_index)?;
             *nalive = nalive.checked_sub(1).ok_or(GCError::InvalidAliveState)?;
@@ -397,9 +483,11 @@ impl GCThread {
         self.new_ids_in_commit += new_ids.len();
 
         for hash_id in new_ids.iter().copied() {
+            // A `HashId` is used in the current block, update its generation
             self.objects_generation
                 .insert_at(hash_id, Some(self.current_generation))?;
 
+            // Update `Self::nalives_per_chunks`
             let chunk_index = self.hashes_view.chunk_index_of(hash_id)? as u32;
             let nalive = self.nalives_per_chunk.entry(chunk_index)?;
             *nalive += 1;
@@ -416,9 +504,11 @@ impl GCThread {
     ) -> Result<(), GCError> {
         let now = std::time::Instant::now();
 
-        self.commits_since_last_run += 1;
+        self.napplieds_since_last_run += 1;
         self.mark_new_ids(new_ids)?;
 
+        // Increment the current generation when the block level has been
+        // incremented
         let increment_generation = self
             .last_cycle_position
             .map(|pos| pos.wrapping_add(1) == cycle_position)
@@ -432,16 +522,24 @@ impl GCThread {
             log!("{:?}", stats);
         }
 
+        // Reset `Self::new_ids_in_commit`
         self.new_ids_in_commit = 0;
 
-        if !self.recv.is_empty() || self.commits_since_last_run < NCOMMITS_BEFORE_COLLECT {
-            // There are still messages in the channel,
-            // process them all first, before running the garbage collector
+        if !self.recv.is_empty() || self.napplieds_since_last_run < NAPPLIED_BEFORE_COLLECT {
+            // Do not run the the garbage collection now.
+            //
+            // We enter this branch in 2 cases:
+            // - There are still `Command` to process in the channel
+            //   This occurs when the gc is late: the main thread applied blocks while
+            //   the garbage collection was running
+            // - We have to wait to process `NAPPLIED_BEFORE_COLLECT` before running
+            //   the garbage collection
+
             self.send_unused_on_empty_channel();
             return Ok(());
         }
-        self.commits_since_last_run = 0;
 
+        self.napplieds_since_last_run = 0;
         self.send_unused()?;
 
         let mut map_length = BTreeMap::<usize, usize>::default();
@@ -529,7 +627,7 @@ mod tests {
 
         let mut gc = GCThread::new(recv, producer, objects_view, hashes_view);
         gc.debug = true;
-        gc.commits_since_last_run = NCOMMITS_BEFORE_COLLECT + 1;
+        gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
 
         gc.add_chunks(objects.clone_new_chunks(), None);
 
@@ -537,23 +635,23 @@ mod tests {
         gc.handle_commit(ChunkedVec::new(), 10, HashId::new(10).unwrap());
         assert_eq!(gc.current_generation, before + 1);
 
-        gc.commits_since_last_run = NCOMMITS_BEFORE_COLLECT + 1;
+        gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
 
         // Different commits at the same `cycle_position`
         gc.handle_commit(ChunkedVec::new(), 10, HashId::new(10).unwrap());
-        gc.commits_since_last_run = NCOMMITS_BEFORE_COLLECT + 1;
+        gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
         gc.handle_commit(ChunkedVec::new(), 10, HashId::new(10).unwrap());
         assert_eq!(gc.current_generation, before + 1);
 
-        gc.commits_since_last_run = NCOMMITS_BEFORE_COLLECT + 1;
+        gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
 
         // New `cycle_position`
         gc.handle_commit(ChunkedVec::new(), 11, HashId::new(10).unwrap());
         assert_eq!(gc.current_generation, before + 2);
         // Same `cycle_position`
-        gc.commits_since_last_run = NCOMMITS_BEFORE_COLLECT + 1;
+        gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
         gc.handle_commit(ChunkedVec::new(), 11, HashId::new(10).unwrap());
-        gc.commits_since_last_run = NCOMMITS_BEFORE_COLLECT + 1;
+        gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
         gc.handle_commit(ChunkedVec::new(), 11, HashId::new(10).unwrap());
         assert_eq!(gc.current_generation, before + 2);
     }

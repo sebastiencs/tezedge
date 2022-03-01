@@ -24,7 +24,6 @@ pub enum BlockApplierApplyError {
         service_error: ProtocolServiceError,
         block_hash: Option<Arc<BlockHash>>,
     },
-    // ProtocolRunnerApply(ProtocolServiceError),
     StoreApplyResult(StorageError),
 }
 
