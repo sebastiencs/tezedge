@@ -193,7 +193,7 @@ impl GarbageCollector for InMemory {
 
     fn block_applied(
         &mut self,
-        cycle_position: u64,
+        block_level: u32,
         context_hash: &ContextHash,
     ) -> Result<(), GarbageCollectionError> {
         let context_hash_id = match self
@@ -207,7 +207,7 @@ impl GarbageCollector for InMemory {
                 })
             }
         };
-        self.block_applied(cycle_position, context_hash_id);
+        self.block_applied(block_level, context_hash_id);
         Ok(())
     }
 }
@@ -627,7 +627,7 @@ impl InMemory {
         self.context_hashes_cycles.push_back(Default::default());
     }
 
-    pub fn block_applied(&mut self, cycle_position: u64, commit_hash_id: HashId) {
+    pub fn block_applied(&mut self, block_level: u32, commit_hash_id: HashId) {
         let sender = match self.sender.as_ref() {
             Some(sender) => sender,
             None => return,
@@ -638,7 +638,7 @@ impl InMemory {
         if let Err(e) = sender.send(Command::BlockApplied {
             new_ids,
             commit_hash_id,
-            cycle_position,
+            block_level,
         }) {
             eprintln!("Fail to send Command::MarkReused to GC worker: {:?}", e);
         }

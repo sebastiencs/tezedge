@@ -78,10 +78,10 @@ pub(crate) struct GCThread {
     /// Used for logging
     last_gc_timestamp: Option<Instant>,
 
-    /// The cycle position of the last block applied
+    /// The block level of the last block applied
     ///
     /// Used to increment, or not, `Self::current_generation`
-    last_highest_cycle_position: Option<u64>,
+    last_highest_block_level: Option<u32>,
 
     /// View on `InMemory::objects`
     ///
@@ -155,7 +155,7 @@ pub enum Command {
     BlockApplied {
         new_ids: ChunkedVec<HashId, NEW_IDS_CHUNK_CAPACITY>,
         commit_hash_id: HashId,
-        cycle_position: u64,
+        block_level: u32,
     },
     NewChunks {
         objects_chunks: Option<Vec<SharedChunk<Option<InlinedBoxedSlice>, OBJECTS_CHUNK_CAPACITY>>>,
@@ -184,7 +184,7 @@ impl GCThread {
             new_ids_in_commit: 0,
             last_gc_timestamp: None,
             napplieds_since_last_run: 0,
-            last_highest_cycle_position: None,
+            last_highest_block_level: None,
         }
     }
 
@@ -213,9 +213,9 @@ impl GCThread {
                 Ok(Command::BlockApplied {
                     new_ids,
                     commit_hash_id,
-                    cycle_position,
+                    block_level,
                 }) => {
-                    if let Err(e) = self.handle_commit(new_ids, cycle_position, commit_hash_id) {
+                    if let Err(e) = self.handle_commit(new_ids, block_level, commit_hash_id) {
                         elog!("handle_commit failed: {:?}", e);
                     }
                 }
@@ -499,7 +499,7 @@ impl GCThread {
     fn handle_commit(
         &mut self,
         new_ids: ChunkedVec<HashId, NEW_IDS_CHUNK_CAPACITY>,
-        cycle_position: u64,
+        block_level: u32,
         commit_hash_id: HashId,
     ) -> Result<(), GCError> {
         let now = std::time::Instant::now();
@@ -510,18 +510,18 @@ impl GCThread {
         // Increment the current generation when the block level has been
         // incremented
         let increment_generation = self
-            .last_highest_cycle_position
-            .map(|last| last.wrapping_add(1) == cycle_position)
+            .last_highest_block_level
+            .map(|last| last + 1 == block_level)
             .unwrap_or(true);
 
         if self
-            .last_highest_cycle_position
-            .map(|last| last.wrapping_sub(1) != cycle_position)
+            .last_highest_block_level
+            .map(|last| block_level > last)
             .unwrap_or(true)
         {
-            // Set `Self::last_cycle_position` when `cycle_position` is not
+            // Set `Self::last_highest_block_level` when `block_level` is not
             // going backward
-            self.last_highest_cycle_position = Some(cycle_position);
+            self.last_highest_block_level = Some(block_level);
         }
 
         if self.debug {
@@ -624,9 +624,11 @@ mod tests {
         // Make sure that `GCThread::current_generation` is incremented on a new cycle position
         let mut objects = SharedIndexMap::new();
         let hashes = SharedIndexMap::new();
+        let id = HashId::new(10).unwrap();
+        let chunks = ChunkedVec::new();
 
         objects
-            .insert_at(HashId::new(10).unwrap(), InlinedBoxedSlice::from(&[][..]))
+            .insert_at(id, InlinedBoxedSlice::from(&[][..]))
             .unwrap();
 
         let (_sender, recv) = crossbeam_channel::unbounded();
@@ -640,76 +642,66 @@ mod tests {
 
         gc.add_chunks(objects.clone_new_chunks(), None);
 
+        const BLOCK_LEVEL: u32 = 10;
         let before = gc.current_generation;
-        gc.handle_commit(ChunkedVec::new(), 10, HashId::new(10).unwrap())
-            .unwrap();
+        gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
         assert_eq!(gc.current_generation, before + 1);
 
         gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
 
-        // Different commits at the same `cycle_position`
-        gc.handle_commit(ChunkedVec::new(), 10, HashId::new(10).unwrap())
-            .unwrap();
+        // Different commits at the same `block_level`
+        gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
         gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
-        gc.handle_commit(ChunkedVec::new(), 10, HashId::new(10).unwrap())
-            .unwrap();
+        gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
         assert_eq!(gc.current_generation, before + 1);
 
         gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
 
-        // New `cycle_position`
-        gc.handle_commit(ChunkedVec::new(), 11, HashId::new(10).unwrap())
-            .unwrap();
+        // New `block_level`
+        const BLOCK_LEVEL: u32 = 11;
+        gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
         assert_eq!(gc.current_generation, before + 2);
-        // Same `cycle_position`
+        // Same `block_level`
         gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
-        gc.handle_commit(ChunkedVec::new(), 11, HashId::new(10).unwrap())
-            .unwrap();
+        gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
         gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
-        gc.handle_commit(ChunkedVec::new(), 11, HashId::new(10).unwrap())
-            .unwrap();
+        gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
         assert_eq!(gc.current_generation, before + 2);
 
-        // Previous `cycle_position`
+        // Previous `block_level`
+        const BLOCK_LEVEL: u32 = 10;
         gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
-        gc.handle_commit(ChunkedVec::new(), 10, HashId::new(10).unwrap())
-            .unwrap();
+        gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
         assert_eq!(gc.current_generation, before + 2);
-        // Same `cycle_position`
+        // Same `block_level`
         gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
-        gc.handle_commit(ChunkedVec::new(), 10, HashId::new(10).unwrap())
-            .unwrap();
+        gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
         gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
-        gc.handle_commit(ChunkedVec::new(), 10, HashId::new(10).unwrap())
-            .unwrap();
+        gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
         assert_eq!(gc.current_generation, before + 2);
 
-        // Previous `cycle_position`
+        // Previous `block_level`
+        const BLOCK_LEVEL: u32 = 11;
         gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
-        gc.handle_commit(ChunkedVec::new(), 11, HashId::new(10).unwrap())
-            .unwrap();
+        gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
         assert_eq!(gc.current_generation, before + 2);
-        // Same `cycle_position`
+        // Same `block_level`
         gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
-        gc.handle_commit(ChunkedVec::new(), 11, HashId::new(10).unwrap())
-            .unwrap();
+        gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
         gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
-        gc.handle_commit(ChunkedVec::new(), 11, HashId::new(10).unwrap())
-            .unwrap();
+        gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
         assert_eq!(gc.current_generation, before + 2);
 
-        // New `cycle_position`
+        // New `block_level`
+        const BLOCK_LEVEL: u32 = 12;
         gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
-        gc.handle_commit(ChunkedVec::new(), 12, HashId::new(10).unwrap())
-            .unwrap();
+        gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
         assert_eq!(gc.current_generation, before + 3);
-        // Same `cycle_position`
+        // Same `block_level`
         gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
-        gc.handle_commit(ChunkedVec::new(), 12, HashId::new(10).unwrap())
-            .unwrap();
+        gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
         gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
-        gc.handle_commit(ChunkedVec::new(), 12, HashId::new(10).unwrap())
-            .unwrap();
+        gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
         assert_eq!(gc.current_generation, before + 3);
     }
 }

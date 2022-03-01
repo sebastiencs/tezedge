@@ -12,12 +12,12 @@ impl std::fmt::Debug for Command {
             Self::BlockApplied {
                 new_ids,
                 commit_hash_id,
-                cycle_position,
+                block_level,
             } => f
                 .debug_struct("Commit   ")
                 .field("new_ids", &new_ids.len())
                 .field("commit", commit_hash_id)
-                .field("cycle_position", cycle_position)
+                .field("block_level", block_level)
                 .finish(),
             Self::NewChunks {
                 objects_chunks,
