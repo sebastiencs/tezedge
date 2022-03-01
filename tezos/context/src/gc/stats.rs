@@ -9,7 +9,7 @@ impl std::fmt::Debug for Command {
                 .debug_struct("MarkNewIds")
                 .field("new_ids", &new_ids.len())
                 .finish(),
-            Self::Commit {
+            Self::BlockApplied {
                 new_ids,
                 commit_hash_id,
                 cycle_position,

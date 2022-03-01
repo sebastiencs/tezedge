@@ -542,8 +542,6 @@ impl InMemory {
         message: String,
         date: u64,
     ) -> Result<(ContextHash, Box<SerializeStats>), DBError> {
-        self.maybe_send_new_chunks_to_gc();
-
         let PostCommitData {
             commit_ref,
             batch,
@@ -637,7 +635,7 @@ impl InMemory {
 
         let new_ids = self.hashes.take_new_ids();
 
-        if let Err(e) = sender.send(Command::Commit {
+        if let Err(e) = sender.send(Command::BlockApplied {
             new_ids,
             commit_hash_id,
             cycle_position,
