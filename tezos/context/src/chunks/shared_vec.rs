@@ -10,40 +10,82 @@ use static_assertions::assert_eq_size;
 use super::DEFAULT_LIST_LENGTH;
 
 #[derive(Debug)]
-struct VecAliveCounter<T> {
+struct VecAliveCounter<T, const CHUNK_CAPACITY: usize> {
     alive_counter: u32,
-    inner: Vec<T>,
+    length: u32,
+    inner: Option<Box<[T; CHUNK_CAPACITY]>>,
 }
 
-impl<T> std::ops::Deref for VecAliveCounter<T> {
-    type Target = Vec<T>;
+assert_eq_size!([u8; 16], VecAliveCounter<u8, 10>);
+
+impl<T, const CHUNK_CAPACITY: usize> std::ops::Deref for VecAliveCounter<T, CHUNK_CAPACITY> {
+    type Target = [T];
 
     fn deref(&self) -> &Self::Target {
-        &self.inner
+        match self.inner.as_ref() {
+            Some(inner) => &inner[..self.length as usize],
+            None => &[],
+        }
     }
 }
 
-impl<T> std::ops::DerefMut for VecAliveCounter<T> {
+impl<T, const CHUNK_CAPACITY: usize> std::ops::DerefMut for VecAliveCounter<T, CHUNK_CAPACITY> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.inner
+        match self.inner.as_mut() {
+            Some(inner) => &mut inner[..self.length as usize],
+            None => &mut [],
+        }
     }
 }
 
-impl<T> VecAliveCounter<T> {
-    fn with_capacity(cap: usize) -> Self {
+impl<T, const CHUNK_CAPACITY: usize> VecAliveCounter<Option<T>, CHUNK_CAPACITY> {
+    const INIT: Option<T> = None;
+
+    fn push(&mut self, elem: Option<T>) {
+        let inner = match self.inner.as_mut() {
+            Some(inner) => inner,
+            None => {
+                self.allocate();
+                self.inner.as_mut().unwrap() // Never fails, we just allocated it
+            }
+        };
+
+        inner[self.length as usize] = elem;
+        self.length += 1;
+    }
+
+    fn allocate(&mut self) {
+        assert!(self.is_deallocated());
+        self.inner = Some(Box::from([Self::INIT; CHUNK_CAPACITY]));
+    }
+}
+
+impl<T, const CHUNK_CAPACITY: usize> VecAliveCounter<T, CHUNK_CAPACITY> {
+    fn deallocate(&mut self) {
+        self.inner = None;
+    }
+
+    fn is_deallocated(&self) -> bool {
+        self.inner.is_none()
+    }
+}
+
+impl<T, const CHUNK_CAPACITY: usize> Default for VecAliveCounter<T, CHUNK_CAPACITY> {
+    fn default() -> Self {
         Self {
             alive_counter: 0,
-            inner: Vec::with_capacity(cap),
+            length: 0,
+            inner: None,
         }
     }
 }
 
 #[derive(Debug)]
 pub struct SharedChunk<T, const CHUNK_CAPACITY: usize> {
-    inner: Arc<RwLock<VecAliveCounter<T>>>,
+    inner: Arc<RwLock<VecAliveCounter<T, CHUNK_CAPACITY>>>,
 }
 
-assert_eq_size!([u8; 40], RwLock<VecAliveCounter<u8>>);
+assert_eq_size!([u8; 24], RwLock<VecAliveCounter<u8, 10>>);
 
 impl<T, const CHUNK_CAPACITY: usize> Clone for SharedChunk<T, CHUNK_CAPACITY> {
     fn clone(&self) -> Self {
@@ -53,13 +95,15 @@ impl<T, const CHUNK_CAPACITY: usize> Clone for SharedChunk<T, CHUNK_CAPACITY> {
     }
 }
 
-impl<T, const CHUNK_CAPACITY: usize> SharedChunk<T, CHUNK_CAPACITY> {
-    fn new() -> Self {
+impl<T, const CHUNK_CAPACITY: usize> Default for SharedChunk<T, CHUNK_CAPACITY> {
+    fn default() -> Self {
         Self {
-            inner: Arc::new(RwLock::new(VecAliveCounter::with_capacity(CHUNK_CAPACITY))),
+            inner: Default::default(),
         }
     }
+}
 
+impl<T, const CHUNK_CAPACITY: usize> SharedChunk<T, CHUNK_CAPACITY> {
     fn with<F, R>(&self, index: usize, fun: F) -> R
     where
         F: FnOnce(Option<&T>) -> R,
@@ -101,7 +145,7 @@ impl<T, const CHUNK_CAPACITY: usize> SharedChunk<Option<T>, CHUNK_CAPACITY> {
         // Do not deallocate if we are the last chunk, this would render
         // `SharedChunkedVec::nelems` invalid
         if inner.alive_counter == 0 && !is_last_chunk {
-            inner.inner = Vec::new();
+            inner.deallocate();
             return (Some(old), true);
         }
 
@@ -111,10 +155,9 @@ impl<T, const CHUNK_CAPACITY: usize> SharedChunk<Option<T>, CHUNK_CAPACITY> {
     fn insert_alive_at(&self, index: usize, value: Option<T>) {
         let mut inner = self.inner.write();
 
-        if inner.capacity() == 0 {
+        if inner.is_deallocated() {
             assert_eq!(inner.alive_counter, 0);
-            inner.inner = Vec::with_capacity(CHUNK_CAPACITY);
-            inner.resize_with(CHUNK_CAPACITY, Option::default);
+            inner.allocate();
         }
 
         if std::mem::replace(&mut inner[index], value).is_none() {
@@ -147,7 +190,7 @@ impl<T, const CHUNK_CAPACITY: usize> SharedChunkedVec<T, CHUNK_CAPACITY> {
     pub fn new() -> Self {
         assert_ne!(CHUNK_CAPACITY, 0);
 
-        let chunk = SharedChunk::<T, CHUNK_CAPACITY>::new();
+        let chunk = SharedChunk::<T, CHUNK_CAPACITY>::default();
 
         let mut list_of_chunks =
             Vec::<SharedChunk<T, CHUNK_CAPACITY>>::with_capacity(DEFAULT_LIST_LENGTH);
@@ -205,7 +248,7 @@ impl<T, const CHUNK_CAPACITY: usize> SharedChunkedVec<T, CHUNK_CAPACITY> {
             .unwrap_or(true);
 
         if must_alloc_new_chunk {
-            self.list_of_chunks.push(SharedChunk::new());
+            self.list_of_chunks.push(SharedChunk::default());
         }
 
         // Never fail, we just allocated one in case it's empty
