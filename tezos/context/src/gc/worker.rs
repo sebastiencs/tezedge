@@ -81,7 +81,7 @@ pub(crate) struct GCThread {
     /// The cycle position of the last block applied
     ///
     /// Used to increment, or not, `Self::current_generation`
-    last_cycle_position: Option<u64>,
+    last_highest_cycle_position: Option<u64>,
 
     /// View on `InMemory::objects`
     ///
@@ -184,7 +184,7 @@ impl GCThread {
             new_ids_in_commit: 0,
             last_gc_timestamp: None,
             napplieds_since_last_run: 0,
-            last_cycle_position: None,
+            last_highest_cycle_position: None,
         }
     }
 
@@ -510,10 +510,19 @@ impl GCThread {
         // Increment the current generation when the block level has been
         // incremented
         let increment_generation = self
-            .last_cycle_position
-            .map(|pos| pos.wrapping_add(1) == cycle_position)
+            .last_highest_cycle_position
+            .map(|last| last.wrapping_add(1) == cycle_position)
             .unwrap_or(true);
-        self.last_cycle_position = Some(cycle_position);
+
+        if self
+            .last_highest_cycle_position
+            .map(|last| last.wrapping_sub(1) != cycle_position)
+            .unwrap_or(true)
+        {
+            // Set `Self::last_cycle_position` when `cycle_position` is not
+            // going backward
+            self.last_highest_cycle_position = Some(cycle_position);
+        }
 
         if self.debug {
             let stats = CommitStatistics {
@@ -614,14 +623,14 @@ mod tests {
     fn cycle_generation() {
         // Make sure that `GCThread::current_generation` is incremented on a new cycle position
         let mut objects = SharedIndexMap::new();
-        let mut hashes = SharedIndexMap::new();
+        let hashes = SharedIndexMap::new();
 
         objects
             .insert_at(HashId::new(10).unwrap(), InlinedBoxedSlice::from(&[][..]))
             .unwrap();
 
-        let (sender, recv) = crossbeam_channel::unbounded();
-        let (producer, consumer) = tezos_spsc::bounded(2_000_000);
+        let (_sender, recv) = crossbeam_channel::unbounded();
+        let (producer, _consumer) = tezos_spsc::bounded(2_000_000);
         let objects_view = objects.get_view();
         let hashes_view = hashes.get_view();
 
@@ -632,27 +641,75 @@ mod tests {
         gc.add_chunks(objects.clone_new_chunks(), None);
 
         let before = gc.current_generation;
-        gc.handle_commit(ChunkedVec::new(), 10, HashId::new(10).unwrap());
+        gc.handle_commit(ChunkedVec::new(), 10, HashId::new(10).unwrap())
+            .unwrap();
         assert_eq!(gc.current_generation, before + 1);
 
         gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
 
         // Different commits at the same `cycle_position`
-        gc.handle_commit(ChunkedVec::new(), 10, HashId::new(10).unwrap());
+        gc.handle_commit(ChunkedVec::new(), 10, HashId::new(10).unwrap())
+            .unwrap();
         gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
-        gc.handle_commit(ChunkedVec::new(), 10, HashId::new(10).unwrap());
+        gc.handle_commit(ChunkedVec::new(), 10, HashId::new(10).unwrap())
+            .unwrap();
         assert_eq!(gc.current_generation, before + 1);
 
         gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
 
         // New `cycle_position`
-        gc.handle_commit(ChunkedVec::new(), 11, HashId::new(10).unwrap());
+        gc.handle_commit(ChunkedVec::new(), 11, HashId::new(10).unwrap())
+            .unwrap();
         assert_eq!(gc.current_generation, before + 2);
         // Same `cycle_position`
         gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
-        gc.handle_commit(ChunkedVec::new(), 11, HashId::new(10).unwrap());
+        gc.handle_commit(ChunkedVec::new(), 11, HashId::new(10).unwrap())
+            .unwrap();
         gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
-        gc.handle_commit(ChunkedVec::new(), 11, HashId::new(10).unwrap());
+        gc.handle_commit(ChunkedVec::new(), 11, HashId::new(10).unwrap())
+            .unwrap();
         assert_eq!(gc.current_generation, before + 2);
+
+        // Previous `cycle_position`
+        gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
+        gc.handle_commit(ChunkedVec::new(), 10, HashId::new(10).unwrap())
+            .unwrap();
+        assert_eq!(gc.current_generation, before + 2);
+        // Same `cycle_position`
+        gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
+        gc.handle_commit(ChunkedVec::new(), 10, HashId::new(10).unwrap())
+            .unwrap();
+        gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
+        gc.handle_commit(ChunkedVec::new(), 10, HashId::new(10).unwrap())
+            .unwrap();
+        assert_eq!(gc.current_generation, before + 2);
+
+        // Previous `cycle_position`
+        gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
+        gc.handle_commit(ChunkedVec::new(), 11, HashId::new(10).unwrap())
+            .unwrap();
+        assert_eq!(gc.current_generation, before + 2);
+        // Same `cycle_position`
+        gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
+        gc.handle_commit(ChunkedVec::new(), 11, HashId::new(10).unwrap())
+            .unwrap();
+        gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
+        gc.handle_commit(ChunkedVec::new(), 11, HashId::new(10).unwrap())
+            .unwrap();
+        assert_eq!(gc.current_generation, before + 2);
+
+        // New `cycle_position`
+        gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
+        gc.handle_commit(ChunkedVec::new(), 12, HashId::new(10).unwrap())
+            .unwrap();
+        assert_eq!(gc.current_generation, before + 3);
+        // Same `cycle_position`
+        gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
+        gc.handle_commit(ChunkedVec::new(), 12, HashId::new(10).unwrap())
+            .unwrap();
+        gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
+        gc.handle_commit(ChunkedVec::new(), 12, HashId::new(10).unwrap())
+            .unwrap();
+        assert_eq!(gc.current_generation, before + 3);
     }
 }
