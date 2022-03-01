@@ -45,18 +45,23 @@ impl<T, const CHUNK_CAPACITY: usize> VecAliveCounter<Option<T>, CHUNK_CAPACITY> 
         let inner = match self.inner.as_mut() {
             Some(inner) => inner,
             None => {
-                self.allocate();
+                self.allocate(false);
                 self.inner.as_mut().unwrap() // Never fails, we just allocated it
             }
         };
+
+        assert!((self.length as usize) < CHUNK_CAPACITY);
 
         inner[self.length as usize] = elem;
         self.length += 1;
     }
 
-    fn allocate(&mut self) {
+    fn allocate(&mut self, fill: bool) {
         assert!(self.is_deallocated());
         self.inner = Some(Box::from([Self::INIT; CHUNK_CAPACITY]));
+        if fill {
+            self.length = CHUNK_CAPACITY as u32;
+        }
     }
 }
 
@@ -158,7 +163,7 @@ impl<T, const CHUNK_CAPACITY: usize> SharedChunk<Option<T>, CHUNK_CAPACITY> {
 
         if inner.is_deallocated() {
             assert_eq!(inner.alive_counter, 0);
-            inner.allocate();
+            inner.allocate(true);
         }
 
         if std::mem::replace(&mut inner[index], value).is_none() {
