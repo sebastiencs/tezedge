@@ -3,7 +3,6 @@
 
 use std::{
     borrow::Cow,
-    collections::HashMap,
     fmt::Debug,
     ops::{Index, IndexMut, Range},
 };
@@ -375,25 +374,6 @@ where
         }
 
         map.shrink_to_fit();
-        map
-    }
-}
-
-impl<K, V, const CHUNK_CAPACITY: usize> ChunkedVec<(K, V), CHUNK_CAPACITY>
-where
-    K: Ord + Copy + std::hash::Hash,
-{
-    pub fn into_hash_map(&mut self) -> HashMap<K, V> {
-        let mut map = HashMap::default();
-
-        while !self.list_of_chunks.is_empty() {
-            let chunk = self.list_of_chunks.remove(0);
-            for (k, v) in chunk.into_iter() {
-                map.insert(k, v);
-            }
-        }
-
-        // map.shrink_to_fit();
         map
     }
 }

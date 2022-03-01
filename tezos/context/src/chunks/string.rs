@@ -179,7 +179,7 @@ impl<const CHUNK_CAPACITY: usize> ChunkedString<CHUNK_CAPACITY> {
         // Never fail, we just allocated one in case it's empty
         match self.list_of_chunks.last_mut().unwrap() {
             Mutable(owned) => owned,
-            Immutable(_) => panic!("Invalid state"),
+            Immutable(_) => unreachable!("Invalid state"),
         }
     }
 
@@ -193,7 +193,7 @@ impl<const CHUNK_CAPACITY: usize> ChunkedString<CHUNK_CAPACITY> {
 
         let owned = match last {
             Mutable(owned) => owned,
-            Immutable(_) => panic!("Invalid state"),
+            Immutable(_) => unreachable!("Invalid state"),
         };
 
         assert_eq!(owned.capacity(), CHUNK_CAPACITY);
@@ -205,7 +205,7 @@ impl<const CHUNK_CAPACITY: usize> ChunkedString<CHUNK_CAPACITY> {
 
         match owned {
             Mutable(owned) => owned,
-            Immutable(_) => panic!("Invalid state"),
+            Immutable(_) => unreachable!("Invalid state"),
         }
     }
 
