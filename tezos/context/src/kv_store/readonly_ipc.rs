@@ -203,19 +203,12 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
         {
             buffer.clear();
 
-            self.hashes
-                .with_value(hash_id, |value| {
-                    if let Some(Some(value)) = value {
-                        buffer.extend_from_slice(value)
-                    };
-                })
-                .unwrap();
+            self.hashes.with_value(hash_id, |value| {
+                if let Some(Some(value)) = value {
+                    buffer.extend_from_slice(value)
+                };
+            })?;
 
-            // let bytes = self
-            //     .hashes
-            //     .get_value(hash_id)?
-            //     .ok_or(DBError::HashNotFound { object_ref })?;
-            // buffer.extend_from_slice(bytes);
             return Ok(buffer);
         };
 
