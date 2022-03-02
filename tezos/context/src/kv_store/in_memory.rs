@@ -5,8 +5,7 @@
 
 use std::{
     borrow::Cow,
-    collections::{hash_map::DefaultHasher, VecDeque},
-    hash::Hasher,
+    collections::VecDeque,
     mem::size_of,
     rc::Rc,
     sync::{atomic::Ordering, Arc, RwLock},
@@ -55,9 +54,9 @@ use super::{HashId, VacantObjectHash};
 pub const BATCH_CHUNK_CAPACITY: usize = 8 * 1024;
 
 #[derive(Debug)]
-pub struct HashValueStore {
+pub struct HashObjectStore {
     hashes: SharedIndexMap<HashId, Option<Box<ObjectHash>>, OBJECTS_CHUNK_CAPACITY>,
-    values: SharedIndexMap<HashId, Option<InlinedBoxedSlice>, OBJECTS_CHUNK_CAPACITY>,
+    objects: SharedIndexMap<HashId, Option<InlinedBoxedSlice>, OBJECTS_CHUNK_CAPACITY>,
     free_ids: Option<Consumer<HashId>>,
     new_ids: ChunkedVec<HashId, NEW_IDS_CHUNK_CAPACITY>,
     values_bytes: usize,
@@ -66,14 +65,14 @@ pub struct HashValueStore {
 pub const OBJECTS_CHUNK_CAPACITY: usize = 1_000;
 pub const NEW_IDS_LIMIT: usize = 20_000;
 
-impl HashValueStore {
+impl HashObjectStore {
     pub(crate) fn new<T>(consumer: T) -> Self
     where
         T: Into<Option<Consumer<HashId>>>,
     {
         Self {
-            hashes: SharedIndexMap::new(), // ~320MB
-            values: SharedIndexMap::new(), // ~80MB
+            hashes: SharedIndexMap::new(),  // ~320MB
+            objects: SharedIndexMap::new(), // ~80MB
             free_ids: consumer.into(),
             new_ids: ChunkedVec::default(), // ~8KB
             values_bytes: 0,
@@ -87,7 +86,7 @@ impl HashValueStore {
         nshapes: usize,
     ) -> RepositoryMemoryUsage {
         let values_bytes = self.values_bytes;
-        let values_capacity = self.values.capacity();
+        let values_capacity = self.objects.capacity();
         let hashes_capacity = self.hashes.capacity();
 
         let total_bytes = values_bytes
@@ -99,7 +98,7 @@ impl HashValueStore {
         RepositoryMemoryUsage {
             values_bytes,
             values_capacity,
-            values_length: self.values.len(),
+            values_length: self.objects.len(),
             hashes_capacity,
             hashes_length: self.hashes.len(),
             total_bytes,
@@ -116,7 +115,7 @@ impl HashValueStore {
     pub(crate) fn clear(&mut self) {
         *self = Self {
             hashes: SharedIndexMap::empty(),
-            values: SharedIndexMap::empty(),
+            objects: SharedIndexMap::empty(),
             free_ids: self.free_ids.take(),
             new_ids: ChunkedVec::empty(),
             values_bytes: 0,
@@ -139,12 +138,12 @@ impl HashValueStore {
         self.free_ids.as_mut()?.pop().ok()
     }
 
-    pub(crate) fn insert_value_at(
+    pub(crate) fn insert_object_at(
         &mut self,
         hash_id: HashId,
         value: InlinedBoxedSlice,
     ) -> Result<(), HashIdError> {
-        self.values.insert_at(hash_id, value)
+        self.objects.insert_at(hash_id, value)
     }
 
     pub(crate) fn get_hash(&self, hash_id: HashId) -> Option<ObjectHash> {
@@ -161,11 +160,11 @@ impl HashValueStore {
     where
         F: FnOnce(Option<&Option<InlinedBoxedSlice>>) -> R,
     {
-        Ok(self.values.with(hash_id, fun)?)
+        Ok(self.objects.with(hash_id, fun)?)
     }
 
     pub(crate) fn contains(&self, hash_id: HashId) -> Result<bool, HashIdError> {
-        self.values.with(hash_id, |v| matches!(v, Some(Some(_))))
+        self.objects.with(hash_id, |v| matches!(v, Some(Some(_))))
     }
 
     fn take_new_ids(&mut self) -> ChunkedVec<HashId, NEW_IDS_CHUNK_CAPACITY> {
@@ -175,8 +174,18 @@ impl HashValueStore {
 
 #[derive(Debug)]
 struct ContextHashes {
+    /// Map `ContextHash` to its `HashId`
+    ///
+    /// Used on checkouts and commits
     context_hashes: Map<ContextHash, HashId>,
-    last_highest_block_level: u32,
+    /// Highest block level
+    ///
+    /// Used to know when to drop context hashes
+    highest_block_level: u32,
+    /// List of `ContextHash` by block level
+    ///
+    /// When the block level increase, we drop the context hashes created
+    /// at the `block_level - 3`
     context_hashes_by_level: VecDeque<Vec<ContextHash>>,
 }
 
@@ -190,7 +199,7 @@ impl Default for ContextHashes {
         Self {
             context_hashes: Default::default(),
             context_hashes_by_level,
-            last_highest_block_level: 0,
+            highest_block_level: 0,
         }
     }
 }
@@ -212,10 +221,10 @@ impl ContextHashes {
     }
 
     fn set_level(&mut self, block_level: u32) {
-        if block_level > self.last_highest_block_level {
+        if block_level > self.highest_block_level {
             self.pop_context_hashes();
             self.context_hashes_by_level.push_back(Default::default());
-            self.last_highest_block_level = block_level;
+            self.highest_block_level = block_level;
         }
     }
 
@@ -233,7 +242,7 @@ impl ContextHashes {
 }
 
 pub struct InMemory {
-    pub hashes: HashValueStore,
+    hashes_objects: HashObjectStore,
     sender: Option<Sender<Command>>,
     context_hashes: ContextHashes,
     thread_handle: Option<JoinHandle<()>>,
@@ -314,7 +323,7 @@ impl KeyValueStoreBackend for InMemory {
         let strings_total_bytes = self.string_interner.memory_usage().total_bytes;
         let shapes_total_bytes = self.shapes.total_bytes();
 
-        self.hashes.get_memory_usage(
+        self.hashes_objects.get_memory_usage(
             strings_total_bytes,
             shapes_total_bytes,
             self.shapes.nshapes(),
@@ -450,12 +459,12 @@ impl InMemory {
             .expect("Provided `DISABLE_INMEM_CONTEXT_GC` value cannot be converted to bool");
 
         let (sender, thread_handle, hashes) = if garbage_collector_disabled {
-            (None, None, HashValueStore::new(None))
+            (None, None, HashObjectStore::new(None))
         } else {
             let (sender, recv) = crossbeam_channel::unbounded();
             let (producer, consumer) = tezos_spsc::bounded(2_000_000);
-            let hashes = HashValueStore::new(consumer);
-            let objects_view = hashes.values.get_view();
+            let hashes = HashObjectStore::new(consumer);
+            let objects_view = hashes.objects.get_view();
             let hashes_view = hashes.hashes.get_view();
 
             let thread_handle = std::thread::Builder::new()
@@ -466,7 +475,7 @@ impl InMemory {
         };
 
         Ok(Self {
-            hashes,
+            hashes_objects: hashes,
             sender,
             context_hashes: ContextHashes::default(),
             thread_handle,
@@ -566,8 +575,8 @@ impl InMemory {
             None => return,
         };
 
-        let objects_chunks = self.hashes.values.clone_new_chunks();
-        let hashes_chunks = self.hashes.hashes.clone_new_chunks();
+        let objects_chunks = self.hashes_objects.objects.clone_new_chunks();
+        let hashes_chunks = self.hashes_objects.hashes.clone_new_chunks();
 
         if objects_chunks.is_none() && hashes_chunks.is_none() {
             return;
@@ -624,18 +633,20 @@ impl InMemory {
     }
 
     pub(crate) fn get_vacant_entry_hash(&mut self) -> Result<VacantObjectHash, DBError> {
-        if self.hashes.new_ids.len() >= NEW_IDS_LIMIT {
-            let new_ids = self.hashes.take_new_ids();
+        if self.hashes_objects.new_ids.len() >= NEW_IDS_LIMIT {
+            let new_ids = self.hashes_objects.take_new_ids();
             self.sender
                 .as_ref()
                 .map(|s| s.send(Command::MarkNewIds { new_ids }));
         }
 
-        self.hashes.get_vacant_object_hash().map_err(Into::into)
+        self.hashes_objects
+            .get_vacant_object_hash()
+            .map_err(Into::into)
     }
 
     pub(crate) fn get_hash(&self, hash_id: HashId) -> Result<ObjectHash, DBError> {
-        self.hashes
+        self.hashes_objects
             .get_hash(hash_id)
             .ok_or_else(|| DBError::HashNotFound {
                 object_ref: hash_id.into(),
@@ -646,11 +657,11 @@ impl InMemory {
     where
         F: FnOnce(Option<&Option<InlinedBoxedSlice>>) -> R,
     {
-        Ok(self.hashes.values.with(hash_id, fun)?)
+        Ok(self.hashes_objects.objects.with(hash_id, fun)?)
     }
 
     fn contains(&self, hash_id: HashId) -> Result<bool, DBError> {
-        self.hashes.contains(hash_id).map_err(Into::into)
+        self.hashes_objects.contains(hash_id).map_err(Into::into)
     }
 
     pub fn write_batch(
@@ -659,7 +670,7 @@ impl InMemory {
     ) -> Result<(), DBError> {
         while let Some(chunk) = batch.pop_first_chunk() {
             for (hash_id, value) in chunk.into_iter() {
-                self.hashes.insert_value_at(hash_id, value)?;
+                self.hashes_objects.insert_object_at(hash_id, value)?;
             }
         }
         Ok(())
@@ -680,7 +691,7 @@ impl InMemory {
             None => return,
         };
 
-        let new_ids = self.hashes.take_new_ids();
+        let new_ids = self.hashes_objects.take_new_ids();
 
         if let Err(e) = sender.send(Command::BlockApplied {
             new_ids,
@@ -701,7 +712,7 @@ impl InMemory {
 
     pub fn put_context_hash_impl(&mut self, context_hash_id: HashId) -> Result<(), DBError> {
         let context_hash = self
-            .hashes
+            .hashes_objects
             .get_hash(context_hash_id)
             .and_then(|h| ContextHash::try_from(&h[..]).ok())
             .ok_or(DBError::MissingObject {
