@@ -1,5 +1,6 @@
 // Copyright (c) SimpleStaking, Viable Systems and Tezedge Contributors
 // SPDX-License-Identifier: MIT
+#![allow(clippy::identity_op)]
 
 //! This sub module provides different implementations of the `repository` used to store objects.
 
@@ -44,7 +45,7 @@ impl NonZero6Bytes {
 
     fn new(n: u64) -> Option<Self> {
         if n == 0 || n > 0xFFFFFFFFFFFF {
-            return None;
+            None
         } else {
             Some(NonZero6Bytes {
                 inner: NonZero6BytesInner::new().with_bytes(n),

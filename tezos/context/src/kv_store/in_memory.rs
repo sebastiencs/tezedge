@@ -71,8 +71,8 @@ impl HashObjectStore {
         T: Into<Option<Consumer<HashId>>>,
     {
         Self {
-            hashes: SharedIndexMap::new(),  // ~320MB
-            objects: SharedIndexMap::new(), // ~80MB
+            hashes: SharedIndexMap::default(),  // ~320MB
+            objects: SharedIndexMap::default(), // ~80MB
             free_ids: consumer.into(),
             new_ids: ChunkedVec::default(), // ~8KB
             values_bytes: 0,

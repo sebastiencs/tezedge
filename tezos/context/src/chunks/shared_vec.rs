@@ -184,32 +184,8 @@ pub struct SharedChunkedVec<T, const CHUNK_CAPACITY: usize> {
     synced_at: usize,
 }
 
-impl<T, const CHUNK_CAPACITY: usize> SharedChunkedVec<T, CHUNK_CAPACITY> {
-    pub fn empty() -> Self {
-        Self {
-            list_of_chunks: Vec::new(),
-            nelems: 0,
-            synced_at: 0,
-        }
-    }
-
-    pub fn new() -> Self {
-        assert_ne!(CHUNK_CAPACITY, 0);
-
-        let chunk = SharedChunk::<T, CHUNK_CAPACITY>::default();
-
-        let mut list_of_chunks =
-            Vec::<SharedChunk<T, CHUNK_CAPACITY>>::with_capacity(DEFAULT_LIST_LENGTH);
-        list_of_chunks.push(chunk);
-
-        Self {
-            list_of_chunks,
-            nelems: 0,
-            synced_at: 0,
-        }
-    }
-
-    pub fn new_empty() -> Self {
+impl<T, const CHUNK_CAPACITY: usize> Default for SharedChunkedVec<T, CHUNK_CAPACITY> {
+    fn default() -> Self {
         assert_ne!(CHUNK_CAPACITY, 0);
 
         let list_of_chunks =
@@ -217,6 +193,16 @@ impl<T, const CHUNK_CAPACITY: usize> SharedChunkedVec<T, CHUNK_CAPACITY> {
 
         Self {
             list_of_chunks,
+            nelems: 0,
+            synced_at: 0,
+        }
+    }
+}
+
+impl<T, const CHUNK_CAPACITY: usize> SharedChunkedVec<T, CHUNK_CAPACITY> {
+    pub fn empty() -> Self {
+        Self {
+            list_of_chunks: Vec::new(),
             nelems: 0,
             synced_at: 0,
         }
@@ -235,7 +221,7 @@ impl<T, const CHUNK_CAPACITY: usize> SharedChunkedVec<T, CHUNK_CAPACITY> {
 
         self.synced_at = self.list_of_chunks.len();
 
-        Some(new_chunks.iter().cloned().collect())
+        Some(new_chunks.to_vec())
     }
 
     /// Returns the last chunk with space available.
@@ -333,6 +319,15 @@ pub struct SharedIndexMap<K, V, const CHUNK_CAPACITY: usize> {
     _phantom: PhantomData<K>,
 }
 
+impl<K, V, const CHUNK_CAPACITY: usize> Default for SharedIndexMap<K, V, CHUNK_CAPACITY> {
+    fn default() -> Self {
+        Self {
+            entries: SharedChunkedVec::default(),
+            _phantom: PhantomData,
+        }
+    }
+}
+
 impl<K, V, const CHUNK_CAPACITY: usize> SharedIndexMap<K, V, CHUNK_CAPACITY> {
     pub fn empty() -> Self {
         Self {
@@ -341,23 +336,9 @@ impl<K, V, const CHUNK_CAPACITY: usize> SharedIndexMap<K, V, CHUNK_CAPACITY> {
         }
     }
 
-    pub fn new() -> Self {
-        Self {
-            entries: SharedChunkedVec::new(),
-            _phantom: PhantomData,
-        }
-    }
-
-    fn new_empty() -> Self {
-        Self {
-            entries: SharedChunkedVec::new_empty(),
-            _phantom: PhantomData,
-        }
-    }
-
     pub fn get_view(&self) -> SharedIndexMapView<K, V, CHUNK_CAPACITY> {
         SharedIndexMapView {
-            inner: Self::new_empty(),
+            inner: Self::default(),
         }
     }
 

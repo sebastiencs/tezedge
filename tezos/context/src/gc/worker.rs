@@ -366,6 +366,7 @@ impl GCThread {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn traverse_and_mark_tree(
         &mut self,
         hash_id: HashId,
@@ -495,6 +496,13 @@ impl GCThread {
         Ok(())
     }
 
+    fn debug_commit(&self) {
+        let stats = CommitStatistics {
+            new_hash_id: self.new_ids_in_commit,
+        };
+        log!("{:?}", stats);
+    }
+
     fn handle_commit(
         &mut self,
         new_ids: ChunkedVec<HashId, NEW_IDS_CHUNK_CAPACITY>,
@@ -513,10 +521,7 @@ impl GCThread {
         self.highest_block_level = self.highest_block_level.max(block_level);
 
         if self.debug {
-            let stats = CommitStatistics {
-                new_hash_id: self.new_ids_in_commit,
-            };
-            log!("{:?}", stats);
+            self.debug_commit();
         }
 
         // Reset `Self::new_ids_in_commit`
@@ -608,10 +613,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cycle_generation() {
-        // Make sure that `GCThread::current_generation` is incremented on a new cycle position
-        let mut objects = SharedIndexMap::new();
-        let hashes = SharedIndexMap::new();
+    fn level_generation() {
+        // Make sure that `GCThread::current_generation` is incremented on an increased block level
+        let mut objects = SharedIndexMap::default();
+        let hashes = SharedIndexMap::default();
         let id = HashId::new(10).unwrap();
         let chunks = ChunkedVec::new();
 
@@ -699,7 +704,7 @@ mod tests {
             gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
             gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
             gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
-            gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
+            gc.handle_commit(chunks, BLOCK_LEVEL, id).unwrap();
             assert_eq!(gc.current_generation, before + 3);
         }
     }

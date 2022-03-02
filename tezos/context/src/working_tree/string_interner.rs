@@ -86,23 +86,12 @@ pub struct SerializeStrings {
     pub strings: Vec<u8>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 struct BigStrings {
     hashes: SortedMap<u64, u32>,
     strings: ChunkedString<{ 64 * 1024 * 1024 }>, // ~67MB
     offsets: ChunkedVec<(u32, u32), { 128 * 1024 }>, // ~1MB
     to_serialize_index: usize,
-}
-
-impl Default for BigStrings {
-    fn default() -> Self {
-        Self {
-            hashes: SortedMap::default(),
-            strings: ChunkedString::default(), // ~67MB
-            offsets: ChunkedVec::default(),    // ~1MB
-            to_serialize_index: 0,
-        } // Total ~68MB
-    }
 }
 
 impl PartialEq for BigStrings {
