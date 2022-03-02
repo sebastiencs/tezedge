@@ -280,7 +280,7 @@ ocaml_export! {
         let ocaml_index = rt.get(index);
         let index: &TezedgeIndexFFI = ocaml_index.borrow();
         let index = index.0.borrow().clone();
-        let (block_level, cycle_position): (i32, Option<i64>) = extra_data.to_rust(rt);
+        let (block_level, _cycle_position): (i32, Option<i64>) = extra_data.to_rust(rt);
         let context_hash: Option<ContextHash> = context_hash.to_rust(rt);
 
         // We call `IndexApi::block_applied` only when `context_hash` is `Some(_)`:

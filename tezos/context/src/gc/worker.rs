@@ -76,10 +76,10 @@ pub(crate) struct GCThread {
     /// Used for logging
     last_gc_timestamp: Option<Instant>,
 
-    /// The block level of the last block applied
+    /// The highest block level applied
     ///
     /// Used to increment, or not, `Self::current_generation`
-    last_highest_block_level: u32,
+    highest_block_level: u32,
 
     /// View on `InMemory::objects`
     ///
@@ -118,7 +118,7 @@ pub(crate) struct GCThread {
     /// Number of block applied since the last garbage collection.
     ///
     /// This is used to know when we can run the gc again, we run
-    /// it every `NCOMMITS_BEFORE_COLLECT`
+    /// it at most every `NAPPLIED_BEFORE_COLLECT`
     napplieds_since_last_run: usize,
 }
 
@@ -182,7 +182,7 @@ impl GCThread {
             new_ids_in_commit: 0,
             last_gc_timestamp: None,
             napplieds_since_last_run: 0,
-            last_highest_block_level: 0,
+            highest_block_level: 0,
         }
     }
 
@@ -301,7 +301,7 @@ impl GCThread {
         Ok(sent)
     }
 
-    /// Return `true` when the `HashId` refers to a dead chunk (the chunk was
+    /// Return `true` when the `HashId` refers to a dead chunk (the chunk is
     /// deallocated)
     fn is_in_dead_chunk(&self, hash_id: HashId) -> Result<bool, GCError> {
         let chunk_index = self.hashes_view.chunk_index_of(hash_id)? as u32;
@@ -411,8 +411,9 @@ impl GCThread {
 
         {
             // Update the generation of the HashId (object/hash)
-            let value_counter = self.objects_generation.entry(hash_id)?;
-            *value_counter = Some(current_generation);
+            self.objects_generation
+                .entry(hash_id)?
+                .replace(current_generation);
         }
 
         // Recursively update generation of all the children
@@ -481,7 +482,7 @@ impl GCThread {
         self.new_ids_in_commit += new_ids.len();
 
         for hash_id in new_ids.iter().copied() {
-            // A `HashId` is used in the current block, update its generation
+            // A `HashId` is used, update its generation
             self.objects_generation
                 .insert_at(hash_id, Some(self.current_generation))?;
 
@@ -507,9 +508,9 @@ impl GCThread {
 
         // Increment the current generation when the block level has been
         // incremented
-        let increment_generation = block_level > self.last_highest_block_level;
+        let increment_generation = block_level > self.highest_block_level;
 
-        self.last_highest_block_level = self.last_highest_block_level.max(block_level);
+        self.highest_block_level = self.highest_block_level.max(block_level);
 
         if self.debug {
             let stats = CommitStatistics {
