@@ -28,8 +28,6 @@ use crate::{
 
 use tezos_spsc::Producer;
 
-pub(crate) const PRESERVE_CYCLE_COUNT: usize = 2;
-
 // Some chunks capacity
 const PENDING_CHUNK_CAPACITY: usize = 100_000;
 const UNUSED_CHUNK_CAPACITY: usize = 20_000;
@@ -48,7 +46,7 @@ const NAPPLIED_BEFORE_COLLECT: usize = 100;
 
 /// Number of block level to keep, before objects/hashes
 /// are garbage collected
-const PRESERVE_BLOCK_LEVEL: u8 = 2;
+pub const PRESERVE_BLOCK_LEVEL: u8 = 2;
 
 /// Used for statistics
 ///

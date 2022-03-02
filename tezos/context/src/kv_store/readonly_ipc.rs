@@ -113,7 +113,7 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
     }
 
     fn memory_usage(&self) -> RepositoryMemoryUsage {
-        self.hashes.get_memory_usage(0, 0, 0, 0)
+        self.hashes.get_memory_usage(0, 0, 0)
     }
 
     fn get_shape(&self, shape_id: DirectoryShapeId) -> Result<ShapeStrings, DBError> {

@@ -26,7 +26,7 @@ use crate::{
     gc::{
         jemalloc::debug_jemalloc,
         worker::{
-            Command, GCThread, GC_PENDING_HASHIDS, NEW_IDS_CHUNK_CAPACITY, PRESERVE_CYCLE_COUNT,
+            Command, GCThread, GC_PENDING_HASHIDS, NEW_IDS_CHUNK_CAPACITY, PRESERVE_BLOCK_LEVEL,
         },
         GarbageCollectionError, GarbageCollector,
     },
@@ -84,7 +84,6 @@ impl HashValueStore {
         &self,
         strings_total_bytes: usize,
         shapes_total_bytes: usize,
-        commit_index_total_bytes: usize,
         nshapes: usize,
     ) -> RepositoryMemoryUsage {
         let values_bytes = self.values_bytes;
@@ -95,8 +94,7 @@ impl HashValueStore {
             .saturating_add(values_capacity * size_of::<Option<Box<[u8]>>>())
             .saturating_add(hashes_capacity * size_of::<Option<Box<ObjectHash>>>())
             .saturating_add(strings_total_bytes)
-            .saturating_add(shapes_total_bytes)
-            .saturating_add(commit_index_total_bytes);
+            .saturating_add(shapes_total_bytes);
 
         RepositoryMemoryUsage {
             values_bytes,
@@ -110,7 +108,7 @@ impl HashValueStore {
             nshapes,
             strings_total_bytes,
             shapes_total_bytes,
-            commit_index_total_bytes,
+            commit_index_total_bytes: 0,
             new_ids_cap: self.new_ids.capacity(),
         }
     }
@@ -175,11 +173,69 @@ impl HashValueStore {
     }
 }
 
+#[derive(Debug)]
+struct ContextHashes {
+    context_hashes: Map<ContextHash, HashId>,
+    last_highest_block_level: u32,
+    context_hashes_by_level: VecDeque<Vec<ContextHash>>,
+}
+
+impl Default for ContextHashes {
+    fn default() -> Self {
+        let mut context_hashes_by_level = VecDeque::new();
+        for _ in 0..=PRESERVE_BLOCK_LEVEL + 1 {
+            context_hashes_by_level.push_back(Vec::default());
+        }
+
+        Self {
+            context_hashes: Default::default(),
+            context_hashes_by_level,
+            last_highest_block_level: 0,
+        }
+    }
+}
+
+impl ContextHashes {
+    fn pop_context_hashes(&mut self) {
+        let hashes = match self.context_hashes_by_level.pop_front() {
+            Some(hashes) if !hashes.is_empty() => hashes,
+            _ => return,
+        };
+
+        for hash in &hashes {
+            self.context_hashes.remove(hash);
+        }
+    }
+
+    fn get(&self, context_hash: &ContextHash) -> Option<HashId> {
+        self.context_hashes.get(context_hash).copied()
+    }
+
+    fn set_level(&mut self, block_level: u32) {
+        if block_level > self.last_highest_block_level {
+            self.pop_context_hashes();
+            self.context_hashes_by_level.push_back(Default::default());
+            self.last_highest_block_level = block_level;
+        }
+    }
+
+    fn insert(&mut self, context_hash: ContextHash, context_hash_id: HashId) {
+        self.context_hashes
+            .insert(context_hash.clone(), context_hash_id);
+
+        let last = match self.context_hashes_by_level.back_mut() {
+            Some(last) => last,
+            None => return,
+        };
+
+        last.push(context_hash);
+    }
+}
+
 pub struct InMemory {
     pub hashes: HashValueStore,
     sender: Option<Sender<Command>>,
-    pub context_hashes: Map<u64, HashId>,
-    context_hashes_cycles: VecDeque<Vec<u64>>,
+    context_hashes: ContextHashes,
     thread_handle: Option<JoinHandle<()>>,
     shapes: DirectoryShapes,
     string_interner: StringInterner,
@@ -187,7 +243,7 @@ pub struct InMemory {
 
 impl GarbageCollector for InMemory {
     fn new_cycle_started(&mut self) -> Result<(), GarbageCollectionError> {
-        self.new_cycle_started();
+        // self.new_cycle_started();
         Ok(())
     }
 
@@ -207,7 +263,9 @@ impl GarbageCollector for InMemory {
                 })
             }
         };
+        self.context_hashes.set_level(block_level);
         self.block_applied(block_level, context_hash_id);
+
         Ok(())
     }
 }
@@ -255,13 +313,10 @@ impl KeyValueStoreBackend for InMemory {
     fn memory_usage(&self) -> RepositoryMemoryUsage {
         let strings_total_bytes = self.string_interner.memory_usage().total_bytes;
         let shapes_total_bytes = self.shapes.total_bytes();
-        let commit_index_total_bytes = self.context_hashes.len()
-            * (std::mem::size_of::<HashId>() + std::mem::size_of::<u64>());
 
         self.hashes.get_memory_usage(
             strings_total_bytes,
             shapes_total_bytes,
-            commit_index_total_bytes,
             self.shapes.nshapes(),
         )
     }
@@ -410,18 +465,10 @@ impl InMemory {
             (Some(sender), Some(thread_handle), hashes)
         };
 
-        let context_hashes = Default::default();
-
-        let mut context_hashes_cycles = VecDeque::with_capacity(PRESERVE_CYCLE_COUNT);
-        for _ in 0..PRESERVE_CYCLE_COUNT {
-            context_hashes_cycles.push_back(Default::default())
-        }
-
         Ok(Self {
             hashes,
             sender,
-            context_hashes,
-            context_hashes_cycles,
+            context_hashes: ContextHashes::default(),
             thread_handle,
             shapes: DirectoryShapes::default(),
             string_interner: StringInterner::default(),
@@ -618,14 +665,14 @@ impl InMemory {
         Ok(())
     }
 
-    pub fn new_cycle_started(&mut self) {
-        if let Some(unused) = self.context_hashes_cycles.pop_front() {
-            for hash in unused {
-                self.context_hashes.remove(&hash);
-            }
-        }
-        self.context_hashes_cycles.push_back(Default::default());
-    }
+    // pub fn new_cycle_started(&mut self) {
+    //     if let Some(unused) = self.context_hashes_cycles.pop_front() {
+    //         for hash in unused {
+    //             self.context_hashes.remove(&hash);
+    //         }
+    //     }
+    //     self.context_hashes_cycles.push_back(Default::default());
+    // }
 
     pub fn block_applied(&mut self, block_level: u32, commit_hash_id: HashId) {
         let sender = match self.sender.as_ref() {
@@ -645,29 +692,32 @@ impl InMemory {
     }
 
     pub fn get_context_hash_impl(&self, context_hash: &ContextHash) -> Option<HashId> {
-        let mut hasher = DefaultHasher::new();
-        hasher.write(context_hash.as_ref());
-        let hashed = hasher.finish();
+        // let mut hasher = DefaultHasher::new();
+        // hasher.write(context_hash.as_ref());
+        // let hashed = hasher.finish();
 
-        self.context_hashes.get(&hashed).cloned()
+        self.context_hashes.get(context_hash)
     }
 
-    pub fn put_context_hash_impl(&mut self, commit_hash_id: HashId) -> Result<(), DBError> {
-        let commit_hash = self
+    pub fn put_context_hash_impl(&mut self, context_hash_id: HashId) -> Result<(), DBError> {
+        let context_hash = self
             .hashes
-            .get_hash(commit_hash_id)
+            .get_hash(context_hash_id)
+            .and_then(|h| ContextHash::try_from(&h[..]).ok())
             .ok_or(DBError::MissingObject {
-                object_ref: commit_hash_id.into(),
+                object_ref: context_hash_id.into(),
             })?;
 
-        let mut hasher = DefaultHasher::new();
-        hasher.write(&commit_hash[..]);
-        let hashed = hasher.finish();
+        self.context_hashes.insert(context_hash, context_hash_id);
 
-        self.context_hashes.insert(hashed, commit_hash_id);
-        if let Some(back) = self.context_hashes_cycles.back_mut() {
-            back.push(hashed);
-        };
+        // let mut hasher = DefaultHasher::new();
+        // hasher.write(&commit_hash[..]);
+        // let hashed = hasher.finish();
+
+        // self.context_hashes.insert(hashed, commit_hash_id);
+        // if let Some(back) = self.context_hashes_cycles.back_mut() {
+        //     back.push(hashed);
+        // };
 
         Ok(())
     }
