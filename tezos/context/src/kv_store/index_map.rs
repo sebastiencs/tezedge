@@ -125,7 +125,7 @@ where
 
     pub fn entry(&mut self, key: K) -> Result<&mut V, <K as TryInto<usize>>::Error> {
         if self.contains_key(key)? {
-            return Ok(self.get_mut(key)?.unwrap());
+            return Ok(self.get_mut(key)?.unwrap()); // Never fails, `Self::contains_key` returned `true`
         }
 
         let index: usize = key.try_into()?;
@@ -133,7 +133,7 @@ where
             self.entries.resize_with(index + 1, V::default);
         }
 
-        Ok(self.get_mut(key)?.unwrap())
+        Ok(self.get_mut(key)?.unwrap()) // Never fails, we just resized it
     }
 }
 

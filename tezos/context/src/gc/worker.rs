@@ -13,7 +13,7 @@ use static_assertions::assert_eq_size;
 use thiserror::Error;
 
 use crate::{
-    chunks::{ChunkedVec, SharedChunk, SharedIndexMapView},
+    chunks::{ChunkedVec, SharedChunk, SharedIndexMapError, SharedIndexMapView},
     gc::{
         jemalloc::debug_jemalloc,
         stats::{CollectorStatistics, CommitStatistics, OnMessageStatistics},
@@ -137,6 +137,11 @@ enum GCError {
     FromIntFailed {
         #[from]
         e: TryFromIntError,
+    },
+    #[error("SharedIndexMap error: {error}")]
+    SharedIndex {
+        #[from]
+        error: SharedIndexMapError,
     },
 }
 

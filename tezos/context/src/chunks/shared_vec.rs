@@ -6,6 +6,7 @@ use std::{
 
 use parking_lot::RwLock;
 use static_assertions::assert_eq_size;
+use thiserror::Error;
 
 use super::DEFAULT_LIST_LENGTH;
 
@@ -137,25 +138,32 @@ impl<T, const CHUNK_CAPACITY: usize> SharedChunk<Option<T>, CHUNK_CAPACITY> {
         index
     }
 
-    fn clear(&self, index: usize, is_last_chunk: bool) -> (Option<T>, bool) {
+    fn clear(
+        &self,
+        index: usize,
+        is_last_chunk: bool,
+    ) -> Result<(Option<T>, bool), SharedIndexMapError> {
         let mut inner = self.inner.write();
 
         let old = match inner.get_mut(index).and_then(std::mem::take) {
             Some(old) => old,
-            None => return (None, false),
+            None => return Ok((None, false)),
         };
 
-        inner.alive_counter = inner.alive_counter.checked_sub(1).unwrap();
+        inner.alive_counter = match inner.alive_counter.checked_sub(1) {
+            Some(counter) => counter,
+            None => return Err(SharedIndexMapError::InvalidAliveState),
+        };
 
         // If the chunk is empty, deallocate it
         // Do not deallocate if we are the last chunk, this would render
         // `SharedChunkedVec::nelems` invalid
         if inner.alive_counter == 0 && !is_last_chunk {
             inner.deallocate();
-            return (Some(old), true);
+            return Ok((Some(old), true));
         }
 
-        (Some(old), false)
+        Ok((Some(old), false))
     }
 
     fn insert_alive_at(&self, index: usize, value: Option<T>) {
@@ -277,12 +285,12 @@ impl<T, const CHUNK_CAPACITY: usize> SharedChunkedVec<T, CHUNK_CAPACITY> {
 }
 
 impl<T, const CHUNK_CAPACITY: usize> SharedChunkedVec<Option<T>, CHUNK_CAPACITY> {
-    fn clear(&self, index: usize) -> (Option<T>, bool) {
+    fn clear(&self, index: usize) -> Result<(Option<T>, bool), SharedIndexMapError> {
         let (list_index, chunk_index) = self.get_indexes_at(index);
 
         let chunk = match self.list_of_chunks.get(list_index) {
             Some(chunk) => chunk,
-            None => return (None, false),
+            None => return Ok((None, false)),
         };
         let is_last_chunk = list_index + 1 == self.list_of_chunks.len();
 
@@ -311,6 +319,14 @@ impl<T, const CHUNK_CAPACITY: usize> SharedChunkedVec<Option<T>, CHUNK_CAPACITY>
         let (list_index, chunk_index) = self.get_indexes_at(index);
         self.list_of_chunks[list_index].insert_alive_at(chunk_index, value);
     }
+}
+
+#[derive(Debug, Error)]
+pub enum SharedIndexMapError {
+    #[error("Invalid state: the alive count is invalid")]
+    InvalidAliveState,
+    #[error("Fail to convert index")]
+    Indexing,
 }
 
 #[derive(Debug)]
@@ -424,9 +440,9 @@ impl<K, V, const CHUNK_CAPACITY: usize> SharedIndexMap<K, Option<V>, CHUNK_CAPAC
 where
     K: TryInto<usize> + Clone,
 {
-    pub fn clear(&self, key: K) -> Result<(Option<V>, bool), K::Error> {
-        let index = key.try_into()?;
-        Ok(self.entries.clear(index))
+    pub fn clear(&self, key: K) -> Result<(Option<V>, bool), SharedIndexMapError> {
+        let index = key.try_into().map_err(|_| SharedIndexMapError::Indexing)?;
+        self.entries.clear(index)
     }
 
     pub fn insert_at(&mut self, key: K, value: V) -> Result<(), K::Error> {
@@ -471,7 +487,7 @@ impl<K, V, const CHUNK_CAPACITY: usize> SharedIndexMapView<K, Option<V>, CHUNK_C
 where
     K: TryInto<usize> + Clone,
 {
-    pub fn clear(&self, key: K) -> Result<(Option<V>, bool), K::Error> {
+    pub fn clear(&self, key: K) -> Result<(Option<V>, bool), SharedIndexMapError> {
         self.inner.clear(key)
     }
 }
