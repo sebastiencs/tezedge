@@ -81,7 +81,7 @@ pub(crate) struct GCThread {
     /// The block level of the last block applied
     ///
     /// Used to increment, or not, `Self::current_generation`
-    last_highest_block_level: Option<u32>,
+    last_highest_block_level: u32,
 
     /// View on `InMemory::objects`
     ///
@@ -184,7 +184,7 @@ impl GCThread {
             new_ids_in_commit: 0,
             last_gc_timestamp: None,
             napplieds_since_last_run: 0,
-            last_highest_block_level: None,
+            last_highest_block_level: 0,
         }
     }
 
@@ -509,20 +509,9 @@ impl GCThread {
 
         // Increment the current generation when the block level has been
         // incremented
-        let increment_generation = self
-            .last_highest_block_level
-            .map(|last| last + 1 == block_level)
-            .unwrap_or(true);
+        let increment_generation = block_level > self.last_highest_block_level;
 
-        if self
-            .last_highest_block_level
-            .map(|last| block_level > last)
-            .unwrap_or(true)
-        {
-            // Set `Self::last_highest_block_level` when `block_level` is not
-            // going backward
-            self.last_highest_block_level = Some(block_level);
-        }
+        self.last_highest_block_level = self.last_highest_block_level.max(block_level);
 
         if self.debug {
             let stats = CommitStatistics {
@@ -642,66 +631,77 @@ mod tests {
 
         gc.add_chunks(objects.clone_new_chunks(), None);
 
-        const BLOCK_LEVEL: u32 = 10;
         let before = gc.current_generation;
-        gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
-        assert_eq!(gc.current_generation, before + 1);
 
-        gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
+        {
+            const BLOCK_LEVEL: u32 = 10;
+            gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
+            assert_eq!(gc.current_generation, before + 1);
 
-        // Different commits at the same `block_level`
-        gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
-        gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
-        gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
-        assert_eq!(gc.current_generation, before + 1);
+            gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
 
-        gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
+            // Different commits at the same `block_level`
+            gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
+            gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
+            gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
+            assert_eq!(gc.current_generation, before + 1);
+        }
 
-        // New `block_level`
-        const BLOCK_LEVEL: u32 = 11;
-        gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
-        assert_eq!(gc.current_generation, before + 2);
-        // Same `block_level`
-        gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
-        gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
-        gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
-        gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
-        assert_eq!(gc.current_generation, before + 2);
+        {
+            gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
 
-        // Previous `block_level`
-        const BLOCK_LEVEL: u32 = 10;
-        gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
-        gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
-        assert_eq!(gc.current_generation, before + 2);
-        // Same `block_level`
-        gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
-        gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
-        gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
-        gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
-        assert_eq!(gc.current_generation, before + 2);
+            // New `block_level`
+            const BLOCK_LEVEL: u32 = 11;
+            gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
+            assert_eq!(gc.current_generation, before + 2);
+            // Same `block_level`
+            gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
+            gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
+            gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
+            gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
+            assert_eq!(gc.current_generation, before + 2);
+        }
 
-        // Previous `block_level`
-        const BLOCK_LEVEL: u32 = 11;
-        gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
-        gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
-        assert_eq!(gc.current_generation, before + 2);
-        // Same `block_level`
-        gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
-        gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
-        gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
-        gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
-        assert_eq!(gc.current_generation, before + 2);
+        {
+            // Previous `block_level`
+            const BLOCK_LEVEL: u32 = 10;
+            gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
+            gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
+            assert_eq!(gc.current_generation, before + 2);
+            // Same `block_level`
+            gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
+            gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
+            gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
+            gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
+            assert_eq!(gc.current_generation, before + 2);
+        }
 
-        // New `block_level`
-        const BLOCK_LEVEL: u32 = 12;
-        gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
-        gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
-        assert_eq!(gc.current_generation, before + 3);
-        // Same `block_level`
-        gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
-        gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
-        gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
-        gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
-        assert_eq!(gc.current_generation, before + 3);
+        {
+            // Previous `block_level`
+            const BLOCK_LEVEL: u32 = 11;
+            gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
+            gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
+            assert_eq!(gc.current_generation, before + 2);
+            // Same `block_level`
+            gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
+            gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
+            gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
+            gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
+            assert_eq!(gc.current_generation, before + 2);
+        }
+
+        {
+            // New `block_level`
+            const BLOCK_LEVEL: u32 = 12;
+            gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
+            gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
+            assert_eq!(gc.current_generation, before + 3);
+            // Same `block_level`
+            gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
+            gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
+            gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
+            gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
+            assert_eq!(gc.current_generation, before + 3);
+        }
     }
 }
