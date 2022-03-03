@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 use std::{
-    collections::BTreeMap,
     num::TryFromIntError,
     sync::atomic::{AtomicUsize, Ordering},
     time::Instant,
@@ -380,7 +379,6 @@ impl GCThread {
         depth: usize,
         max_depth: &mut usize,
         objets_total_bytes: &mut usize,
-        map_length: &mut BTreeMap<usize, usize>,
     ) -> Result<(), GCError> {
         *nobjects += 1;
         *max_depth = depth.max(*max_depth);
@@ -403,9 +401,6 @@ impl GCThread {
             };
 
             *objets_total_bytes += object_bytes.len();
-
-            let e = map_length.entry(object_bytes.len()).or_default();
-            *e += 1;
 
             // Store the `HashId` of all the children in `hash_ids`
             for (index, hash_id) in iter_hash_ids(object_bytes).enumerate() {
@@ -435,7 +430,6 @@ impl GCThread {
                 depth + 1,
                 max_depth,
                 objets_total_bytes,
-                map_length,
             )?;
         }
 
@@ -549,8 +543,6 @@ impl GCThread {
         self.napplieds_since_last_run = 0;
         self.send_unused()?;
 
-        let mut map_length = BTreeMap::<usize, usize>::default();
-
         let mut nobjects = 0;
         let mut max_depth = 0;
         let mut object_total_bytes = 0;
@@ -561,14 +553,7 @@ impl GCThread {
             1,
             &mut max_depth,
             &mut object_total_bytes,
-            &mut map_length,
         )?;
-
-        // println!(
-        //     "MAP_LENGTH LENGTH={:?} MAP={:#?}",
-        //     map_length.len(),
-        //     map_length
-        // );
 
         let unused = self.take_unused()?;
         let unused_found = unused.len();

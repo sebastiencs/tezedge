@@ -252,7 +252,6 @@ pub struct InMemory {
 
 impl GarbageCollector for InMemory {
     fn new_cycle_started(&mut self) -> Result<(), GarbageCollectionError> {
-        // self.new_cycle_started();
         Ok(())
     }
 
@@ -491,7 +490,6 @@ impl InMemory {
         let (tree, parent_hash, commit) = {
             let mut ondisk = Persistent::try_new(PersistentConfiguration {
                 db_path: Some("/tmp/tezedge/context".to_string()),
-                // db_path: Some("/home/sebastien/tmp/tezedge_snapshot_after_h".to_string()),
                 startup_check: false,
                 read_mode: true,
             })?;
@@ -676,15 +674,6 @@ impl InMemory {
         Ok(())
     }
 
-    // pub fn new_cycle_started(&mut self) {
-    //     if let Some(unused) = self.context_hashes_cycles.pop_front() {
-    //         for hash in unused {
-    //             self.context_hashes.remove(&hash);
-    //         }
-    //     }
-    //     self.context_hashes_cycles.push_back(Default::default());
-    // }
-
     pub fn block_applied(&mut self, block_level: u32, commit_hash_id: HashId) {
         let sender = match self.sender.as_ref() {
             Some(sender) => sender,
@@ -703,10 +692,6 @@ impl InMemory {
     }
 
     pub fn get_context_hash_impl(&self, context_hash: &ContextHash) -> Option<HashId> {
-        // let mut hasher = DefaultHasher::new();
-        // hasher.write(context_hash.as_ref());
-        // let hashed = hasher.finish();
-
         self.context_hashes.get(context_hash)
     }
 
@@ -720,15 +705,6 @@ impl InMemory {
             })?;
 
         self.context_hashes.insert(context_hash, context_hash_id);
-
-        // let mut hasher = DefaultHasher::new();
-        // hasher.write(&commit_hash[..]);
-        // let hashed = hasher.finish();
-
-        // self.context_hashes.insert(hashed, commit_hash_id);
-        // if let Some(back) = self.context_hashes_cycles.back_mut() {
-        //     back.push(hashed);
-        // };
 
         Ok(())
     }
@@ -762,6 +738,8 @@ impl Drop for InMemory {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
 
     #[test]
@@ -791,6 +769,7 @@ mod tests {
     #[test]
     fn reload_from_disk() {
         if true {
+            // Test used locally only
             return;
         }
 
@@ -801,10 +780,6 @@ mod tests {
         #[global_allocator]
         static GLOBAL: Jemalloc = Jemalloc;
 
-        // #[no_mangle]
-        // pub static mut malloc_conf: *const libc::c_char =
-        //     b"background_thread:true\0".as_ptr() as _;
-
         debug_jemalloc();
 
         {
@@ -814,14 +789,14 @@ mod tests {
             repo.reload_database().unwrap();
 
             println!("RELOADED in {:?}", now.elapsed());
-            std::thread::sleep_ms(10000);
+            std::thread::sleep(Duration::from_millis(10000));
             std::mem::drop(repo);
         }
 
         debug_jemalloc();
 
         println!("EVERYTHING DROPPED");
-        std::thread::sleep_ms(20000);
+        std::thread::sleep(Duration::from_millis(20000));
 
         debug_jemalloc();
     }
