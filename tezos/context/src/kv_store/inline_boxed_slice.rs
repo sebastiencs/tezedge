@@ -12,6 +12,8 @@
 ///!   `Box<Box<[u8]>` so that the `InlinedBoxSlice` remains small (16 bytes)
 ///!   So far this length of bytes was never reached
 ///!
+///! http://jemalloc.net/jemalloc.3.html
+///!
 use static_assertions::assert_eq_size;
 
 macro_rules! super_box (
