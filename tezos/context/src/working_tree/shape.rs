@@ -288,9 +288,5 @@ impl DirectoryShapes {
     pub fn shrink_to_fit(&mut self) {
         self.hash_to_strings.shrink_to_fit();
         self.to_serialize = Vec::with_capacity(256);
-        println!("TO_SERIALIZE={:?}", self.to_serialize.capacity());
-        println!("TEMP={:?}", self.temp.capacity());
-        println!("ID_TO_HASH={:?}", self.id_to_hash.capacity());
-        println!("SHAPES={:?}", self.shapes.capacity());
     }
 }

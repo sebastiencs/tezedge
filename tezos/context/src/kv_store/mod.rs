@@ -140,12 +140,6 @@ impl HashId {
     }
 }
 
-// pub struct VacantObjectHash<'a> {
-//     entry: Option<&'a mut ObjectHash>,
-//     map: Option<&'a mut SharedIndexMap<HashId, Option<Box<ObjectHash>>>>,
-//     hash_id: HashId,
-// }
-
 enum Vacant<'a> {
     ByRef {
         entry_ref: &'a mut ObjectHash,

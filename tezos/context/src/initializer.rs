@@ -57,6 +57,7 @@ pub enum IndexInitializationError {
     ThreadJoinError { reason: String },
 }
 
+#[cfg(not(target_env = "msvc"))]
 fn configure_jemalloc() -> tikv_jemalloc_ctl::Result<()> {
     use tikv_jemalloc_ctl::background_thread;
 
@@ -68,6 +69,11 @@ fn configure_jemalloc() -> tikv_jemalloc_ctl::Result<()> {
     let bg = background_thread::mib()?;
     log!("background_threads enabled: {}", bg.read()?);
 
+    Ok(())
+}
+
+#[cfg(target_env = "msvc")]
+fn configure_jemalloc() -> tikv_jemalloc_ctl::Result<()> {
     Ok(())
 }
 

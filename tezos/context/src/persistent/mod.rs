@@ -199,11 +199,6 @@ pub enum ReloadError {
     CheckoutFailed,
     #[error("Unable to fetch the `Commit` object")]
     FetchCommitFailed,
-    // #[error("ContextError {error}")]
-    // ContextError {
-    //     #[from]
-    //     error: ContextError,
-    // },
 }
 
 impl From<ContextError> for ReloadError {

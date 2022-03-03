@@ -1212,8 +1212,6 @@ impl WorkingTree {
     }
 
     /// See `Self::traverse_working_tree` below
-    ///
-    /// Method used for `context-tool` only.
     fn traverse_working_tree_recursive(
         &self,
         object: Object,
@@ -1346,8 +1344,6 @@ impl WorkingTree {
 
     /// Traverse the whole tree by fetching all its objects and storing them in
     /// the `Storage`.
-    ///
-    /// Method used for `context-tool` only.
     pub fn traverse_working_tree(
         &self,
         enable_stats: bool,
