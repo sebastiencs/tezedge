@@ -8,6 +8,7 @@ use std::convert::{TryFrom, TryInto};
 
 use modular_bitfield::prelude::*;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 use crate::{
     chunks::{ChunkedVec, SharedIndexMap},
@@ -70,8 +71,14 @@ impl std::fmt::Debug for HashId {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub struct HashIdError;
+
+impl std::fmt::Display for HashIdError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HashIdError").finish()
+    }
+}
 
 impl TryInto<usize> for HashId {
     type Error = HashIdError;
@@ -187,7 +194,7 @@ impl<'a> VacantObjectHash<'a> {
         }
     }
 
-    pub fn write_with<F>(self, fun: F) -> HashId
+    pub fn write_with<F>(self, fun: F) -> Result<HashId, HashIdError>
     where
         F: FnOnce(&mut ObjectHash),
     {
@@ -201,7 +208,7 @@ impl<'a> VacantObjectHash<'a> {
 
                 fun(&mut hash);
 
-                let hash_id = map.push(hash).unwrap();
+                let hash_id = map.push(hash)?;
                 new_ids.push(hash_id);
 
                 hash_id
@@ -210,21 +217,21 @@ impl<'a> VacantObjectHash<'a> {
                 let mut hash = Box::default();
                 fun(&mut hash);
 
-                map.insert_at(hash_id, hash).unwrap();
+                map.insert_at(hash_id, hash)?;
 
                 hash_id
             }
         };
 
         if self.is_working_tree {
-            hash_id.set_in_working_tree().unwrap();
+            hash_id.set_in_working_tree()?;
         }
 
-        hash_id
+        Ok(hash_id)
     }
 
-    pub(crate) fn set_readonly_runner(mut self) -> Result<Self, HashIdError> {
+    pub(crate) fn set_readonly_runner(mut self) -> Self {
         self.is_working_tree = true;
-        Ok(self)
+        self
     }
 }
