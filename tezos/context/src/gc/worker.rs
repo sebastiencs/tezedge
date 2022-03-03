@@ -45,7 +45,7 @@ const NAPPLIED_BEFORE_COLLECT: usize = 100;
 
 /// Number of block level to keep, before objects/hashes
 /// are garbage collected
-pub const PRESERVE_BLOCK_LEVEL: u8 = 2;
+pub const PRESERVE_BLOCK_LEVEL: u8 = 3;
 
 /// Used for statistics
 ///
@@ -437,7 +437,8 @@ impl GCThread {
     }
 
     fn take_unused(&mut self) -> Result<ChunkedVec<HashId, { UNUSED_CHUNK_CAPACITY }>, GCError> {
-        // Mark all objects/hashes at `current_generation - (PRESERVE_BLOCK_LEVEL + 1)` as unused/reusable
+        // Mark all objects/hashes at `current_generation - (PRESERVE_BLOCK_LEVEL + 1)`
+        // as unused/reusable
 
         let unused_at = self
             .current_generation
