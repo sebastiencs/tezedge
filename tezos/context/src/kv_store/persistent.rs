@@ -720,7 +720,7 @@ hashes_file={:?}, in sizes.db={:?}",
     pub fn put_hash(&mut self, hash: ObjectHash) -> Result<HashId, DBError> {
         let hash_id = self
             .get_vacant_object_hash()?
-            .write_with(|entry| *entry = hash);
+            .write_with(|entry| *entry = hash)?;
         Ok(hash_id)
     }
 

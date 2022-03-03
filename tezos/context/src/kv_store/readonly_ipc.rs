@@ -106,10 +106,7 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
     }
 
     fn get_vacant_object_hash(&mut self) -> Result<VacantObjectHash, DBError> {
-        self.hashes
-            .get_vacant_object_hash()?
-            .set_readonly_runner()
-            .map_err(Into::into)
+        Ok(self.hashes.get_vacant_object_hash()?.set_readonly_runner())
     }
 
     fn memory_usage(&self) -> RepositoryMemoryUsage {

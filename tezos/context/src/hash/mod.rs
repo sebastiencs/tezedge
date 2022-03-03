@@ -13,6 +13,7 @@ use thiserror::Error;
 
 use ocaml::ocaml_hash_string;
 
+use crate::kv_store::HashIdError;
 use crate::working_tree::storage::DirectoryOrInodeId;
 use crate::working_tree::string_interner::StringInterner;
 use crate::working_tree::ObjectReference;
@@ -52,6 +53,11 @@ pub enum HashingError {
     DBError { error: DBError },
     #[error("HashId not found: {hash_id:?}")]
     HashIdNotFound { hash_id: HashId },
+    #[error("HashId conversion error: {error:?}")]
+    HashIdError {
+        #[from]
+        error: HashIdError,
+    },
     #[error("HashId empty")]
     HashIdEmpty,
     #[error("DirEntry not found")]
@@ -214,7 +220,7 @@ fn hash_long_inode(
 
     let hash_id = store
         .get_vacant_object_hash()?
-        .write_with(|object| hasher.finalize_variable(|r| object.copy_from_slice(r)));
+        .write_with(|object| hasher.finalize_variable(|r| object.copy_from_slice(r)))?;
 
     Ok(hash_id)
 }
@@ -266,7 +272,7 @@ fn hash_short_inode(
 
     let hash_id = store
         .get_vacant_object_hash()?
-        .write_with(|object| hasher.finalize_variable(|r| object.copy_from_slice(r)));
+        .write_with(|object| hasher.finalize_variable(|r| object.copy_from_slice(r)))?;
 
     Ok(hash_id)
 }
@@ -306,7 +312,7 @@ pub(crate) fn hash_blob(
 
     let hash_id = store
         .get_vacant_object_hash()?
-        .write_with(|object| hasher.finalize_variable(|r| object.copy_from_slice(r)));
+        .write_with(|object| hasher.finalize_variable(|r| object.copy_from_slice(r)))?;
 
     Ok(Some(hash_id))
 }
@@ -361,7 +367,7 @@ pub(crate) fn hash_commit(
 
     let hash_id = store
         .get_vacant_object_hash()?
-        .write_with(|object| hasher.finalize_variable(|r| object.copy_from_slice(r)));
+        .write_with(|object| hasher.finalize_variable(|r| object.copy_from_slice(r)))?;
 
     Ok(hash_id)
 }
@@ -433,7 +439,8 @@ mod tests {
         let hash_id = repo
             .get_vacant_object_hash()
             .unwrap()
-            .write_with(|entry| entry.copy_from_slice(&hash));
+            .write_with(|entry| entry.copy_from_slice(&hash))
+            .unwrap();
 
         let dummy_commit = Commit {
             parent_commit_ref: None,
@@ -702,7 +709,8 @@ mod tests {
                 let hash_id = repo
                     .get_vacant_object_hash()
                     .unwrap()
-                    .write_with(|bytes| bytes.copy_from_slice(object_hash.as_ref()));
+                    .write_with(|bytes| bytes.copy_from_slice(object_hash.as_ref()))
+                    .unwrap();
 
                 let object = match dir_entry_kind {
                     DirEntryKind::Blob => Object::Blob(
