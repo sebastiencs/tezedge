@@ -1,3 +1,6 @@
+// Copyright (c) SimpleStaking, Viable Systems and Tezedge Contributors
+// SPDX-License-Identifier: MIT
+
 use std::time::Duration;
 
 use tikv_jemalloc_ctl::{background_thread, epoch, stats, Access, AsName, Name};

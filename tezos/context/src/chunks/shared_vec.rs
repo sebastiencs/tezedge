@@ -1,3 +1,43 @@
+// Copyright (c) SimpleStaking, Viable Systems and Tezedge Contributors
+// SPDX-License-Identifier: MIT
+
+//! A `IndexMap` that can be shared with different threads.
+//!
+//! The `SharedIndexMap` itself is not shareable, but the chunks it contains are.
+//! This is to avoid having to lock/synchronize the list of chunks.
+//!
+//! `SharedIndexMapView` allows to read the map (`SharedIndexMap`) from another thread.
+//! Chunks must be send from the `SharedIndexMap` to the `SharedIndexMapView` with
+//! the 2 methods `SharedIndexMap::clone_new_chunks()` and
+//! `SharedIndexMapView::append_chunks()`
+//!
+//! Example:
+//! ```
+//! use tezos_context::chunks::SharedIndexMap;
+//!
+//! let (sender, recv) = std::sync::mpsc::sync_channel(10);
+//!
+//! let mut shared_index_map = SharedIndexMap::<usize, Option<usize>, 1_000>::default();
+//! let mut map_view = shared_index_map.get_view();
+//!
+//! std::thread::spawn(move || {
+//!     let chunks = recv.recv().unwrap();
+//!     map_view.append_chunks(chunks);
+//!
+//!     let value_101 = map_view.with(101, |value| value.cloned()).unwrap();
+//!     assert_eq!(value_101.unwrap().unwrap(), 121)
+//! });
+//!
+//! shared_index_map.insert_at(101, 121).unwrap();
+//!
+//! let value_101 = shared_index_map.with(101, |value| value.cloned()).unwrap();
+//! assert_eq!(value_101.unwrap().unwrap(), 121);
+//!
+//! let chunks = shared_index_map.clone_new_chunks().unwrap();
+//! sender.send(chunks).unwrap();
+//! ```
+//!
+
 use std::{
     convert::{TryFrom, TryInto},
     marker::PhantomData,
@@ -12,8 +52,14 @@ use super::DEFAULT_LIST_LENGTH;
 
 #[derive(Debug)]
 struct VecAliveCounter<T, const CHUNK_CAPACITY: usize> {
+    /// Number of items alive in the container
     alive_counter: u32,
+    /// Number of items in `Self::inner`
+    ///
+    /// Used to keep track where the `Self::push` should insert
+    /// the item
     length: u32,
+    /// Array of items
     inner: Option<Box<[T; CHUNK_CAPACITY]>>,
 }
 
@@ -87,6 +133,7 @@ impl<T, const CHUNK_CAPACITY: usize> Default for VecAliveCounter<T, CHUNK_CAPACI
     }
 }
 
+/// A `Send` + `Sync` chunk
 #[derive(Debug)]
 pub struct SharedChunk<T, const CHUNK_CAPACITY: usize> {
     inner: Arc<RwLock<VecAliveCounter<T, CHUNK_CAPACITY>>>,
@@ -138,6 +185,9 @@ impl<T, const CHUNK_CAPACITY: usize> SharedChunk<Option<T>, CHUNK_CAPACITY> {
         index
     }
 
+    /// Remove an item from the chunk
+    ///
+    /// If the item is the last alive (`Option::Some(_)`), the chunk is deallocated
     fn clear(
         &self,
         index: usize,
@@ -378,6 +428,7 @@ impl<K, V, const CHUNK_CAPACITY: usize> SharedIndexMap<K, V, CHUNK_CAPACITY> {
         self.entries.capacity()
     }
 
+    /// Used for logging
     pub fn count_alives_and_deads(&self) -> (usize, usize) {
         let mut alive = 0;
         let mut dead = 0;

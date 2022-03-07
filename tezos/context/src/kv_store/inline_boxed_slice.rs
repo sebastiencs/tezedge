@@ -1,19 +1,22 @@
-///! A pointer to a slice of bytes
-///!
-///! - When the length of the bytes is less than 15 bytes, the bytes are inlined
-///!   in the pointer.
-///! - When the length of the bytes is between 15 and 114688, the bytes
-///!   are in a Box<[u8; N]> with `N` being a predefined length: 16, 32, 48, ..
-///!   Those length are taken from the sizes classes of `jemalloc`, allocating a
-///!   number of bytes will use the size class just above, or equal to the number
-///!   of bytes.
-///!   For example, allocating 28 bytes with jemalloc will actually use 32 bytes.
-///! - When the length of bytes is bigger, it's using a double Box:
-///!   `Box<Box<[u8]>` so that the `InlinedBoxSlice` remains small (16 bytes)
-///!   So far this length of bytes was never reached
-///!
-///! http://jemalloc.net/jemalloc.3.html
-///!
+// Copyright (c) SimpleStaking, Viable Systems and Tezedge Contributors
+// SPDX-License-Identifier: MIT
+
+//! A pointer to a slice of bytes
+//!
+//! - When the length of the bytes is less than 15 bytes, the bytes are inlined
+//!   in the pointer.
+//! - When the length of the bytes is between 15 and 114688, the bytes
+//!   are in a Box<[u8; N]> with `N` being a predefined length: 16, 32, 48, ..
+//!   Those length are taken from the sizes classes of `jemalloc`, allocating a
+//!   number of bytes will use the size class just above, or equal to the number
+//!   of bytes.
+//!   For example, allocating 28 bytes with jemalloc will actually use 32 bytes.
+//! - When the length of bytes is bigger, it's using a double Box:
+//!   `Box<Box<[u8]>` so that the `InlinedBoxSlice` remains small (16 bytes)
+//!   So far this length of bytes was never reached
+//!
+//! http://jemalloc.net/jemalloc.3.html
+//!
 use static_assertions::assert_eq_size;
 
 macro_rules! super_box (
