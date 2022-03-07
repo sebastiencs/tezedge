@@ -22,9 +22,9 @@ use tezos_api::ffi::{BeginConstructionRequest, ValidateOperationRequest};
 
 use crate::protocol::ProtocolAction;
 use crate::storage::kv_operations;
-use crate::{block_applier::BlockApplierApplyState, current_head::CurrentHeadState};
+use crate::{block_applier::BlockApplierApplyState, current_head_precheck::CurrentHeadState};
 use crate::{
-    current_head::current_head_actions::CurrentHeadPrecheckSuccessAction,
+    current_head_precheck::CurrentHeadPrecheckSuccessAction,
     peer::message::{read::PeerMessageReadSuccessAction, write::PeerMessageWriteInitAction},
     prechecker::prechecker_actions::{PrecheckerApplied, PrecheckerErrored},
 };
@@ -237,20 +237,20 @@ where
             }
         }
         Action::BlockApplierApplySuccess(_) => {
-            let (chain_id, block, apply_result) = match &store.state().block_applier.current {
+            let chain_id = store.state().config.chain_id.clone();
+            let (block, apply_result) = match &store.state().block_applier.current {
                 BlockApplierApplyState::Success {
-                    chain_id,
                     block,
                     apply_result,
                     ..
-                } => (chain_id, block, apply_result),
+                } => (block, apply_result),
                 _ => return,
             };
 
             if let Some(local_head_state) = store.state().mempool.local_head_state.as_ref() {
                 if local_head_state.hash != block.hash {
                     let req = BeginConstructionRequest {
-                        chain_id: (**chain_id).clone(),
+                        chain_id: chain_id.clone(),
                         predecessor: local_head_state.header.clone(),
                         protocol_data: None,
                         predecessor_block_metadata_hash: local_head_state.metadata_hash.clone(),
@@ -266,7 +266,7 @@ where
 
             if store.state().mempool.running_since.is_some() {
                 let req = BeginConstructionRequest {
-                    chain_id: (**chain_id).clone(),
+                    chain_id,
                     predecessor: (*block.header).clone(),
                     protocol_data: None,
                     predecessor_block_metadata_hash: apply_result.block_metadata_hash.clone(),
@@ -645,13 +645,9 @@ where
             requested_explicitly,
             prechecked_head,
         }) => {
-            let applied_block = match &store.state().mempool.local_head_state {
+            let applied_block = match store.state().current_head.get() {
                 Some(v) => v,
-                None => {
-                    // should always have current head here
-                    // TODO(vlad): should be forbidden by enabling condition
-                    return;
-                }
+                None => return,
             };
             let (block_is_applied, header, head_hash) = match prechecked_head.as_ref() {
                 Some(prechecked_head) if prechecked_head != &applied_block.hash => {
@@ -663,11 +659,7 @@ where
                         return;
                     }
                 }
-                _ => (true, &applied_block.header, &applied_block.hash),
-            };
-            let peer = match store.state().mempool.peer_state.get(&address) {
-                Some(v) => v,
-                None => return,
+                _ => (true, &*applied_block.header, &applied_block.hash),
             };
 
             // TODO(vlad): for debug
@@ -683,7 +675,7 @@ where
                         .branch_delayed
                         .iter()
                         .filter_map(|v| {
-                            if v.is_endorsement? && !peer.seen_operations.contains(&v.hash) {
+                            if v.is_endorsement? {
                                 Some(v.hash.clone())
                             } else {
                                 None
@@ -695,17 +687,16 @@ where
                         .validated_operations
                         .applied
                         .iter()
-                        .filter_map(|v| {
-                            if !peer.seen_operations.contains(&v.hash) {
-                                Some(v.hash.clone())
-                            } else {
-                                None
-                            }
-                        })
+                        .map(|v| v.hash.clone())
                         .chain(delayed_endorsements)
                         .collect::<Vec<_>>()
                 }
             } else {
+                let seen_operations_default = Default::default();
+                let seen_operations = match store.state().mempool.peer_state.get(&address) {
+                    Some(v) => &v.seen_operations,
+                    None => &seen_operations_default,
+                };
                 store
                     .state()
                     .mempool
@@ -713,7 +704,7 @@ where
                     .ops
                     .iter()
                     .filter_map(|(hash, op)| {
-                        if !peer.seen_operations.contains(hash)
+                        if !seen_operations.contains(hash)
                             // when broadcasting prechecked head, only include operations for that head
                             && (block_is_applied || head_hash == op.branch())
                         {
@@ -733,7 +724,7 @@ where
                     .pending_operations
                     .iter()
                     .filter_map(|(hash, op)| {
-                        if !peer.seen_operations.contains(hash) && head_hash.eq(op.branch()) {
+                        if head_hash.eq(op.branch()) {
                             Some(hash.clone())
                         } else {
                             None
@@ -745,7 +736,7 @@ where
             };
             let mempool = if *send_operations {
                 let mempool = Mempool::new(known_valid.clone(), pending.clone());
-                if mempool.is_empty() {
+                if !requested_explicitly && mempool.is_empty() {
                     return;
                 }
                 mempool

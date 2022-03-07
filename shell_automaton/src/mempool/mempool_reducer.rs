@@ -31,7 +31,6 @@ pub fn mempool_reducer(state: &mut State, action: &ActionWithMeta) {
     if state.config.disable_mempool {
         return;
     }
-    let config = &state.config;
     let mempool_state = &mut state.mempool;
 
     match &action.action {
@@ -205,20 +204,15 @@ pub fn mempool_reducer(state: &mut State, action: &ActionWithMeta) {
             // TODO: get from protocol
             const TTL: i32 = 120;
 
-            let (chain_id, block, apply_result, retry) = match &state.block_applier.current {
+            let (block, apply_result, retry) = match &state.block_applier.current {
                 BlockApplierApplyState::Success {
-                    chain_id,
                     block,
                     apply_result,
                     retry,
                     ..
-                } => (chain_id, block, apply_result, retry),
+                } => (block, apply_result, retry),
                 _ => return,
             };
-
-            if config.chain_id.ne(chain_id) {
-                return;
-            }
 
             if let Some(local_head_state) = &mempool_state.local_head_state {
                 let local_header = &local_head_state.header;
@@ -237,7 +231,7 @@ pub fn mempool_reducer(state: &mut State, action: &ActionWithMeta) {
             }
 
             if retry.is_some() {
-                if config.disable_apply_retry {
+                if state.config.disable_apply_retry {
                     slog::info!(
                         &state.log,
                         "Block `{new_block}` applied after retry, not using it as current head",

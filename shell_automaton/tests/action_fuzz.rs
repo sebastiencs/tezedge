@@ -22,7 +22,6 @@ use shell_automaton::shutdown::ShutdownPendingAction;
 use shell_automaton::shutdown::ShutdownSuccessAction;
 use shell_automaton::stats::current_head::stats_current_head_actions;
 //use shell_automaton::storage::request::StorageRequestSuccessAction;
-use shell_automaton::action::BootstrapNewCurrentHeadAction;
 use shell_automaton::MioWaitForEventsAction;
 
 use shell_automaton::MioTimeoutEvent;
@@ -208,7 +207,6 @@ enum CurrentHeadActionTest {
     TestCurrentHeadPrecheckSuccessAction(current_head_actions::CurrentHeadPrecheckSuccessAction),
     TestCurrentHeadPrecheckRejectedAction(current_head_actions::CurrentHeadPrecheckRejectedAction),
     TestCurrentHeadErrorAction(current_head_actions::CurrentHeadErrorAction),
-    TestCurrentHeadApplyAction(current_head_actions::CurrentHeadApplyAction),
     TestCurrentHeadPrecacheBakingRightsAction(
         current_head_actions::CurrentHeadPrecacheBakingRightsAction,
     ),
@@ -222,7 +220,6 @@ impl CurrentHeadActionTest {
             Self::TestCurrentHeadPrecheckSuccessAction(a) => a.into(),
             Self::TestCurrentHeadPrecheckRejectedAction(a) => a.into(),
             Self::TestCurrentHeadErrorAction(a) => a.into(),
-            Self::TestCurrentHeadApplyAction(a) => a.into(),
             Self::TestCurrentHeadPrecacheBakingRightsAction(a) => a.into(),
         }
     }
@@ -844,7 +841,6 @@ enum ControlActionTest {
     TestPeerTryWriteLoopFinishAction(PeerTryWriteLoopFinishAction),
     TestPeerTryReadLoopStartAction(PeerTryReadLoopStartAction),
     TestPeerTryReadLoopFinishAction(PeerTryReadLoopFinishAction),
-    TestBootstrapNewCurrentHeadAction(BootstrapNewCurrentHeadAction),
 }
 
 impl ControlActionTest {
@@ -1398,7 +1394,6 @@ fn is_action_enabled(action: Action, state: &State) -> bool {
         Action::CurrentHeadPrecheckSuccess(a) => a.is_enabled(state),
         Action::CurrentHeadPrecheckRejected(a) => a.is_enabled(state),
         Action::CurrentHeadError(a) => a.is_enabled(state),
-        Action::CurrentHeadApply(a) => a.is_enabled(state),
         Action::CurrentHeadPrecacheBakingRights(a) => a.is_enabled(state),
         Action::StatsCurrentHeadPrecheckInit(a) => a.is_enabled(state),
         //Action::StatsCurrentHeadReceived(a) => a.is_enabled(state),
