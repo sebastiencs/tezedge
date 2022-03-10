@@ -641,6 +641,21 @@ pub fn deserialize_inode(
     }
 }
 
+pub fn commit_parent_hash(data: &[u8]) -> Option<HashId> {
+    let header = data.get(0).copied()?;
+    let header: ObjectHeader = ObjectHeader::from_bytes([header]);
+
+    let tag: ObjectTag = header.tag_or_err().ok()?;
+
+    if !matches!(tag, ObjectTag::Commit) {
+        return None;
+    }
+
+    let (hash_id, _) = deserialize_hash_id(data.get(1..)?).ok()?;
+
+    hash_id
+}
+
 /// Iterate HashIds in the serialized data
 pub fn iter_hash_ids(data: &[u8]) -> HashIdIterator {
     HashIdIterator { data, pos: 0 }
@@ -840,6 +855,9 @@ mod tests {
         let iter = iter_hash_ids(&data);
         assert_eq!(iter.map(|h| h.as_u64()).collect::<Vec<_>>(), &[3, 1, 2]);
 
+        let parent = commit_parent_hash(&data);
+        assert_eq!(parent, None);
+
         // Test Object::Directory (Shaped)
 
         let dir_id = DirectoryId::empty();
@@ -899,6 +917,9 @@ mod tests {
         let iter = iter_hash_ids(&data);
         assert_eq!(iter.map(|h| h.as_u64()).collect::<Vec<_>>(), &[3, 1, 2]);
 
+        let parent = commit_parent_hash(&data);
+        assert_eq!(parent, None);
+
         // Test Object::Blob
 
         // Not inlined value
@@ -926,6 +947,10 @@ mod tests {
         }
         let iter = iter_hash_ids(&data);
         assert_eq!(iter.count(), 0);
+
+        let parent = commit_parent_hash(&data);
+        assert_eq!(parent, None);
+
         // Test Object::Commit
 
         let mut data = Vec::with_capacity(1024);
@@ -959,6 +984,9 @@ mod tests {
 
         let iter = iter_hash_ids(&data);
         assert_eq!(iter.map(|h| h.as_u64()).collect::<Vec<_>>(), &[12345]);
+
+        let parent = commit_parent_hash(&data);
+        assert_eq!(parent, Some(HashId::new(9876).unwrap()));
 
         // Test Inode::Directory
 
@@ -1035,6 +1063,9 @@ mod tests {
             (1..33).collect::<Vec<_>>()
         );
 
+        let parent = commit_parent_hash(&batch[0].1);
+        assert_eq!(parent, None);
+
         // Test Inode::Value
 
         let dir_id = DirectoryId::empty();
@@ -1091,6 +1122,59 @@ mod tests {
 
         let iter = iter_hash_ids(&batch[0].1);
         assert_eq!(iter.map(|h| h.as_u64()).collect::<Vec<_>>(), &[3, 1, 2]);
+
+        let parent = commit_parent_hash(&batch[0].1);
+        assert_eq!(parent, None);
+    }
+
+    #[test]
+    fn test_commit_parent_empty() {
+        let mut repo = InMemory::try_new(InMemoryConfiguration {
+            db_path: Some("".to_string()),
+            startup_check: false,
+        })
+        .expect("failed to create context");
+        let mut storage = Storage::new();
+        let mut strings = StringInterner::default();
+        let mut stats = SerializeStats::default();
+        let mut batch = ChunkedVec::<_, BATCH_CHUNK_CAPACITY>::default();
+
+        let fake_hash_id = HashId::try_from(1).unwrap();
+
+        let mut data = Vec::with_capacity(1024);
+
+        let commit = Commit {
+            parent_commit_ref: None,
+            root_ref: ObjectReference::new(HashId::new(12345), None),
+            time: 12345,
+            author: "123".to_string(),
+            message: "abc".to_string(),
+        };
+
+        serialize_object(
+            &Object::Commit(Box::new(commit.clone())),
+            fake_hash_id,
+            &mut data,
+            &storage,
+            &strings,
+            &mut stats,
+            &mut batch,
+            &mut repo,
+            None,
+        )
+        .unwrap();
+        let object = deserialize_object(&data, &mut storage, &mut strings, &repo).unwrap();
+        if let Object::Commit(object) = object {
+            assert_eq!(*object, commit);
+        } else {
+            panic!();
+        }
+
+        let iter = iter_hash_ids(&data);
+        assert_eq!(iter.map(|h| h.as_u64()).collect::<Vec<_>>(), &[12345]);
+
+        let parent = commit_parent_hash(&data);
+        assert_eq!(parent, None);
     }
 
     #[test]
