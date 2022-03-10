@@ -21,7 +21,8 @@ use crate::{
         in_memory::OBJECTS_CHUNK_CAPACITY, index_map::IndexMap,
         inline_boxed_slice::InlinedBoxedSlice, HashId, HashIdError,
     },
-    serialize::in_memory::iter_hash_ids,
+    serialize::in_memory::{self, iter_hash_ids},
+    working_tree::{storage::Storage, string_interner::StringInterner},
     ObjectHash,
 };
 
@@ -53,6 +54,66 @@ pub const PRESERVE_BLOCK_LEVEL: u8 = 3;
 pub(crate) static GC_PENDING_HASHIDS: AtomicUsize = AtomicUsize::new(0);
 
 type ChunkIndex = u32;
+
+/// A number in the range [0; 127]
+///
+/// This replace an `Option<u8>` so that `Generation` is 1 byte
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+struct Generation {
+    inner: u8,
+}
+
+impl Default for Generation {
+    fn default() -> Self {
+        Self::zero()
+    }
+}
+
+#[cfg(test)]
+impl From<u8> for Generation {
+    fn from(inner: u8) -> Self {
+        assert!(inner < 128);
+        Self { inner }
+    }
+}
+
+impl Generation {
+    const fn none() -> Self {
+        Self { inner: 1 << 7 }
+    }
+
+    #[cfg(test)]
+    const fn is_none(self) -> bool {
+        self.inner >> 7 != 0
+    }
+
+    const fn zero() -> Self {
+        Self { inner: 0 }
+    }
+
+    const fn wrapping_sub(self, rhs: u8) -> Self {
+        if rhs > self.inner {
+            assert!(rhs < 128); // Do not handle this case
+
+            let diff = rhs - self.inner;
+            Self { inner: 128 - diff }
+        } else {
+            Self {
+                inner: self.inner - rhs,
+            }
+        }
+    }
+
+    const fn wrapping_increment(&self) -> Self {
+        if self.inner == 127 {
+            Self { inner: 0 }
+        } else {
+            Self {
+                inner: self.inner + 1,
+            }
+        }
+    }
+}
 
 pub(crate) struct GCThread {
     /// Queue of `HashId` the main thread can reuse
@@ -95,7 +156,7 @@ pub(crate) struct GCThread {
     /// to `Self::current_generation`.
     ///
     /// Used to know when a `HashId` can be reused
-    objects_generation: IndexMap<HashId, Option<u8>, 1_000_000>,
+    objects_generation: IndexMap<HashId, Generation, 1_000_000>,
     /// Current generation of the garbage collector
     ///
     /// This is incremented (wrapping around) _at most_ every time the block level
@@ -107,7 +168,7 @@ pub(crate) struct GCThread {
     /// - A fork is created, in that case the block level is not incremented
     /// - The garbage collector is late, the main thread applied some blocks while
     ///   the garbage collection was running
-    current_generation: u8,
+    current_generation: Generation,
 
     /// Keep track of how many objects/hashes are alive per chunk
     ///
@@ -179,7 +240,7 @@ impl GCThread {
             pending: ChunkedVec::default(),
             debug: false,
             objects_generation: IndexMap::default(),
-            current_generation: 0,
+            current_generation: Generation::zero(),
             objects_view,
             hashes_view,
             nalives_per_chunk: IndexMap::default(),
@@ -374,7 +435,7 @@ impl GCThread {
     fn traverse_and_mark_tree(
         &mut self,
         hash_id: HashId,
-        current_generation: u8,
+        current_generation: Generation,
         nobjects: &mut usize,
         depth: usize,
         max_depth: &mut usize,
@@ -412,9 +473,8 @@ impl GCThread {
 
         {
             // Update the generation of the HashId (object/hash)
-            self.objects_generation
-                .entry(hash_id)?
-                .replace(current_generation);
+            let generation = self.objects_generation.entry(hash_id)?;
+            *generation = current_generation;
         }
 
         // Recursively update generation of all the children
@@ -448,7 +508,7 @@ impl GCThread {
 
         // Loop on all objects ever created, and push the unused ones in `unused`
         for (hash_id, generation) in self.objects_generation.iter_with_keys() {
-            if !matches!(generation, Some(generation) if *generation == unused_at) {
+            if !matches!(generation, generation if *generation == unused_at) {
                 continue;
             }
 
@@ -465,7 +525,8 @@ impl GCThread {
             let (_, _is_hash_dealloc) = self.hashes_view.clear(hash_id)?;
 
             // Remove the generation of the HashId
-            self.objects_generation.insert_at(hash_id, None)?;
+            self.objects_generation
+                .insert_at(hash_id, Generation::none())?;
 
             // Update `Self::nalives_per_chunks`
             let chunk_index = self.hashes_view.chunk_index_of(hash_id)? as u32;
@@ -485,7 +546,7 @@ impl GCThread {
         for hash_id in new_ids.iter().copied() {
             // A `HashId` is used, update its generation
             self.objects_generation
-                .insert_at(hash_id, Some(self.current_generation))?;
+                .insert_at(hash_id, self.current_generation)?;
 
             // Update `Self::nalives_per_chunks`
             let chunk_index = self.hashes_view.chunk_index_of(hash_id)? as u32;
@@ -562,7 +623,7 @@ impl GCThread {
         self.pending.append_chunks(unused);
 
         if increment_generation {
-            self.current_generation = self.current_generation.wrapping_add(1);
+            self.current_generation = self.current_generation.wrapping_increment();
         };
 
         if self.debug {
@@ -604,6 +665,74 @@ mod tests {
     use super::*;
 
     #[test]
+    #[should_panic]
+    fn wrapping_sub_generation_panic() {
+        let zero = Generation::zero();
+        zero.wrapping_sub(128);
+    }
+
+    #[test]
+    #[should_panic]
+    fn generation_from_panic() {
+        let _ = Generation::from(128);
+    }
+
+    #[test]
+    fn wrapping_inc_generation() {
+        let mut n = Generation::from(127);
+        for i in 1..1_000u16 {
+            n = n.wrapping_increment();
+            assert_eq!(n, Generation::from(((i - 1) & 0b01111111) as u8));
+            assert!(!n.is_none());
+        }
+    }
+
+    #[test]
+    fn none_generation() {
+        let none = Generation::none();
+        assert!(none.is_none());
+    }
+
+    #[test]
+    fn wrapping_sub_generation() {
+        let zero = Generation::zero();
+
+        for i in 1..20 {
+            assert_eq!(zero.wrapping_sub(i), Generation::from(128 - i));
+        }
+        assert_eq!(zero.wrapping_sub(1), Generation::from(127));
+        assert_eq!(zero.wrapping_sub(2), Generation::from(126));
+        assert_eq!(zero.wrapping_sub(3), Generation::from(125));
+
+        let one = zero.wrapping_increment();
+        assert_eq!(one, Generation::from(1));
+
+        for i in 2..20 {
+            assert_eq!(one.wrapping_sub(i), Generation::from(128 - i + 1));
+        }
+        assert_eq!(one.wrapping_sub(1), Generation::from(0));
+        assert_eq!(one.wrapping_sub(2), Generation::from(127));
+        assert_eq!(one.wrapping_sub(3), Generation::from(126));
+
+        let two = one.wrapping_increment();
+        assert_eq!(two, Generation::from(2));
+
+        for i in 3..20 {
+            assert_eq!(two.wrapping_sub(i), Generation::from(128 - i + 2));
+        }
+        assert_eq!(two.wrapping_sub(1), Generation::from(1));
+        assert_eq!(two.wrapping_sub(2), Generation::from(0));
+        assert_eq!(two.wrapping_sub(3), Generation::from(127));
+        assert_eq!(two.wrapping_sub(4), Generation::from(126));
+
+        let n = Generation::from(127);
+
+        for i in 0..20 {
+            assert_eq!(n.wrapping_sub(i), Generation::from(127 - i));
+        }
+    }
+
+    #[test]
     fn level_generation() {
         // Make sure that `GCThread::current_generation` is incremented on an increased block level
         let mut objects = SharedIndexMap::default();
@@ -626,12 +755,12 @@ mod tests {
 
         gc.add_chunks(objects.clone_new_chunks(), None);
 
-        let before = gc.current_generation;
+        let before = gc.current_generation.inner;
 
         {
             const BLOCK_LEVEL: u32 = 10;
             gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
-            assert_eq!(gc.current_generation, before + 1);
+            assert_eq!(gc.current_generation, Generation::from(before + 1));
 
             gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
 
@@ -639,7 +768,7 @@ mod tests {
             gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
             gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
             gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
-            assert_eq!(gc.current_generation, before + 1);
+            assert_eq!(gc.current_generation, Generation::from(before + 1));
         }
 
         {
@@ -648,13 +777,13 @@ mod tests {
             // New `block_level`
             const BLOCK_LEVEL: u32 = 11;
             gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
-            assert_eq!(gc.current_generation, before + 2);
+            assert_eq!(gc.current_generation, Generation::from(before + 2));
             // Same `block_level`
             gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
             gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
             gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
             gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
-            assert_eq!(gc.current_generation, before + 2);
+            assert_eq!(gc.current_generation, Generation::from(before + 2));
         }
 
         {
@@ -662,13 +791,13 @@ mod tests {
             const BLOCK_LEVEL: u32 = 10;
             gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
             gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
-            assert_eq!(gc.current_generation, before + 2);
+            assert_eq!(gc.current_generation, Generation::from(before + 2));
             // Same `block_level`
             gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
             gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
             gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
             gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
-            assert_eq!(gc.current_generation, before + 2);
+            assert_eq!(gc.current_generation, Generation::from(before + 2));
         }
 
         {
@@ -676,13 +805,13 @@ mod tests {
             const BLOCK_LEVEL: u32 = 11;
             gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
             gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
-            assert_eq!(gc.current_generation, before + 2);
+            assert_eq!(gc.current_generation, Generation::from(before + 2));
             // Same `block_level`
             gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
             gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
             gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
             gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
-            assert_eq!(gc.current_generation, before + 2);
+            assert_eq!(gc.current_generation, Generation::from(before + 2));
         }
 
         {
@@ -690,13 +819,13 @@ mod tests {
             const BLOCK_LEVEL: u32 = 12;
             gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
             gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
-            assert_eq!(gc.current_generation, before + 3);
+            assert_eq!(gc.current_generation, Generation::from(before + 3));
             // Same `block_level`
             gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
             gc.handle_commit(chunks.clone(), BLOCK_LEVEL, id).unwrap();
             gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
             gc.handle_commit(chunks, BLOCK_LEVEL, id).unwrap();
-            assert_eq!(gc.current_generation, before + 3);
+            assert_eq!(gc.current_generation, Generation::from(before + 3));
         }
     }
 }
