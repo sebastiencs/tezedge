@@ -431,6 +431,85 @@ impl GCThread {
         }
     }
 
+    fn get_children_hash_ids(
+        &self,
+        hash_id: HashId,
+        hash_ids: &mut [Option<HashId>; 256],
+    ) -> Result<(), GCError> {
+        // Store the `HashId` of the children in this array, we avoid
+        // allocating a `Vec`
+        // The maximum depth of recursion is currently `16`, so a stack
+        // overflow will not occurs.
+        // Note: We could create a container that allocate a `Vec` when
+        // some `depth` is reached
+
+        self.objects_view.with(hash_id, |object_bytes| {
+            let object_bytes = match object_bytes {
+                Some(Some(object_bytes)) => object_bytes,
+                _ => {
+                    elog!("Missing Object object={:?}", object_bytes);
+                    return Err(GCError::TraverseTreeError);
+                }
+            };
+
+            // Store the `HashId` of all the children in `hash_ids`
+            for (index, hash_id) in iter_hash_ids(object_bytes).enumerate() {
+                hash_ids[index] = Some(hash_id);
+            }
+
+            Ok(())
+        })??;
+
+        Ok(())
+    }
+
+    fn traverse_to_make_snapshot(
+        &mut self,
+        hash_id: HashId,
+        storage: &mut Storage,
+        strings: &mut StringInterner,
+        bytes: &mut Vec<u8>,
+    ) -> Result<(), GCError> {
+        let mut hash_ids = [None::<HashId>; 256];
+        self.get_children_hash_ids(hash_id, &mut hash_ids)?;
+
+        // Recursively serialize all the children
+        for hash_id in hash_ids {
+            let hash_id = match hash_id {
+                Some(hash_id) => hash_id,
+                None => break,
+            };
+            self.traverse_to_make_snapshot(hash_id, storage, strings, bytes);
+        }
+
+        bytes.clear();
+
+        self.objects_view
+            .with(hash_id, |object_bytes| {
+                let object_bytes = match object_bytes {
+                    Some(Some(object_bytes)) => object_bytes,
+                    _ => {
+                        elog!("Missing Object object={:?}", object_bytes);
+                        return Err(GCError::TraverseTreeError);
+                    }
+                };
+                bytes.extend_from_slice(object_bytes);
+
+                // Store the `HashId` of all the children in `hash_ids`
+                for (index, hash_id) in iter_hash_ids(object_bytes).enumerate() {
+                    hash_ids[index] = Some(hash_id);
+                }
+
+                Ok(())
+            })
+            .unwrap()
+            .unwrap();
+
+        // in_memory::deserialize_object(object_bytes, storage, strings, self).unwrap();
+
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn traverse_and_mark_tree(
         &mut self,
