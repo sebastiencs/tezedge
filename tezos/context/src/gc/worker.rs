@@ -21,9 +21,12 @@ use crate::{
         in_memory::OBJECTS_CHUNK_CAPACITY, index_map::IndexMap,
         inline_boxed_slice::InlinedBoxedSlice, HashId, HashIdError,
     },
-    serialize::in_memory::{self, iter_hash_ids},
+    serialize::{
+        in_memory::{self, iter_hash_ids},
+        persistent,
+    },
     working_tree::{storage::Storage, string_interner::StringInterner},
-    ObjectHash,
+    ContextKeyValueStore, ObjectHash,
 };
 
 use tezos_spsc::Producer;
@@ -463,74 +466,7 @@ impl GCThread {
         Ok(())
     }
 
-    fn traverse_to_make_snapshot(
-        &mut self,
-        hash_id: HashId,
-        storage: &mut Storage,
-        strings: &mut StringInterner,
-        bytes: &mut Vec<u8>,
-    ) -> Result<(), GCError> {
-        let mut hash_ids = [None::<HashId>; 256];
-        self.get_children_hash_ids(hash_id, &mut hash_ids)?;
-
-        // Recursively serialize all the children
-        for hash_id in hash_ids {
-            let hash_id = match hash_id {
-                Some(hash_id) => hash_id,
-                None => break,
-            };
-            self.traverse_to_make_snapshot(hash_id, storage, strings, bytes);
-        }
-
-        bytes.clear();
-
-        self.objects_view
-            .with(hash_id, |object_bytes| {
-                let object_bytes = match object_bytes {
-                    Some(Some(object_bytes)) => object_bytes,
-                    _ => {
-                        elog!("Missing Object object={:?}", object_bytes);
-                        return Err(GCError::TraverseTreeError);
-                    }
-                };
-                bytes.extend_from_slice(object_bytes);
-
-                // Store the `HashId` of all the children in `hash_ids`
-                for (index, hash_id) in iter_hash_ids(object_bytes).enumerate() {
-                    hash_ids[index] = Some(hash_id);
-                }
-
-                Ok(())
-            })
-            .unwrap()
-            .unwrap();
-
-        // in_memory::deserialize_object(object_bytes, storage, strings, self).unwrap();
-
-        Ok(())
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn traverse_and_mark_tree(
-        &mut self,
-        hash_id: HashId,
-        current_generation: Generation,
-        nobjects: &mut usize,
-        depth: usize,
-        max_depth: &mut usize,
-        objets_total_bytes: &mut usize,
-    ) -> Result<(), GCError> {
-        *nobjects += 1;
-        *max_depth = depth.max(*max_depth);
-
-        // Store the `HashId` of the children in this array, we avoid
-        // allocating a `Vec`
-        // The maximum depth of recursion is currently `16`, so a stack
-        // overflow will not occurs.
-        // Note: We could create a container that allocate a `Vec` when
-        // some `depth` is reached
-        let mut hash_ids = [None::<HashId>; 256];
-
+    fn with_object(&self, hash_id: HashId, fun: impl FnOnce(&[u8])) -> Result<(), GCError> {
         self.objects_view.with(hash_id, |object_bytes| {
             let object_bytes = match object_bytes {
                 Some(Some(object_bytes)) => object_bytes,
@@ -540,40 +476,155 @@ impl GCThread {
                 }
             };
 
-            *objets_total_bytes += object_bytes.len();
-
-            // Store the `HashId` of all the children in `hash_ids`
-            for (index, hash_id) in iter_hash_ids(object_bytes).enumerate() {
-                hash_ids[index] = Some(hash_id);
-            }
+            fun(object_bytes);
 
             Ok(())
-        })??;
+        })?
+    }
+
+    fn traverse_and_mark_tree(
+        &mut self,
+        hash_id: HashId,
+        hash_ids: &mut ChunkedVec<HashId, 8192>,
+        nobjects: &mut usize,
+        depth: usize,
+        max_depth: &mut usize,
+        objets_total_bytes: &mut usize,
+    ) -> Result<(), GCError> {
+        *nobjects += 1;
+        *max_depth = depth.max(*max_depth);
+
+        let start = hash_ids.len();
+        self.with_object(hash_id, |object_bytes| {
+            *objets_total_bytes += object_bytes.len();
+            for hash_id in iter_hash_ids(object_bytes) {
+                hash_ids.push(hash_id);
+            }
+        })?;
+        let end = hash_ids.len();
 
         {
             // Update the generation of the HashId (object/hash)
             let generation = self.objects_generation.entry(hash_id)?;
-            *generation = current_generation;
+            *generation = self.current_generation;
         }
 
-        // Recursively update generation of all the children
-        for hash_id in hash_ids {
-            let hash_id = match hash_id {
-                Some(hash_id) => hash_id,
-                None => break,
-            };
+        for index in start..end {
+            let hash_id = hash_ids[index];
             self.traverse_and_mark_tree(
                 hash_id,
-                current_generation,
+                hash_ids,
                 nobjects,
-                depth + 1,
+                depth,
                 max_depth,
                 objets_total_bytes,
             )?;
         }
 
+        assert_eq!(hash_ids.len(), end);
+        hash_ids.remove_last_nelems(end - start);
+
         Ok(())
     }
+
+    fn traverse_to_make_snapshot(
+        &mut self,
+        hash_id: HashId,
+        hash_ids: &mut ChunkedVec<HashId, 8192>,
+        storage: &mut Storage,
+        strings: &mut StringInterner,
+        bytes: &mut Vec<u8>,
+        repository: &ContextKeyValueStore,
+    ) -> Result<(), GCError> {
+        let start = hash_ids.len();
+        self.with_object(hash_id, |object_bytes| {
+            for hash_id in iter_hash_ids(object_bytes) {
+                hash_ids.push(hash_id);
+            }
+        })?;
+        let end = hash_ids.len();
+
+        for index in start..end {
+            let hash_id = hash_ids[index];
+            self.traverse_to_make_snapshot(hash_id, hash_ids, storage, strings, bytes, repository);
+        }
+
+        bytes.clear();
+        self.with_object(hash_id, |object_bytes| {
+            bytes.extend_from_slice(object_bytes);
+        })?;
+
+        let object = in_memory::deserialize_object(bytes, storage, strings, repository).unwrap();
+
+        // persistent::serialize_object(&object, hash_id, output, storage, strings, stats, batch, repository, file_offset);
+
+        Ok(())
+    }
+
+    // #[allow(clippy::too_many_arguments)]
+    // fn traverse_and_mark_tree(
+    //     &mut self,
+    //     hash_id: HashId,
+    //     current_generation: Generation,
+    //     nobjects: &mut usize,
+    //     depth: usize,
+    //     max_depth: &mut usize,
+    //     objets_total_bytes: &mut usize,
+    // ) -> Result<(), GCError> {
+    //     *nobjects += 1;
+    //     *max_depth = depth.max(*max_depth);
+
+    //     // Store the `HashId` of the children in this array, we avoid
+    //     // allocating a `Vec`
+    //     // The maximum depth of recursion is currently `16`, so a stack
+    //     // overflow will not occurs.
+    //     // Note: We could create a container that allocate a `Vec` when
+    //     // some `depth` is reached
+    //     let mut hash_ids = [None::<HashId>; 256];
+
+    //     self.objects_view.with(hash_id, |object_bytes| {
+    //         let object_bytes = match object_bytes {
+    //             Some(Some(object_bytes)) => object_bytes,
+    //             _ => {
+    //                 elog!("Missing Object object={:?}", object_bytes);
+    //                 return Err(GCError::TraverseTreeError);
+    //             }
+    //         };
+
+    //         *objets_total_bytes += object_bytes.len();
+
+    //         // Store the `HashId` of all the children in `hash_ids`
+    //         for (index, hash_id) in iter_hash_ids(object_bytes).enumerate() {
+    //             hash_ids[index] = Some(hash_id);
+    //         }
+
+    //         Ok(())
+    //     })??;
+
+    //     {
+    //         // Update the generation of the HashId (object/hash)
+    //         let generation = self.objects_generation.entry(hash_id)?;
+    //         *generation = current_generation;
+    //     }
+
+    //     // Recursively update generation of all the children
+    //     for hash_id in hash_ids {
+    //         let hash_id = match hash_id {
+    //             Some(hash_id) => hash_id,
+    //             None => break,
+    //         };
+    //         self.traverse_and_mark_tree(
+    //             hash_id,
+    //             current_generation,
+    //             nobjects,
+    //             depth + 1,
+    //             max_depth,
+    //             objets_total_bytes,
+    //         )?;
+    //     }
+
+    //     Ok(())
+    // }
 
     fn take_unused(&mut self) -> Result<ChunkedVec<HashId, { UNUSED_CHUNK_CAPACITY }>, GCError> {
         // Mark all objects/hashes at `current_generation - (PRESERVE_BLOCK_LEVEL + 1)`
@@ -687,9 +738,10 @@ impl GCThread {
         let mut nobjects = 0;
         let mut max_depth = 0;
         let mut object_total_bytes = 0;
+        let mut hash_ids = ChunkedVec::default();
         self.traverse_and_mark_tree(
             commit_hash_id,
-            self.current_generation,
+            &mut hash_ids,
             &mut nobjects,
             1,
             &mut max_depth,
