@@ -272,18 +272,12 @@ impl TreeWalkerLevel {
             }
         };
 
-        let repository = match root.index.repository.read() {
-            Ok(repo) => repo,
-            Err(e) => {
-                eprintln!("TreeWalkerLevel Failed to lock repository: {:?}", e);
-                return Vec::new();
-            }
-        };
-
         let fun = match order {
             FoldOrder::Sorted => Storage::dir_to_vec_sorted,
             FoldOrder::Undefined => Storage::dir_to_vec_unsorted,
         };
+
+        let repository = root.index.repository.read();
 
         match fun(&mut storage, dir_id, &mut strings, &*repository) {
             Ok(dir) => dir,
@@ -754,7 +748,7 @@ impl WorkingTree {
     /// Returns the root hash of this working tree.
     pub fn hash(&self) -> Result<ObjectHash, MerkleError> {
         let storage = self.index.storage.borrow();
-        let mut repo = self.index.repository.write()?;
+        let mut repo = self.index.repository.write();
 
         let hash_id = match self.root {
             WorkingTreeRoot::Directory(_) => self.get_root_directory_hash(&mut *repo)?,
@@ -803,7 +797,7 @@ impl WorkingTree {
     ) -> Result<Vec<(String, WorkingTree)>, MerkleError> {
         let root = self.get_root_directory();
         let mut storage = self.index.storage.borrow_mut();
-        let repository = self.index.repository.read()?;
+        let repository = self.index.repository.read();
         let mut strings = self.index.get_string_interner()?;
 
         let dir_id = self.find_or_create_directory(root, key, &mut storage, &mut strings)?;
@@ -1130,7 +1124,7 @@ impl WorkingTree {
             return Ok(Object::Directory(self.get_root_directory()));
         }
 
-        let repository = self.index.repository.read()?;
+        let repository = self.index.repository.read();
         let dir_id = match new_dir_entry {
             None => storage.dir_remove(dir_id, last, strings, &*repository)?,
             Some(new_dir_entry) => {
@@ -1366,7 +1360,7 @@ impl WorkingTree {
             }
             Object::Directory(dir_id) => {
                 let dir = {
-                    let repository = self.index.repository.read()?;
+                    let repository = self.index.repository.read();
                     storage.dir_to_vec_unsorted(dir_id, strings, &*repository)?
                 };
 
@@ -1375,7 +1369,7 @@ impl WorkingTree {
 
                     let dir_hash = match object_hash_id {
                         Some(hash_id) => {
-                            let repository = self.index.repository.read()?;
+                            let repository = self.index.repository.read();
                             Some(repository.get_hash(hash_id.into())?.to_vec())
                         }
                         None => None,
@@ -1415,7 +1409,7 @@ impl WorkingTree {
                     let dir_entry = storage.get_dir_entry(dir_entry_id)?;
 
                     let object_hash_id = {
-                        let mut repository = self.index.repository.write()?;
+                        let mut repository = self.index.repository.write();
                         match dir_entry.object_hash_id(&mut *repository, storage, strings)? {
                             Some(hash_id) => {
                                 assert!(dir_entry.get_hash_id().is_ok());

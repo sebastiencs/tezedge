@@ -7,7 +7,7 @@ use std::{
     convert::TryInto,
     hash::Hasher,
     io::{Read, Write},
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
 
 use super::inline_boxed_slice::InlinedBoxedSlice;
@@ -17,6 +17,7 @@ use blake2::{
     VarBlake2b,
 };
 use crypto::hash::{ContextHash, HashTrait};
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tezos_timing::{RepositoryMemoryUsage, SerializeStats};
 
@@ -46,7 +47,7 @@ use crate::{
         working_tree::{PostCommitData, SerializeOutput, WorkingTree},
         Object, ObjectReference,
     },
-    Map, ObjectHash,
+    ContextKeyValueStore, Map, ObjectHash,
 };
 
 use super::{hashes::HashesContainer, in_memory::BATCH_CHUNK_CAPACITY, HashId, VacantObjectHash};
@@ -596,6 +597,10 @@ hashes_file={:?}, in sizes.db={:?}",
         Ok(())
     }
 
+    pub fn data_file_offset(&self) -> AbsoluteOffset {
+        self.data_file.offset()
+    }
+
     fn update_sizes_to_disk(
         &mut self,
         output: Option<&mut File<{ TAG_SIZES }>>,
@@ -913,6 +918,13 @@ impl KeyValueStoreBackend for Persistent {
         }
 
         Ok(())
+    }
+
+    fn store_own_repository(
+        &mut self,
+        repository: Arc<RwLock<ContextKeyValueStore>>,
+    ) -> Result<(), DBError> {
+        todo!()
     }
 
     fn contains(&self, hash_id: HashId) -> Result<bool, DBError> {

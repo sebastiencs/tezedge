@@ -8,12 +8,8 @@
 
 use core::borrow::Borrow;
 use lazy_static::lazy_static;
-use std::{
-    cell::RefCell,
-    convert::TryFrom,
-    rc::Rc,
-    sync::{Arc, RwLock},
-};
+use parking_lot::RwLock;
+use std::{cell::RefCell, convert::TryFrom, rc::Rc, sync::Arc};
 
 use ocaml_interop::*;
 
@@ -181,7 +177,6 @@ pub enum TezedgeIndexError {
 fn set_context_index(index: &TezedgeIndex) -> Result<(), TezedgeIndexError> {
     TEZEDGE_CONTEXT_REPOSITORY
         .write()
-        .map_err(|_| TezedgeIndexError::LockPoisonError)?
         .replace(Arc::clone(&index.repository));
     Ok(())
 }
@@ -190,7 +185,6 @@ fn set_context_index(index: &TezedgeIndex) -> Result<(), TezedgeIndexError> {
 pub fn get_context_index() -> Result<Option<TezedgeIndex>, TezedgeIndexError> {
     Ok(TEZEDGE_CONTEXT_REPOSITORY
         .read()
-        .map_err(|_| TezedgeIndexError::LockPoisonError)?
         .as_ref()
         .map(|repository| TezedgeIndex::new(Arc::clone(repository), None)))
 }

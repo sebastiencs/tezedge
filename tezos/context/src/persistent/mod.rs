@@ -1,9 +1,16 @@
 // Copyright (c) SimpleStaking, Viable Systems and Tezedge Contributors
 // SPDX-License-Identifier: MIT
 
-use std::{borrow::Cow, collections::HashMap, convert::TryFrom, io, sync::PoisonError};
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    convert::TryFrom,
+    io,
+    sync::{Arc, PoisonError},
+};
 
 use crypto::hash::ContextHash;
+use parking_lot::RwLock;
 use thiserror::Error;
 
 use tezos_timing::{RepositoryMemoryUsage, SerializeStats};
@@ -139,6 +146,11 @@ pub trait KeyValueStoreBackend {
     fn make_hash_id_ready_for_commit(&mut self, hash_id: HashId) -> Result<HashId, DBError>;
     /// Reload the persistent database and verify its integrity
     fn reload_database(&mut self) -> Result<(), ReloadError>;
+    /// Reload the persistent database and verify its integrity
+    fn store_own_repository(
+        &mut self,
+        repository: Arc<RwLock<ContextKeyValueStore>>,
+    ) -> Result<(), DBError>;
     /// Reload the persistent database and verify its integrity
     fn add_serialized_objects(
         &mut self,

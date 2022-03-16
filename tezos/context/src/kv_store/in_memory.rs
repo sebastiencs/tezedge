@@ -8,7 +8,7 @@ use std::{
     collections::VecDeque,
     mem::size_of,
     rc::Rc,
-    sync::{atomic::Ordering, Arc, RwLock},
+    sync::{atomic::Ordering, Arc},
     thread::JoinHandle,
 };
 
@@ -18,6 +18,7 @@ use crate::serialize::persistent::AbsoluteOffset;
 use crossbeam_channel::Sender;
 use crypto::hash::ContextHash;
 
+use parking_lot::RwLock;
 use tezos_timing::{RepositoryMemoryUsage, SerializeStats};
 
 use crate::{
@@ -302,6 +303,13 @@ impl KeyValueStoreBackend for InMemory {
         self.reload_database()
     }
 
+    fn store_own_repository(
+        &mut self,
+        repository: Arc<RwLock<ContextKeyValueStore>>,
+    ) -> Result<(), DBError> {
+        todo!()
+    }
+
     fn contains(&self, hash_id: HashId) -> Result<bool, DBError> {
         self.contains(hash_id)
     }
@@ -539,7 +547,7 @@ impl InMemory {
             // It is necessary for our new repository to have it.
             let parent_hash: Option<ObjectHash> = match commit.parent_commit_ref {
                 Some(parent) => {
-                    let repo = read_repo.read()?;
+                    let repo = read_repo.read();
                     Some(repo.get_hash(parent)?.into_owned())
                 }
                 None => None,

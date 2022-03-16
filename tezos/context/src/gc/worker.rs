@@ -9,6 +9,7 @@ use std::{
 
 use crossbeam_channel::{Receiver, RecvError};
 use static_assertions::assert_eq_size;
+use tezos_timing::SerializeStats;
 use thiserror::Error;
 
 use crate::{
@@ -18,15 +19,20 @@ use crate::{
         stats::{CollectorStatistics, CommitStatistics, OnMessageStatistics},
     },
     kv_store::{
-        in_memory::OBJECTS_CHUNK_CAPACITY, index_map::IndexMap,
-        inline_boxed_slice::InlinedBoxedSlice, HashId, HashIdError,
+        in_memory::{BATCH_CHUNK_CAPACITY, OBJECTS_CHUNK_CAPACITY},
+        index_map::IndexMap,
+        inline_boxed_slice::InlinedBoxedSlice,
+        persistent::PersistentConfiguration,
+        HashId, HashIdError,
     },
     serialize::{
         in_memory::{self, iter_hash_ids},
         persistent,
     },
-    working_tree::{storage::Storage, string_interner::StringInterner},
-    ContextKeyValueStore, ObjectHash,
+    working_tree::{
+        storage::Storage, string_interner::StringInterner, working_tree::SerializeOutput,
+    },
+    ContextKeyValueStore, ObjectHash, Persistent,
 };
 
 use tezos_spsc::Producer;
@@ -534,7 +540,10 @@ impl GCThread {
         storage: &mut Storage,
         strings: &mut StringInterner,
         bytes: &mut Vec<u8>,
-        repository: &ContextKeyValueStore,
+        repository: &mut ContextKeyValueStore,
+        output: &mut SerializeOutput,
+        stats: &mut SerializeStats,
+        batch: &mut ChunkedVec<(HashId, InlinedBoxedSlice), { BATCH_CHUNK_CAPACITY }>,
     ) -> Result<(), GCError> {
         let start = hash_ids.len();
         self.with_object(hash_id, |object_bytes| {
@@ -546,7 +555,10 @@ impl GCThread {
 
         for index in start..end {
             let hash_id = hash_ids[index];
-            self.traverse_to_make_snapshot(hash_id, hash_ids, storage, strings, bytes, repository);
+            self.traverse_to_make_snapshot(
+                hash_id, hash_ids, storage, strings, bytes, repository, output, stats, batch,
+            )
+            .unwrap();
         }
 
         bytes.clear();
@@ -556,7 +568,10 @@ impl GCThread {
 
         let object = in_memory::deserialize_object(bytes, storage, strings, repository).unwrap();
 
-        // persistent::serialize_object(&object, hash_id, output, storage, strings, stats, batch, repository, file_offset);
+        persistent::serialize_object(
+            &object, hash_id, output, storage, strings, stats, batch, repository,
+        )
+        .unwrap();
 
         Ok(())
     }
@@ -731,6 +746,38 @@ impl GCThread {
             self.send_unused_on_empty_channel();
             return Ok(());
         }
+
+        // {
+        //     println!("RUNNING SNAPSHOT");
+
+        //     let mut hash_ids = ChunkedVec::default();
+        //     let mut storage = Storage::default();
+        //     let mut strings = StringInterner::default();
+        //     let mut bytes = Vec::with_capacity(1024);
+        //     let mut stats = SerializeStats::default();
+        //     let mut batch = Default::default();
+
+        //     let mut repository = Persistent::try_new(PersistentConfiguration {
+        //         db_path: Some("/tmp/tezedge-mem/".to_string()),
+        //         startup_check: false,
+        //         read_mode: false,
+        //     }).unwrap();
+
+        //     let file_offset = repository.data_file_offset();
+        //     let mut output = SerializeOutput::new(Some(file_offset));
+
+        //     self.traverse_to_make_snapshot(
+        //         commit_hash_id,
+        //         &mut hash_ids,
+        //         &mut storage,
+        //         &mut strings,
+        //         &mut bytes,
+        //         &mut repository,
+        //         &mut output,
+        //         &mut stats,
+        //         &mut batch,
+        //     ).unwrap();
+        // }
 
         self.napplieds_since_last_run = 0;
         self.send_unused()?;

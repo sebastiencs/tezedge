@@ -1,14 +1,12 @@
 // Copyright (c) SimpleStaking, Viable Systems and Tezedge Contributors
 // SPDX-License-Identifier: MIT
 
-use std::{
-    path::PathBuf,
-    sync::{Arc, RwLock},
-};
+use std::{path::PathBuf, sync::Arc};
 
 use crate::log::print;
 use clap::{Parser, Subcommand};
 use crypto::hash::{ContextHash, HashTrait};
+use parking_lot::RwLock;
 use tezos_context::{
     kv_store::persistent::{FileSizes, PersistentConfiguration},
     persistent::file::{File, TAG_SIZES},
@@ -175,7 +173,7 @@ fn main() {
             let context = index.checkout(&context_hash).unwrap().unwrap();
             let stats = context.tree.traverse_working_tree(true).unwrap();
 
-            let repo = context.index.repository.read().unwrap();
+            let repo = context.index.repository.read();
             let repo_stats = repo.get_read_statistics().unwrap().unwrap();
 
             let mut stats = stats.unwrap();
