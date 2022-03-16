@@ -10,7 +10,6 @@ use std::{
     sync::Mutex,
 };
 
-#[cfg(test)]
 use super::inline_boxed_slice::InlinedBoxedSlice;
 
 use blake2::{
@@ -22,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use tezos_timing::{RepositoryMemoryUsage, SerializeStats};
 
 use crate::{
+    chunks::ChunkedVec,
     gc::NotGarbageCollected,
     hash::OBJECT_HASH_LEN,
     initializer::IndexInitializationError,
@@ -43,13 +43,13 @@ use crate::{
         shape::{DirectoryShapeId, DirectoryShapes, ShapeStrings},
         storage::{DirEntryId, DirectoryOrInodeId, Storage},
         string_interner::{StringId, StringInterner},
-        working_tree::{PostCommitData, WorkingTree},
+        working_tree::{PostCommitData, SerializeOutput, WorkingTree},
         Object, ObjectReference,
     },
     Map, ObjectHash,
 };
 
-use super::{hashes::HashesContainer, HashId, VacantObjectHash};
+use super::{hashes::HashesContainer, in_memory::BATCH_CHUNK_CAPACITY, HashId, VacantObjectHash};
 
 const FIRST_READ_OBJECT_LENGTH: usize = 4096;
 const SIZES_NUMBER_OF_LINES: usize = 10;
@@ -1115,6 +1115,16 @@ impl KeyValueStoreBackend for Persistent {
             .map_err(|err| DBError::CommitToDiskError { err })?;
 
         Ok((commit_hash, serialize_stats))
+    }
+
+    fn add_serialized_objects(
+        &mut self,
+        _batch: ChunkedVec<(HashId, InlinedBoxedSlice), { BATCH_CHUNK_CAPACITY }>,
+        output: &mut SerializeOutput,
+    ) -> Result<(), DBError> {
+        self.data_file.append(output.as_slice())?;
+        output.clear();
+        Ok(())
     }
 
     fn get_hash_id(&self, object_ref: ObjectReference) -> Result<HashId, DBError> {

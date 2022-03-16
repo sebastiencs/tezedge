@@ -37,7 +37,7 @@ use crate::{
         shape::{DirectoryShapeId, DirectoryShapes, ShapeStrings},
         storage::{DirEntryId, DirectoryOrInodeId, Storage},
         string_interner::{StringId, StringInterner},
-        working_tree::{PostCommitData, WorkingTree},
+        working_tree::{PostCommitData, SerializeOutput, WorkingTree},
         Commit, Object, ObjectReference,
     },
     ContextKeyValueStore, IndexApi, Map, Persistent, TezedgeIndex,
@@ -413,6 +413,14 @@ impl KeyValueStoreBackend for InMemory {
         date: u64,
     ) -> Result<(ContextHash, Box<SerializeStats>), DBError> {
         self.commit_impl(working_tree, parent_commit_ref, author, message, date)
+    }
+
+    fn add_serialized_objects(
+        &mut self,
+        batch: ChunkedVec<(HashId, InlinedBoxedSlice), { BATCH_CHUNK_CAPACITY }>,
+        _output: &mut SerializeOutput,
+    ) -> Result<(), DBError> {
+        self.write_batch(batch)
     }
 
     fn get_hash_id(&self, object_ref: ObjectReference) -> Result<HashId, DBError> {

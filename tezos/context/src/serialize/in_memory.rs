@@ -4,7 +4,7 @@
 //! Serialization/deserialization for objects in the Working Tree so that they can be
 //! saved/loaded to/from the repository.
 
-use std::{borrow::Cow, convert::TryInto, io::Write};
+use std::{borrow::Cow, convert::TryInto};
 
 use modular_bitfield::prelude::*;
 use static_assertions::assert_eq_size;
@@ -20,6 +20,7 @@ use crate::{
             DirectoryId, DirectoryOrInodeId, FatPointer, Inode, PointerOnStack, PointersBitfield,
         },
         string_interner::StringInterner,
+        working_tree::SerializeOutput,
         Commit, DirEntryKind, ObjectReference,
     },
     ContextKeyValueStore,
@@ -50,7 +51,7 @@ assert_eq_size!(KeyDirEntryDescriptor, u8);
 fn serialize_shaped_directory(
     shape_id: DirectoryShapeId,
     dir: &[(StringId, DirEntryId)],
-    output: &mut Vec<u8>,
+    output: &mut SerializeOutput,
     storage: &Storage,
     repository: &mut ContextKeyValueStore,
     stats: &mut SerializeStats,
@@ -103,7 +104,7 @@ fn serialize_shaped_directory(
 
 fn serialize_directory(
     dir: &[(StringId, DirEntryId)],
-    output: &mut Vec<u8>,
+    output: &mut SerializeOutput,
     storage: &Storage,
     strings: &StringInterner,
     repository: &mut ContextKeyValueStore,
@@ -179,13 +180,12 @@ fn serialize_directory(
 pub fn serialize_object(
     object: &Object,
     object_hash_id: HashId,
-    output: &mut Vec<u8>,
+    output: &mut SerializeOutput,
     storage: &Storage,
     strings: &StringInterner,
     stats: &mut SerializeStats,
     batch: &mut ChunkedVec<(HashId, InlinedBoxedSlice), { BATCH_CHUNK_CAPACITY }>,
     repository: &mut ContextKeyValueStore,
-    _object_offset: Option<AbsoluteOffset>,
 ) -> Result<Option<AbsoluteOffset>, SerializationError> {
     output.clear();
 
@@ -262,7 +262,7 @@ pub fn serialize_object(
 #[allow(clippy::too_many_arguments)]
 fn serialize_inode(
     ptr_id: DirectoryOrInodeId,
-    output: &mut Vec<u8>,
+    output: &mut SerializeOutput,
     hash_id: HashId,
     storage: &Storage,
     strings: &StringInterner,
@@ -827,7 +827,7 @@ mod tests {
             )
             .unwrap();
 
-        let mut data = Vec::with_capacity(1024);
+        let mut data = SerializeOutput::new(None);
         serialize_object(
             &Object::Directory(dir_id),
             fake_hash_id,
@@ -837,7 +837,6 @@ mod tests {
             &mut stats,
             &mut batch,
             &mut repo,
-            None,
         )
         .unwrap();
 
@@ -889,7 +888,7 @@ mod tests {
             )
             .unwrap();
 
-        let mut data = Vec::with_capacity(1024);
+        data.clear();
         serialize_object(
             &Object::Directory(dir_id),
             fake_hash_id,
@@ -899,7 +898,6 @@ mod tests {
             &mut stats,
             &mut batch,
             &mut repo,
-            None,
         )
         .unwrap();
 
@@ -925,7 +923,7 @@ mod tests {
         // Not inlined value
         let blob_id = storage.add_blob_by_ref(&[1, 2, 3, 4, 5, 6, 7, 8]).unwrap();
 
-        let mut data = Vec::with_capacity(1024);
+        data.clear();
         serialize_object(
             &Object::Blob(blob_id),
             fake_hash_id,
@@ -935,7 +933,6 @@ mod tests {
             &mut stats,
             &mut batch,
             &mut repo,
-            None,
         )
         .unwrap();
         let object = deserialize_object(&data, &mut storage, &mut strings, &repo).unwrap();
@@ -953,7 +950,7 @@ mod tests {
 
         // Test Object::Commit
 
-        let mut data = Vec::with_capacity(1024);
+        data.clear();
 
         let commit = Commit {
             parent_commit_ref: Some(ObjectReference::new(HashId::new(9876), None)),
@@ -972,7 +969,6 @@ mod tests {
             &mut stats,
             &mut batch,
             &mut repo,
-            None,
         )
         .unwrap();
         let object = deserialize_object(&data, &mut storage, &mut strings, &repo).unwrap();
@@ -1141,7 +1137,7 @@ mod tests {
 
         let fake_hash_id = HashId::try_from(1).unwrap();
 
-        let mut data = Vec::with_capacity(1024);
+        let mut data = SerializeOutput::new(None);
 
         let commit = Commit {
             parent_commit_ref: None,
@@ -1160,7 +1156,6 @@ mod tests {
             &mut stats,
             &mut batch,
             &mut repo,
-            None,
         )
         .unwrap();
         let object = deserialize_object(&data, &mut storage, &mut strings, &repo).unwrap();
@@ -1208,7 +1203,7 @@ mod tests {
             )
             .unwrap();
 
-        let mut data = Vec::with_capacity(1024);
+        let mut data = SerializeOutput::new(None);
 
         serialize_object(
             &Object::Directory(dir_id),
@@ -1219,7 +1214,6 @@ mod tests {
             &mut stats,
             &mut batch,
             &mut repo,
-            None,
         )
         .unwrap();
 

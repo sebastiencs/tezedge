@@ -7,8 +7,9 @@
 
 use std::{borrow::Cow, path::Path};
 
-#[cfg(test)]
+use super::in_memory::BATCH_CHUNK_CAPACITY;
 use super::inline_boxed_slice::InlinedBoxedSlice;
+use crate::chunks::ChunkedVec;
 #[cfg(test)]
 use crate::serialize::persistent::AbsoluteOffset;
 
@@ -25,7 +26,7 @@ use crate::serialize::{in_memory, persistent, ObjectHeader};
 use crate::working_tree::shape::{DirectoryShapeId, ShapeStrings};
 use crate::working_tree::storage::{DirEntryId, DirectoryOrInodeId, Storage};
 use crate::working_tree::string_interner::{StringId, StringInterner};
-use crate::working_tree::working_tree::{PostCommitData, WorkingTree};
+use crate::working_tree::working_tree::{PostCommitData, SerializeOutput, WorkingTree};
 use crate::working_tree::{Object, ObjectReference};
 use crate::{
     ffi::TezedgeIndexError, gc::NotGarbageCollected, persistent::KeyValueStoreBackend, ObjectHash,
@@ -244,6 +245,14 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
         self.clear_objects()?;
 
         Ok((commit_hash, serialize_stats))
+    }
+
+    fn add_serialized_objects(
+        &mut self,
+        _batch: ChunkedVec<(HashId, InlinedBoxedSlice), { BATCH_CHUNK_CAPACITY }>,
+        _output: &mut SerializeOutput,
+    ) -> Result<(), DBError> {
+        Ok(())
     }
 
     fn get_hash_id(&self, object_ref: ObjectReference) -> Result<HashId, DBError> {
