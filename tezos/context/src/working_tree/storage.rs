@@ -33,7 +33,7 @@ use crate::{hash::index as index_of_key, serialize::persistent::AbsoluteOffset};
 use super::{
     string_interner::{StringId, StringInterner},
     working_tree::MerkleError,
-    DirEntry,
+    DirEntry, Object,
 };
 
 /// Threshold when a 'small' directory must become an `Inode` (and reverse)
@@ -1047,7 +1047,7 @@ type TempDirRange = Range<usize>;
 /// every checkout.
 pub struct Storage {
     /// An map `DirEntryId -> DirEntry`
-    nodes: IndexMap<DirEntryId, DirEntry, { DEFAULT_NODES_CAPACITY }>,
+    pub nodes: IndexMap<DirEntryId, DirEntry, { DEFAULT_NODES_CAPACITY }>,
     /// Concatenation of all directories in the working tree.
     /// The working tree has `DirectoryId` which refers to a subslice of this
     /// vector `directories`
@@ -1246,6 +1246,66 @@ impl Storage {
 
     pub fn add_dir_entry(&mut self, dir_entry: DirEntry) -> Result<DirEntryId, DirEntryIdError> {
         self.nodes.push(dir_entry).map_err(|_| DirEntryIdError)
+    }
+
+    pub fn pop_object(&mut self, object: Object) {
+        match object {
+            Object::Directory(dir_id) => {
+                if let Some(inode_id) = dir_id.get_inode_id() {
+                    println!("INODE");
+                } else {
+                    let mut min = u32::MAX;
+                    let mut max = 0;
+
+                    self.dir_iterate_unsorted(dir_id, |(_, node_id)| {
+                        let node_id = node_id.0;
+                        if node_id < min {
+                            min = node_id;
+                        }
+                        if node_id > max {
+                            max = node_id;
+                        }
+                        Ok(())
+                    })
+                    .unwrap();
+
+                    max = max + 1;
+
+                    assert_eq!(
+                        max as usize,
+                        self.nodes.len(),
+                        "dir_len={:?} min={:} max={:?} nodes_len={:?}",
+                        dir_id.small_dir_len(),
+                        min,
+                        max,
+                        self.nodes.len(),
+                    );
+                    self.nodes.remove_last_nelems((max - min) as usize);
+
+                    let (start, end) = dir_id.get();
+
+                    if end == self.directories.len() {
+                        let len = self.directories.len();
+                        self.directories.remove_last_nelems(end - start);
+                        // println!("REMOVING start={:?} end={:?} len={:?} new_len={:?}", start, end, len, self.directories.len());
+                    } else {
+                        panic!(
+                            "NOT REMOVING start={:?} end={:?} len={:?}",
+                            start,
+                            end,
+                            self.directories.len()
+                        );
+                    }
+                }
+            }
+            Object::Blob(blob_id) => {
+                if let BlobRef::Ref { start, end } = blob_id.get() {
+                    assert_eq!(end, self.blobs.len());
+                    self.blobs.remove_last_nelems(end - start);
+                };
+            }
+            Object::Commit(_) => {}
+        }
     }
 
     /// Set the `HashId` of `pointer` in `Self::pointers_data`

@@ -68,6 +68,11 @@ impl<K, V, const CHUNK_CAPACITY: usize> IndexMap<K, V, CHUNK_CAPACITY> {
     pub fn clear(&mut self) {
         self.entries.clear();
     }
+
+    /// Removes the last `nelems` from the chunks.
+    pub fn remove_last_nelems(&mut self, nelems: usize) {
+        self.entries.remove_last_nelems(nelems);
+    }
 }
 
 impl<K, V, const CHUNK_CAPACITY: usize> IndexMap<K, V, CHUNK_CAPACITY>

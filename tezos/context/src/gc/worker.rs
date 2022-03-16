@@ -547,7 +547,7 @@ impl GCThread {
     }
 
     fn traverse_to_make_snapshot(
-        &mut self,
+        &self,
         hash_id: HashId,
         hash_ids: &mut ChunkedVec<HashId, 8192>,
         storage: &mut Storage,
@@ -594,26 +594,31 @@ impl GCThread {
             in_memory::deserialize_object(bytes, storage, strings, &*read_repo).unwrap()
         };
 
+        // println!("OBJECT={:?} nodes_len={:?}", object, storage.nodes.len());
+
         match &mut object {
             Object::Directory(dir_id) => {
                 let mut index = start;
 
-                storage.dir_iterate_unsorted(*dir_id, |(_, dir_entry_id)| {
-                    let dir_entry = storage.get_dir_entry(*dir_entry_id).unwrap();
+                storage
+                    .dir_iterate_unsorted(*dir_id, |(_, dir_entry_id)| {
+                        let dir_entry = storage.get_dir_entry(*dir_entry_id).unwrap();
 
-                    if dir_entry.get_inlined_blob(storage).is_some() {
-                        return Ok(());
-                    }
+                        if dir_entry.get_inlined_blob(storage).is_some() {
+                            // Inlined blobs do not have a HashId or an offset
+                            return Ok(());
+                        }
 
-                    let hash_id = hash_ids[index];
-                    let offset = hash_ids_to_offset.get(hash_id).unwrap().unwrap().clone();
-                    dir_entry.set_offset(offset);
+                        let hash_id = hash_ids[index];
+                        let offset = hash_ids_to_offset.get(hash_id).unwrap().unwrap().clone();
+                        dir_entry.set_offset(offset);
 
-                    index += 1;
-                    assert!(index <= end);
+                        index += 1;
+                        assert!(index <= end);
 
-                    Ok(())
-                });
+                        Ok(())
+                    })
+                    .unwrap();
             }
             Object::Commit(commit) => {
                 let hash_id = commit.root_ref.hash_id();
@@ -635,73 +640,12 @@ impl GCThread {
 
         hash_ids_to_offset.insert_at(hash_id, offset).unwrap();
 
+        storage.pop_object(object);
+
+        // *storage = Storage::default();
+
         Ok(())
     }
-
-    // #[allow(clippy::too_many_arguments)]
-    // fn traverse_and_mark_tree(
-    //     &mut self,
-    //     hash_id: HashId,
-    //     current_generation: Generation,
-    //     nobjects: &mut usize,
-    //     depth: usize,
-    //     max_depth: &mut usize,
-    //     objets_total_bytes: &mut usize,
-    // ) -> Result<(), GCError> {
-    //     *nobjects += 1;
-    //     *max_depth = depth.max(*max_depth);
-
-    //     // Store the `HashId` of the children in this array, we avoid
-    //     // allocating a `Vec`
-    //     // The maximum depth of recursion is currently `16`, so a stack
-    //     // overflow will not occurs.
-    //     // Note: We could create a container that allocate a `Vec` when
-    //     // some `depth` is reached
-    //     let mut hash_ids = [None::<HashId>; 256];
-
-    //     self.objects_view.with(hash_id, |object_bytes| {
-    //         let object_bytes = match object_bytes {
-    //             Some(Some(object_bytes)) => object_bytes,
-    //             _ => {
-    //                 elog!("Missing Object object={:?}", object_bytes);
-    //                 return Err(GCError::TraverseTreeError);
-    //             }
-    //         };
-
-    //         *objets_total_bytes += object_bytes.len();
-
-    //         // Store the `HashId` of all the children in `hash_ids`
-    //         for (index, hash_id) in iter_hash_ids(object_bytes).enumerate() {
-    //             hash_ids[index] = Some(hash_id);
-    //         }
-
-    //         Ok(())
-    //     })??;
-
-    //     {
-    //         // Update the generation of the HashId (object/hash)
-    //         let generation = self.objects_generation.entry(hash_id)?;
-    //         *generation = current_generation;
-    //     }
-
-    //     // Recursively update generation of all the children
-    //     for hash_id in hash_ids {
-    //         let hash_id = match hash_id {
-    //             Some(hash_id) => hash_id,
-    //             None => break,
-    //         };
-    //         self.traverse_and_mark_tree(
-    //             hash_id,
-    //             current_generation,
-    //             nobjects,
-    //             depth + 1,
-    //             max_depth,
-    //             objets_total_bytes,
-    //         )?;
-    //     }
-
-    //     Ok(())
-    // }
 
     fn take_unused(&mut self) -> Result<ChunkedVec<HashId, { UNUSED_CHUNK_CAPACITY }>, GCError> {
         // Mark all objects/hashes at `current_generation - (PRESERVE_BLOCK_LEVEL + 1)`
@@ -771,6 +715,49 @@ impl GCThread {
         log!("{:?}", stats);
     }
 
+    fn make_snapshot(&self, commit_hash_id: HashId) {
+        println!("MAKING SNAPSHOT");
+
+        let mut hash_ids = ChunkedVec::default();
+        let mut storage = Storage::default();
+        let mut strings = StringInterner::default();
+        let mut bytes = Vec::with_capacity(1024);
+        let mut stats = SerializeStats::default();
+        let mut batch = Default::default();
+
+        let mut hash_id_to_offset =
+            IndexMap::<HashId, Option<AbsoluteOffset>, 1_000_000>::default();
+
+        let mut repository = Persistent::try_new(PersistentConfiguration {
+            db_path: Some("/tmp/tezedge-mem/".to_string()),
+            startup_check: false,
+            read_mode: false,
+        })
+        .unwrap();
+
+        let file_offset = repository.data_file_offset();
+        let mut output = SerializeOutput::new(Some(file_offset));
+
+        let now = std::time::Instant::now();
+
+        self.traverse_to_make_snapshot(
+            commit_hash_id,
+            &mut hash_ids,
+            &mut storage,
+            &mut strings,
+            &mut bytes,
+            &mut repository,
+            &mut output,
+            &mut stats,
+            &mut batch,
+            &mut hash_id_to_offset,
+        )
+        .unwrap();
+
+        println!("SNAPSHOT DONE IN {:?}", now.elapsed());
+        println!("STORAGE={:#?}", storage.memory_usage(&strings));
+    }
+
     fn handle_commit(
         &mut self,
         new_ids: ChunkedVec<HashId, NEW_IDS_CHUNK_CAPACITY>,
@@ -809,49 +796,7 @@ impl GCThread {
             return Ok(());
         }
 
-        if self.repository.is_some() {
-            println!("RUNNING SNAPSHOT");
-
-            let mut hash_ids = ChunkedVec::default();
-            let mut storage = Storage::default();
-            let mut strings = StringInterner::default();
-            let mut bytes = Vec::with_capacity(1024);
-            let mut stats = SerializeStats::default();
-            let mut batch = Default::default();
-
-            let mut hash_id_to_offset =
-                IndexMap::<HashId, Option<AbsoluteOffset>, 1_000_000>::default();
-
-            let mut repository = Persistent::try_new(PersistentConfiguration {
-                db_path: Some("/tmp/tezedge-mem/".to_string()),
-                startup_check: false,
-                read_mode: false,
-            })
-            .unwrap();
-
-            let file_offset = repository.data_file_offset();
-            let mut output = SerializeOutput::new(Some(file_offset));
-
-            let now = std::time::Instant::now();
-
-            self.traverse_to_make_snapshot(
-                commit_hash_id,
-                &mut hash_ids,
-                &mut storage,
-                &mut strings,
-                &mut bytes,
-                &mut repository,
-                &mut output,
-                &mut stats,
-                &mut batch,
-                &mut hash_id_to_offset,
-            )
-            .unwrap();
-
-            println!("SNAPSHOT DONE IN {:?}", now.elapsed());
-        } else {
-            println!("NOT RUNNING SNAPSHOT");
-        }
+        self.make_snapshot(commit_hash_id);
 
         self.napplieds_since_last_run = 0;
         self.send_unused()?;
