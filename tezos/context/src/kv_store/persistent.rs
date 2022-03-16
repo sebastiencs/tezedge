@@ -920,11 +920,8 @@ impl KeyValueStoreBackend for Persistent {
         Ok(())
     }
 
-    fn store_own_repository(
-        &mut self,
-        repository: Arc<RwLock<ContextKeyValueStore>>,
-    ) -> Result<(), DBError> {
-        todo!()
+    fn store_own_repository(&mut self, repository: Arc<RwLock<ContextKeyValueStore>>) {
+        // no-op
     }
 
     fn contains(&self, hash_id: HashId) -> Result<bool, DBError> {

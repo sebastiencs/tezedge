@@ -256,6 +256,7 @@ pub struct InMemory {
     shapes: DirectoryShapes,
     string_interner: StringInterner,
     configuration: InMemoryConfiguration,
+    self_ptr: Option<Arc<RwLock<ContextKeyValueStore>>>,
 }
 
 impl GarbageCollector for InMemory {
@@ -303,11 +304,14 @@ impl KeyValueStoreBackend for InMemory {
         self.reload_database()
     }
 
-    fn store_own_repository(
-        &mut self,
-        repository: Arc<RwLock<ContextKeyValueStore>>,
-    ) -> Result<(), DBError> {
-        todo!()
+    fn store_own_repository(&mut self, repository: Arc<RwLock<ContextKeyValueStore>>) {
+        println!("STORE OWN");
+        self.self_ptr.replace(repository.clone());
+        if let Some(sender) = self.sender.as_ref() {
+            sender
+                .send(Command::StoreRepository { repository })
+                .unwrap();
+        };
     }
 
     fn contains(&self, hash_id: HashId) -> Result<bool, DBError> {
@@ -506,6 +510,7 @@ impl InMemory {
             shapes: DirectoryShapes::default(),
             string_interner: StringInterner::default(),
             configuration,
+            self_ptr: None,
         })
     }
 

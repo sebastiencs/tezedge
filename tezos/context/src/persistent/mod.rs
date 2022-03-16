@@ -147,10 +147,7 @@ pub trait KeyValueStoreBackend {
     /// Reload the persistent database and verify its integrity
     fn reload_database(&mut self) -> Result<(), ReloadError>;
     /// Reload the persistent database and verify its integrity
-    fn store_own_repository(
-        &mut self,
-        repository: Arc<RwLock<ContextKeyValueStore>>,
-    ) -> Result<(), DBError>;
+    fn store_own_repository(&mut self, repository: Arc<RwLock<ContextKeyValueStore>>);
     /// Reload the persistent database and verify its integrity
     fn add_serialized_objects(
         &mut self,

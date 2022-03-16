@@ -110,6 +110,10 @@ impl ObjectReference {
         Self { hash_id, offset }
     }
 
+    pub fn set_offset(&mut self, offset: AbsoluteOffset) {
+        self.offset.replace(offset);
+    }
+
     pub fn offset(&self) -> AbsoluteOffset {
         self.offset
             .expect("ObjectReference::offset called outside of the persistent context")

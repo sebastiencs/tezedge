@@ -3,11 +3,15 @@
 
 use std::{
     num::TryFromIntError,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
     time::Instant,
 };
 
 use crossbeam_channel::{Receiver, RecvError};
+use parking_lot::RwLock;
 use static_assertions::assert_eq_size;
 use tezos_timing::SerializeStats;
 use thiserror::Error;
@@ -27,10 +31,10 @@ use crate::{
     },
     serialize::{
         in_memory::{self, iter_hash_ids},
-        persistent,
+        persistent::{self, AbsoluteOffset},
     },
     working_tree::{
-        storage::Storage, string_interner::StringInterner, working_tree::SerializeOutput,
+        storage::Storage, string_interner::StringInterner, working_tree::SerializeOutput, Object,
     },
     ContextKeyValueStore, ObjectHash, Persistent,
 };
@@ -189,6 +193,8 @@ pub(crate) struct GCThread {
     /// This is used to know when we can run the gc again, we run
     /// it at most every `NAPPLIED_BEFORE_COLLECT`
     napplieds_since_last_run: usize,
+
+    repository: Option<Arc<RwLock<ContextKeyValueStore>>>,
 }
 
 assert_eq_size!([u8; 16], Option<Box<[u8]>>);
@@ -233,6 +239,9 @@ pub enum Command {
         objects_chunks: Option<Vec<SharedChunk<Option<InlinedBoxedSlice>, OBJECTS_CHUNK_CAPACITY>>>,
         hashes_chunks: Option<Vec<SharedChunk<Option<Box<ObjectHash>>, OBJECTS_CHUNK_CAPACITY>>>,
     },
+    StoreRepository {
+        repository: Arc<RwLock<ContextKeyValueStore>>,
+    },
     Close,
 }
 
@@ -257,6 +266,7 @@ impl GCThread {
             last_gc_timestamp: None,
             napplieds_since_last_run: 0,
             highest_block_level: 0,
+            repository: None,
         }
     }
 
@@ -290,6 +300,9 @@ impl GCThread {
                     if let Err(e) = self.handle_commit(new_ids, block_level, commit_hash_id) {
                         elog!("handle_commit failed: {:?}", e);
                     }
+                }
+                Ok(Command::StoreRepository { repository }) => {
+                    self.repository.replace(repository);
                 }
                 Ok(Command::Close) => {
                     elog!("GC received Command::Close");
@@ -544,6 +557,7 @@ impl GCThread {
         output: &mut SerializeOutput,
         stats: &mut SerializeStats,
         batch: &mut ChunkedVec<(HashId, InlinedBoxedSlice), { BATCH_CHUNK_CAPACITY }>,
+        hash_ids_to_offset: &mut IndexMap<HashId, Option<AbsoluteOffset>, 1_000_000>,
     ) -> Result<(), GCError> {
         let start = hash_ids.len();
         self.with_object(hash_id, |object_bytes| {
@@ -556,7 +570,16 @@ impl GCThread {
         for index in start..end {
             let hash_id = hash_ids[index];
             self.traverse_to_make_snapshot(
-                hash_id, hash_ids, storage, strings, bytes, repository, output, stats, batch,
+                hash_id,
+                hash_ids,
+                storage,
+                strings,
+                bytes,
+                repository,
+                output,
+                stats,
+                batch,
+                hash_ids_to_offset,
             )
             .unwrap();
         }
@@ -566,12 +589,51 @@ impl GCThread {
             bytes.extend_from_slice(object_bytes);
         })?;
 
-        let object = in_memory::deserialize_object(bytes, storage, strings, repository).unwrap();
+        let mut object = {
+            let read_repo = self.repository.as_ref().unwrap().read();
+            in_memory::deserialize_object(bytes, storage, strings, &*read_repo).unwrap()
+        };
 
-        persistent::serialize_object(
+        match &mut object {
+            Object::Directory(dir_id) => {
+                let mut index = start;
+
+                storage.dir_iterate_unsorted(*dir_id, |(_, dir_entry_id)| {
+                    let dir_entry = storage.get_dir_entry(*dir_entry_id).unwrap();
+
+                    if dir_entry.get_inlined_blob(storage).is_some() {
+                        return Ok(());
+                    }
+
+                    let hash_id = hash_ids[index];
+                    let offset = hash_ids_to_offset.get(hash_id).unwrap().unwrap().clone();
+                    dir_entry.set_offset(offset);
+
+                    index += 1;
+                    assert!(index <= end);
+
+                    Ok(())
+                });
+            }
+            Object::Commit(commit) => {
+                let hash_id = commit.root_ref.hash_id();
+                let offset = hash_ids_to_offset
+                    .get(hash_id)
+                    .unwrap()
+                    .unwrap()
+                    .clone()
+                    .unwrap();
+                commit.root_ref.set_offset(offset);
+            }
+            Object::Blob(..) => {}
+        }
+
+        let offset = persistent::serialize_object(
             &object, hash_id, output, storage, strings, stats, batch, repository,
         )
         .unwrap();
+
+        hash_ids_to_offset.insert_at(hash_id, offset).unwrap();
 
         Ok(())
     }
@@ -747,37 +809,49 @@ impl GCThread {
             return Ok(());
         }
 
-        // {
-        //     println!("RUNNING SNAPSHOT");
+        if self.repository.is_some() {
+            println!("RUNNING SNAPSHOT");
 
-        //     let mut hash_ids = ChunkedVec::default();
-        //     let mut storage = Storage::default();
-        //     let mut strings = StringInterner::default();
-        //     let mut bytes = Vec::with_capacity(1024);
-        //     let mut stats = SerializeStats::default();
-        //     let mut batch = Default::default();
+            let mut hash_ids = ChunkedVec::default();
+            let mut storage = Storage::default();
+            let mut strings = StringInterner::default();
+            let mut bytes = Vec::with_capacity(1024);
+            let mut stats = SerializeStats::default();
+            let mut batch = Default::default();
 
-        //     let mut repository = Persistent::try_new(PersistentConfiguration {
-        //         db_path: Some("/tmp/tezedge-mem/".to_string()),
-        //         startup_check: false,
-        //         read_mode: false,
-        //     }).unwrap();
+            let mut hash_id_to_offset =
+                IndexMap::<HashId, Option<AbsoluteOffset>, 1_000_000>::default();
 
-        //     let file_offset = repository.data_file_offset();
-        //     let mut output = SerializeOutput::new(Some(file_offset));
+            let mut repository = Persistent::try_new(PersistentConfiguration {
+                db_path: Some("/tmp/tezedge-mem/".to_string()),
+                startup_check: false,
+                read_mode: false,
+            })
+            .unwrap();
 
-        //     self.traverse_to_make_snapshot(
-        //         commit_hash_id,
-        //         &mut hash_ids,
-        //         &mut storage,
-        //         &mut strings,
-        //         &mut bytes,
-        //         &mut repository,
-        //         &mut output,
-        //         &mut stats,
-        //         &mut batch,
-        //     ).unwrap();
-        // }
+            let file_offset = repository.data_file_offset();
+            let mut output = SerializeOutput::new(Some(file_offset));
+
+            let now = std::time::Instant::now();
+
+            self.traverse_to_make_snapshot(
+                commit_hash_id,
+                &mut hash_ids,
+                &mut storage,
+                &mut strings,
+                &mut bytes,
+                &mut repository,
+                &mut output,
+                &mut stats,
+                &mut batch,
+                &mut hash_id_to_offset,
+            )
+            .unwrap();
+
+            println!("SNAPSHOT DONE IN {:?}", now.elapsed());
+        } else {
+            println!("NOT RUNNING SNAPSHOT");
+        }
 
         self.napplieds_since_last_run = 0;
         self.send_unused()?;
