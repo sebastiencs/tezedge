@@ -640,9 +640,7 @@ impl GCThread {
 
         hash_ids_to_offset.insert_at(hash_id, offset).unwrap();
 
-        storage.pop_object(object);
-
-        // *storage = Storage::default();
+        storage.clear();
 
         Ok(())
     }

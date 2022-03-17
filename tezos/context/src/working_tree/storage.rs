@@ -1248,6 +1248,21 @@ impl Storage {
         self.nodes.push(dir_entry).map_err(|_| DirEntryIdError)
     }
 
+    pub fn clear(&mut self) {
+        self.nodes.clear();
+        self.directories.clear();
+        self.blobs.clear();
+        self.inodes.clear();
+        self.thin_pointers.clear();
+        self.fat_pointers.clear();
+        if !self.pointers_data.borrow().is_empty() {
+            self.pointers_data = Default::default();
+        }
+        if !self.offsets_to_hash_id.is_empty() {
+            self.offsets_to_hash_id = Default::default();
+        }
+    }
+
     pub fn pop_object(&mut self, object: Object) {
         match object {
             Object::Directory(dir_id) => {
