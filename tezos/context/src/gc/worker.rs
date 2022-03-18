@@ -574,6 +574,7 @@ impl GCThread {
         stats: &mut SerializeStats,
         batch: &mut ChunkedVec<(HashId, InlinedBoxedSlice), { BATCH_CHUNK_CAPACITY }>,
         hash_ids_to_offset: &mut IndexMap<HashId, Option<AbsoluteOffset>, 1_000_000>,
+        string: &mut String,
     ) -> Result<(), GCError> {
         let start = hash_ids.len();
         self.with_object(hash_id, |object_bytes| {
@@ -596,6 +597,7 @@ impl GCThread {
                 stats,
                 batch,
                 hash_ids_to_offset,
+                string,
             )
             .unwrap();
         }
@@ -611,6 +613,22 @@ impl GCThread {
         };
 
         // println!("OBJECT={:?} nodes_len={:?}", object, storage.nodes.len());
+
+        for index in 0..storage.directories.len() {
+            let (string_id, _) = &mut storage.directories[index];
+
+            {
+                // Read the string from the in-mem repo, lock it as short as possible
+                let read_repo = self.repository.as_ref().unwrap().read();
+                let s = read_repo.get_str(*string_id).unwrap();
+                string.clear();
+                string.push_str(s.as_ref());
+            }
+
+            // Replace the old string id (from the in-mem context) to the new string id (on disk)
+            let new_string_id = repository.string_interner.make_string_id(&string);
+            *string_id = new_string_id;
+        }
 
         match &mut object {
             Object::Directory(dir_id) => {
@@ -765,6 +783,7 @@ impl GCThread {
         let mut bytes = Vec::with_capacity(1024);
         let mut stats = SerializeStats::default();
         let mut batch = Default::default();
+        let mut string = String::with_capacity(1024);
 
         let mut hash_id_to_offset =
             IndexMap::<HashId, Option<AbsoluteOffset>, 1_000_000>::default();
@@ -794,6 +813,7 @@ impl GCThread {
             &mut stats,
             &mut batch,
             &mut hash_id_to_offset,
+            &mut string,
         )
         .unwrap();
 
@@ -801,6 +821,8 @@ impl GCThread {
         println!("STORAGE={:#?}", storage.memory_usage(&strings));
         println!("HASHES={:#?}", hash_ids.len());
         println!("OUTPUT={:#?}", output.len());
+
+        repository.commit_to_disk(&output).unwrap();
     }
 
     fn handle_commit(

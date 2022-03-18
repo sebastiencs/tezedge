@@ -1051,7 +1051,7 @@ pub struct Storage {
     /// Concatenation of all directories in the working tree.
     /// The working tree has `DirectoryId` which refers to a subslice of this
     /// vector `directories`
-    directories: ChunkedVec<(StringId, DirEntryId), { DEFAULT_DIRECTORIES_CAPACITY }>,
+    pub directories: ChunkedVec<(StringId, DirEntryId), { DEFAULT_DIRECTORIES_CAPACITY }>,
     /// Temporary directories, this is used to avoid allocations when we
     /// manipulate `directories`
     /// For example, `Storage::insert` will create a new directory in `temp_dir`, once

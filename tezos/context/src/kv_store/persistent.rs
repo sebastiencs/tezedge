@@ -115,7 +115,7 @@ pub struct Persistent {
 
     hashes: Hashes,
     shapes: DirectoryShapes,
-    string_interner: StringInterner,
+    pub string_interner: StringInterner,
 
     pub context_hashes: Map<u64, ObjectReference>,
 
@@ -571,7 +571,7 @@ hashes_file={:?}, in sizes.db={:?}",
         Ok(hash_id.ok_or(DeserializationError::MissingHash)?)
     }
 
-    fn commit_to_disk(&mut self, data: &[u8]) -> Result<(), std::io::Error> {
+    pub fn commit_to_disk(&mut self, data: &[u8]) -> Result<(), std::io::Error> {
         self.data_file.append(data)?;
 
         let strings = self.string_interner.serialize();
