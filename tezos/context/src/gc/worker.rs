@@ -578,6 +578,7 @@ impl GCThread {
     ) -> Result<(), GCError> {
         let start = hash_ids.len();
         self.with_object(hash_id, |object_bytes| {
+            // TODO: Check if this is correct with inodes
             for hash_id in iter_hash_ids(object_bytes) {
                 hash_ids.push(hash_id);
             }
@@ -711,6 +712,7 @@ impl GCThread {
             .map(|o| o.is_none())
             .unwrap_or(true)
         {
+            // TODO: Use new HashId here
             let offset = persistent::serialize_object(
                 &object, hash_id, output, storage, strings, stats, batch, repository,
             )
