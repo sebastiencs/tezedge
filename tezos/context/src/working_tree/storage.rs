@@ -752,6 +752,10 @@ impl ThinPointer {
             ThinPointerKind::FatPointer => ThinPointerValue::FatPointer(self.value().into()),
         }
     }
+
+    pub fn set_commited(&mut self, commited: bool) {
+        self.set_is_commited(commited);
+    }
 }
 
 /// A `DirectoryId` (8 bytes), `HashId` (6 bytes), or `AbsoluteOffset` (8 bytes).
@@ -1086,7 +1090,7 @@ pub struct Storage {
     /// This vector is growing very fast when manipulating inodes
     ///
     /// See `PointersId` and `Inode` for more information
-    thin_pointers: IndexMap<ThinPointerId, ThinPointer, { DEFAULT_THIN_POINTERS_CAPACITY }>,
+    pub thin_pointers: IndexMap<ThinPointerId, ThinPointer, { DEFAULT_THIN_POINTERS_CAPACITY }>,
     /// Contains big pointers
     /// It's either a `HashId` (6 bytes), an `AbsoluteOffset` (8 bytes) or a
     /// `DirectoryId` (8 bytes)
@@ -1094,7 +1098,7 @@ pub struct Storage {
     /// There are no duplicate in this vector.
     /// Many `ThinPointer` may refer to the same `FatPointerId`
     /// This makes the vector much smaller than `Self::thin_pointers`
-    fat_pointers: IndexMap<FatPointerId, FatPointer, { DEFAULT_FAT_POINTERS_CAPACITY }>,
+    pub fat_pointers: IndexMap<FatPointerId, FatPointer, { DEFAULT_FAT_POINTERS_CAPACITY }>,
     /// Store the `ObjectReference` of the inode pointers.
     ///
     /// This is used at commit time (when inodes are hashed and serialized)
@@ -2204,6 +2208,16 @@ impl Storage {
             }
         }
         Ok(())
+    }
+
+    /// Load the full inode in `Self`
+    pub fn dir_full_load(
+        &mut self,
+        dir_id: DirectoryId,
+        strings: &mut StringInterner,
+        repository: &ContextKeyValueStore,
+    ) -> Result<(), MerkleError> {
+        self.dir_full_iterate_unsorted(dir_id, strings, repository, |_| Ok(()))
     }
 
     /// Iterate on `dir_id`.

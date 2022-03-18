@@ -612,7 +612,28 @@ impl GCThread {
             in_memory::deserialize_object(bytes, storage, strings, &*read_repo).unwrap()
         };
 
-        // println!("OBJECT={:?} nodes_len={:?}", object, storage.nodes.len());
+        // When the object is an inode, `in_memory::deserialize_object` only partialy
+        // stores it in the `Storage`, we need to load it fully
+        match object {
+            Object::Directory(dir_id) if dir_id.is_inode() => {
+                let read_repo = self.repository.as_ref().unwrap().read();
+                storage.dir_full_load(dir_id, strings, &*read_repo).unwrap();
+            }
+            _ => {}
+        }
+
+        for dir_entry in storage.nodes.iter_values() {
+            dir_entry.set_commited(false);
+        }
+
+        for _thin_pointer in storage.thin_pointers.iter_values() {
+            // TODO:
+            // thin_pointer.set_commited(false);
+        }
+
+        for fat_pointer in storage.fat_pointers.iter_values() {
+            fat_pointer.set_commited(false);
+        }
 
         for index in 0..storage.directories.len() {
             let (string_id, _) = &mut storage.directories[index];
