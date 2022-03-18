@@ -729,6 +729,10 @@ hashes_file={:?}, in sizes.db={:?}",
         Ok(hash_id)
     }
 
+    pub fn set_is_commiting(&mut self) {
+        self.hashes.in_memory.set_is_commiting();
+    }
+
     fn write_sizes_to_disk(
         &mut self,
         hash: &[u8],

@@ -29,12 +29,14 @@ use crate::{
         persistent::PersistentConfiguration,
         HashId, HashIdError,
     },
+    persistent::KeyValueStoreBackend,
     serialize::{
         in_memory::{self, iter_hash_ids},
         persistent::{self, AbsoluteOffset},
     },
     working_tree::{
         storage::Storage, string_interner::StringInterner, working_tree::SerializeOutput, Object,
+        ObjectReference,
     },
     ContextKeyValueStore, ObjectHash, Persistent,
 };
@@ -546,6 +548,20 @@ impl GCThread {
         Ok(())
     }
 
+    fn copy_hash_to_snapshot(&self, hash_id: HashId, persistent: &mut Persistent) -> HashId {
+        persistent
+            .get_vacant_object_hash()
+            .unwrap()
+            .write_with(|entry| {
+                let read_repo = self.repository.as_ref().unwrap().read();
+                let hash = read_repo
+                    .get_hash(ObjectReference::new(Some(hash_id), None))
+                    .unwrap();
+                entry.copy_from_slice(&*hash)
+            })
+            .unwrap()
+    }
+
     fn traverse_to_make_snapshot(
         &self,
         hash_id: HashId,
@@ -553,7 +569,7 @@ impl GCThread {
         storage: &mut Storage,
         strings: &mut StringInterner,
         bytes: &mut Vec<u8>,
-        repository: &mut ContextKeyValueStore,
+        repository: &mut Persistent,
         output: &mut SerializeOutput,
         stats: &mut SerializeStats,
         batch: &mut ChunkedVec<(HashId, InlinedBoxedSlice), { BATCH_CHUNK_CAPACITY }>,
@@ -604,7 +620,7 @@ impl GCThread {
                     .dir_iterate_unsorted(*dir_id, |(_, dir_entry_id)| {
                         let dir_entry = storage.get_dir_entry(*dir_entry_id).unwrap();
 
-                        if dir_entry.get_inlined_blob(storage).is_some() {
+                        if dir_entry.is_inlined_blob() {
                             // Inlined blobs do not have a HashId or an offset
                             return Ok(());
                         }
@@ -612,6 +628,11 @@ impl GCThread {
                         let hash_id = hash_ids[index];
                         let offset = hash_ids_to_offset.get(hash_id).unwrap().unwrap().clone();
                         dir_entry.set_offset(offset);
+
+                        let new_hash_id = self.copy_hash_to_snapshot(hash_id, repository);
+                        dir_entry.set_hash_id(new_hash_id);
+
+                        assert!(dir_entry.hash_id().is_some());
 
                         index += 1;
                         assert!(index <= end);
@@ -621,26 +642,48 @@ impl GCThread {
                     .unwrap();
             }
             Object::Commit(commit) => {
-                let hash_id = commit.root_ref.hash_id();
+                let new_parent_hash_id = commit
+                    .parent_hash_id()
+                    .map(|parent_hash_id| self.copy_hash_to_snapshot(parent_hash_id, repository));
+
+                let root_hash_id = commit.root_ref.hash_id();
                 let offset = hash_ids_to_offset
-                    .get(hash_id)
+                    .get(root_hash_id)
                     .unwrap()
                     .unwrap()
                     .clone()
                     .unwrap();
+
+                let new_root_hash_id = self.copy_hash_to_snapshot(root_hash_id, repository);
+
                 commit.root_ref.set_offset(offset);
+                commit.root_ref.set_hash_id(new_root_hash_id);
+
+                if let Some(parent_hash_id) = new_parent_hash_id {
+                    commit.set_parent_hash_id(parent_hash_id);
+                };
             }
             Object::Blob(..) => {}
         }
 
-        let offset = persistent::serialize_object(
-            &object, hash_id, output, storage, strings, stats, batch, repository,
-        )
-        .unwrap();
+        if hash_ids_to_offset
+            .get(hash_id)
+            .unwrap()
+            .map(|o| o.is_none())
+            .unwrap_or(true)
+        {
+            let offset = persistent::serialize_object(
+                &object, hash_id, output, storage, strings, stats, batch, repository,
+            )
+            .unwrap();
 
-        hash_ids_to_offset.insert_at(hash_id, offset).unwrap();
+            hash_ids_to_offset.insert_at(hash_id, offset).unwrap();
+        }
 
         storage.clear();
+
+        assert_eq!(end, hash_ids.len());
+        hash_ids.remove_last_nelems(end - start);
 
         Ok(())
     }
@@ -733,6 +776,8 @@ impl GCThread {
         })
         .unwrap();
 
+        repository.set_is_commiting();
+
         let file_offset = repository.data_file_offset();
         let mut output = SerializeOutput::new(Some(file_offset));
 
@@ -754,6 +799,8 @@ impl GCThread {
 
         println!("SNAPSHOT DONE IN {:?}", now.elapsed());
         println!("STORAGE={:#?}", storage.memory_usage(&strings));
+        println!("HASHES={:#?}", hash_ids.len());
+        println!("OUTPUT={:#?}", output.len());
     }
 
     fn handle_commit(
