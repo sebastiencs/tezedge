@@ -576,7 +576,7 @@ impl GCThread {
         batch: &mut ChunkedVec<(HashId, InlinedBoxedSlice), { BATCH_CHUNK_CAPACITY }>,
         hash_ids_to_offset: &mut IndexMap<HashId, Option<AbsoluteOffset>, 1_000_000>,
         string: &mut String,
-    ) -> Result<HashId, GCError> {
+    ) -> Result<ObjectReference, GCError> {
         let start = hash_ids.len();
         self.with_object(hash_id, |object_bytes| {
             // TODO: Check if this is correct with inodes
@@ -589,7 +589,7 @@ impl GCThread {
 
         for index in start..end {
             let hash_id = hash_ids[index];
-            let new_hash_id = self
+            let new_obj_ref = self
                 .traverse_to_make_snapshot(
                     hash_id,
                     hash_ids,
@@ -606,7 +606,7 @@ impl GCThread {
                 )
                 .unwrap();
 
-            new_hash_ids[index] = new_hash_id;
+            new_hash_ids[index] = new_obj_ref.hash_id();
         }
 
         bytes.clear();
@@ -635,10 +635,9 @@ impl GCThread {
             dir_entry.set_commited(false);
         }
 
-        for _thin_pointer in storage.thin_pointers.iter_values() {
-            // TODO:
-            // thin_pointer.set_commited(false);
-        }
+        storage.thin_pointers.for_each_mut(|thin_pointer| {
+            thin_pointer.set_commited(false);
+        });
 
         for fat_pointer in storage.fat_pointers.iter_values() {
             fat_pointer.set_commited(false);
@@ -735,6 +734,8 @@ impl GCThread {
         )
         .unwrap();
 
+        let new_obj_ref = ObjectReference::new(Some(new_hash_id), offset);
+
         hash_ids_to_offset.insert_at(hash_id, offset).unwrap();
         // }
 
@@ -746,7 +747,7 @@ impl GCThread {
         assert_eq!(end, new_hash_ids.len());
         new_hash_ids.remove_last_nelems(end - start);
 
-        Ok(new_hash_id)
+        Ok(new_obj_ref)
     }
 
     fn take_unused(&mut self) -> Result<ChunkedVec<HashId, { UNUSED_CHUNK_CAPACITY }>, GCError> {
@@ -846,27 +847,29 @@ impl GCThread {
 
         let now = std::time::Instant::now();
 
-        self.traverse_to_make_snapshot(
-            commit_hash_id,
-            &mut hash_ids,
-            &mut new_hash_ids,
-            &mut storage,
-            &mut strings,
-            &mut bytes,
-            &mut repository,
-            &mut output,
-            &mut stats,
-            &mut batch,
-            &mut hash_id_to_offset,
-            &mut string,
-        )
-        .unwrap();
+        let commit_ref = self
+            .traverse_to_make_snapshot(
+                commit_hash_id,
+                &mut hash_ids,
+                &mut new_hash_ids,
+                &mut storage,
+                &mut strings,
+                &mut bytes,
+                &mut repository,
+                &mut output,
+                &mut stats,
+                &mut batch,
+                &mut hash_id_to_offset,
+                &mut string,
+            )
+            .unwrap();
 
         println!("SNAPSHOT DONE IN {:?}", now.elapsed());
         println!("STORAGE={:#?}", storage.memory_usage(&strings));
         println!("HASHES={:#?}", hash_ids.len());
         println!("OUTPUT={:#?}", output.len());
 
+        repository.put_context_hash(commit_ref).unwrap();
         repository.commit_to_disk(&output).unwrap();
     }
 

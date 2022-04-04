@@ -283,6 +283,16 @@ impl<T, const CHUNK_CAPACITY: usize> ChunkedVec<T, CHUNK_CAPACITY> {
         }
     }
 
+    // Impossible to make a `Self::iter_mut` without unsafe code:
+    // https://stackoverflow.com/q/63437935/5717561
+    pub fn for_each_mut<F: FnMut(&mut T)>(&mut self, mut fun: F) {
+        for chunk in &mut self.list_of_chunks {
+            for elem in chunk {
+                fun(elem);
+            }
+        }
+    }
+
     pub fn resize_with<F>(&mut self, new_len: usize, mut fun: F)
     where
         F: FnMut() -> T,

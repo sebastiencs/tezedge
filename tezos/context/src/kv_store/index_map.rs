@@ -65,6 +65,10 @@ impl<K, V, const CHUNK_CAPACITY: usize> IndexMap<K, V, CHUNK_CAPACITY> {
         }
     }
 
+    pub fn for_each_mut<F: FnMut(&mut V)>(&mut self, fun: F) {
+        self.entries.for_each_mut(fun)
+    }
+
     pub fn clear(&mut self) {
         self.entries.clear();
     }
