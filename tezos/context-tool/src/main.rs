@@ -150,7 +150,18 @@ fn main() {
             log!("Result={:#?}", sizes);
         }
         Commands::IsValidContext { context_path } => {
-            reload_context_readonly(context_path);
+            let context_hash = {
+                let ctx = reload_context_readonly(context_path.clone());
+                ctx.get_last_context_hash().unwrap()
+            };
+
+            snapshot::recompute_hashes(&context_path, &context_hash, log_snapshot).unwrap();
+
+            log!(
+                "Context at {:?} for {:?} is valid",
+                context_path,
+                context_hash
+            );
         }
         Commands::ContextSize {
             context_path,
