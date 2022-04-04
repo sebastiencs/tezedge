@@ -196,7 +196,7 @@ pub(crate) struct GCThread {
     /// it at most every `NAPPLIED_BEFORE_COLLECT`
     napplieds_since_last_run: usize,
 
-    repository: Option<Arc<RwLock<ContextKeyValueStore>>>,
+    in_mem_repo: Option<Arc<RwLock<ContextKeyValueStore>>>,
 }
 
 assert_eq_size!([u8; 16], Option<Box<[u8]>>);
@@ -268,7 +268,7 @@ impl GCThread {
             last_gc_timestamp: None,
             napplieds_since_last_run: 0,
             highest_block_level: 0,
-            repository: None,
+            in_mem_repo: None,
         }
     }
 
@@ -304,7 +304,7 @@ impl GCThread {
                     }
                 }
                 Ok(Command::StoreRepository { repository }) => {
-                    self.repository.replace(repository);
+                    self.in_mem_repo.replace(repository);
                 }
                 Ok(Command::Close) => {
                     elog!("GC received Command::Close");
@@ -548,13 +548,13 @@ impl GCThread {
         Ok(())
     }
 
-    fn copy_hash_to_snapshot(&self, hash_id: HashId, persistent: &mut Persistent) -> HashId {
-        persistent
+    fn copy_hash_to_snapshot(&self, hash_id: HashId, on_disk_repo: &mut Persistent) -> HashId {
+        on_disk_repo
             .get_vacant_object_hash()
             .unwrap()
             .write_with(|entry| {
-                let read_repo = self.repository.as_ref().unwrap().read();
-                let hash = read_repo
+                let in_mem_repo = self.in_mem_repo.as_ref().unwrap().read();
+                let hash = in_mem_repo
                     .get_hash(ObjectReference::new(Some(hash_id), None))
                     .unwrap();
                 entry.copy_from_slice(&*hash)
@@ -566,41 +566,47 @@ impl GCThread {
         &self,
         hash_id: HashId,
         hash_ids: &mut ChunkedVec<HashId, 8192>,
+        new_hash_ids: &mut ChunkedVec<HashId, 8192>,
         storage: &mut Storage,
         strings: &mut StringInterner,
         bytes: &mut Vec<u8>,
-        repository: &mut Persistent,
+        on_disk_repo: &mut Persistent,
         output: &mut SerializeOutput,
         stats: &mut SerializeStats,
         batch: &mut ChunkedVec<(HashId, InlinedBoxedSlice), { BATCH_CHUNK_CAPACITY }>,
         hash_ids_to_offset: &mut IndexMap<HashId, Option<AbsoluteOffset>, 1_000_000>,
         string: &mut String,
-    ) -> Result<(), GCError> {
+    ) -> Result<HashId, GCError> {
         let start = hash_ids.len();
         self.with_object(hash_id, |object_bytes| {
             // TODO: Check if this is correct with inodes
             for hash_id in iter_hash_ids(object_bytes) {
                 hash_ids.push(hash_id);
+                new_hash_ids.push(hash_id);
             }
         })?;
         let end = hash_ids.len();
 
         for index in start..end {
             let hash_id = hash_ids[index];
-            self.traverse_to_make_snapshot(
-                hash_id,
-                hash_ids,
-                storage,
-                strings,
-                bytes,
-                repository,
-                output,
-                stats,
-                batch,
-                hash_ids_to_offset,
-                string,
-            )
-            .unwrap();
+            let new_hash_id = self
+                .traverse_to_make_snapshot(
+                    hash_id,
+                    hash_ids,
+                    new_hash_ids,
+                    storage,
+                    strings,
+                    bytes,
+                    on_disk_repo,
+                    output,
+                    stats,
+                    batch,
+                    hash_ids_to_offset,
+                    string,
+                )
+                .unwrap();
+
+            new_hash_ids[index] = new_hash_id;
         }
 
         bytes.clear();
@@ -609,16 +615,18 @@ impl GCThread {
         })?;
 
         let mut object = {
-            let read_repo = self.repository.as_ref().unwrap().read();
-            in_memory::deserialize_object(bytes, storage, strings, &*read_repo).unwrap()
+            let in_mem_repo = self.in_mem_repo.as_ref().unwrap().read();
+            in_memory::deserialize_object(bytes, storage, strings, &*in_mem_repo).unwrap()
         };
 
         // When the object is an inode, `in_memory::deserialize_object` only partialy
         // stores it in the `Storage`, we need to load it fully
         match object {
             Object::Directory(dir_id) if dir_id.is_inode() => {
-                let read_repo = self.repository.as_ref().unwrap().read();
-                storage.dir_full_load(dir_id, strings, &*read_repo).unwrap();
+                let in_mem_repo = self.in_mem_repo.as_ref().unwrap().read();
+                storage
+                    .dir_full_load(dir_id, strings, &*in_mem_repo)
+                    .unwrap();
             }
             _ => {}
         }
@@ -641,14 +649,14 @@ impl GCThread {
 
             {
                 // Read the string from the in-mem repo, lock it as short as possible
-                let read_repo = self.repository.as_ref().unwrap().read();
-                let s = read_repo.get_str(*string_id).unwrap();
+                let in_mem_repo = self.in_mem_repo.as_ref().unwrap().read();
+                let s = in_mem_repo.get_str(*string_id).unwrap();
                 string.clear();
                 string.push_str(s.as_ref());
             }
 
             // Replace the old string id (from the in-mem context) to the new string id (on disk)
-            let new_string_id = repository.string_interner.make_string_id(&string);
+            let new_string_id = on_disk_repo.string_interner.make_string_id(&string);
             *string_id = new_string_id;
         }
 
@@ -669,7 +677,8 @@ impl GCThread {
                         let offset = hash_ids_to_offset.get(hash_id).unwrap().unwrap().clone();
                         dir_entry.set_offset(offset);
 
-                        let new_hash_id = self.copy_hash_to_snapshot(hash_id, repository);
+                        let new_hash_id = new_hash_ids[index];
+                        // let new_hash_id = self.copy_hash_to_snapshot(hash_id, on_disk_repo);
                         dir_entry.set_hash_id(new_hash_id);
 
                         assert!(dir_entry.hash_id().is_some());
@@ -684,7 +693,7 @@ impl GCThread {
             Object::Commit(commit) => {
                 let new_parent_hash_id = commit
                     .parent_hash_id()
-                    .map(|parent_hash_id| self.copy_hash_to_snapshot(parent_hash_id, repository));
+                    .map(|parent_hash_id| self.copy_hash_to_snapshot(parent_hash_id, on_disk_repo));
 
                 let root_hash_id = commit.root_ref.hash_id();
                 let offset = hash_ids_to_offset
@@ -694,39 +703,50 @@ impl GCThread {
                     .clone()
                     .unwrap();
 
-                let new_root_hash_id = self.copy_hash_to_snapshot(root_hash_id, repository);
+                let new_root_hash_id = self.copy_hash_to_snapshot(root_hash_id, on_disk_repo);
 
                 commit.root_ref.set_offset(offset);
                 commit.root_ref.set_hash_id(new_root_hash_id);
 
-                if let Some(parent_hash_id) = new_parent_hash_id {
-                    commit.set_parent_hash_id(parent_hash_id);
+                if let Some(new_parent_hash_id) = new_parent_hash_id {
+                    commit.set_parent_hash_id(new_parent_hash_id);
                 };
             }
             Object::Blob(..) => {}
         }
 
-        if hash_ids_to_offset
-            .get(hash_id)
-            .unwrap()
-            .map(|o| o.is_none())
-            .unwrap_or(true)
-        {
-            // TODO: Use new HashId here
-            let offset = persistent::serialize_object(
-                &object, hash_id, output, storage, strings, stats, batch, repository,
-            )
-            .unwrap();
+        // if hash_ids_to_offset
+        //     .get(hash_id)
+        //     .unwrap()
+        //     .map(|o| o.is_none())
+        //     .unwrap_or(true)
+        // {
+        let new_hash_id = self.copy_hash_to_snapshot(hash_id, on_disk_repo);
 
-            hash_ids_to_offset.insert_at(hash_id, offset).unwrap();
-        }
+        let offset = persistent::serialize_object(
+            &object,
+            new_hash_id,
+            output,
+            storage,
+            strings,
+            stats,
+            batch,
+            on_disk_repo,
+        )
+        .unwrap();
+
+        hash_ids_to_offset.insert_at(hash_id, offset).unwrap();
+        // }
 
         storage.clear();
 
         assert_eq!(end, hash_ids.len());
         hash_ids.remove_last_nelems(end - start);
 
-        Ok(())
+        assert_eq!(end, new_hash_ids.len());
+        new_hash_ids.remove_last_nelems(end - start);
+
+        Ok(new_hash_id)
     }
 
     fn take_unused(&mut self) -> Result<ChunkedVec<HashId, { UNUSED_CHUNK_CAPACITY }>, GCError> {
@@ -801,6 +821,7 @@ impl GCThread {
         println!("MAKING SNAPSHOT");
 
         let mut hash_ids = ChunkedVec::default();
+        let mut new_hash_ids = ChunkedVec::default();
         let mut storage = Storage::default();
         let mut strings = StringInterner::default();
         let mut bytes = Vec::with_capacity(1024);
@@ -828,6 +849,7 @@ impl GCThread {
         self.traverse_to_make_snapshot(
             commit_hash_id,
             &mut hash_ids,
+            &mut new_hash_ids,
             &mut storage,
             &mut strings,
             &mut bytes,
