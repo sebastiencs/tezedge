@@ -606,7 +606,7 @@ impl GCThread {
         &self,
         hash_id: HashId,
         hash_ids: &mut ChunkedVec<HashId, 8192>,
-        new_hash_ids: &mut ChunkedVec<HashId, 8192>,
+        new_hash_ids: &mut ChunkedVec<ObjectReference, 8192>,
         storage: &mut Storage,
         strings: &mut StringInterner,
         bytes: &mut Vec<u8>,
@@ -614,7 +614,7 @@ impl GCThread {
         output: &mut SerializeOutput,
         stats: &mut SerializeStats,
         batch: &mut ChunkedVec<(HashId, InlinedBoxedSlice), { BATCH_CHUNK_CAPACITY }>,
-        hash_ids_to_offset: &mut IndexMap<HashId, Option<AbsoluteOffset>, 1_000_000>,
+        // hash_ids_to_offset: &mut IndexMap<HashId, Option<AbsoluteOffset>, 1_000_000>,
         string: &mut String,
     ) -> Result<ObjectReference, GCError> {
         if output.len() >= 20_000_000 || on_disk_repo.hashes_in_memory_len() >= 625_000 {
@@ -632,7 +632,7 @@ impl GCThread {
 
         self.for_each_child(hash_id, bytes, &mut |hash_id| {
             hash_ids.push(hash_id);
-            new_hash_ids.push(hash_id);
+            new_hash_ids.push(ObjectReference::default());
         })?;
 
         // self.with_object(hash_id, |object_bytes| {
@@ -659,12 +659,12 @@ impl GCThread {
                     output,
                     stats,
                     batch,
-                    hash_ids_to_offset,
+                    // hash_ids_to_offset,
                     string,
                 )
                 .unwrap();
 
-            new_hash_ids[index] = new_obj_ref.hash_id();
+            new_hash_ids[index] = new_obj_ref;
         }
 
         bytes.clear();
@@ -728,13 +728,16 @@ impl GCThread {
                             return Ok(());
                         }
 
-                        let hash_id = hash_ids[index]; // fail here
-                        let offset = hash_ids_to_offset.get(hash_id).unwrap().unwrap().clone();
-                        dir_entry.set_offset(offset);
+                        // let hash_id = hash_ids[index]; // fail here
 
-                        let new_hash_id = new_hash_ids[index];
+                        let new_obj_ref = new_hash_ids[index];
+
+                        // let offset = hash_ids_to_offset.get(hash_id).unwrap().unwrap().clone();
+                        dir_entry.set_offset(new_obj_ref.offset());
+
+                        // let new_hash_id = new_hash_ids[index];
                         // let new_hash_id = self.copy_hash_to_snapshot(hash_id, on_disk_repo);
-                        dir_entry.set_hash_id(new_hash_id);
+                        dir_entry.set_hash_id(new_obj_ref.hash_id());
 
                         assert!(dir_entry.hash_id().is_some());
 
@@ -751,12 +754,14 @@ impl GCThread {
                     .map(|parent_hash_id| self.copy_hash_to_snapshot(parent_hash_id, on_disk_repo));
 
                 let root_hash_id = commit.root_ref.hash_id();
-                let offset = hash_ids_to_offset
-                    .get(root_hash_id)
-                    .unwrap()
-                    .unwrap()
-                    .clone()
-                    .unwrap();
+                // let offset = hash_ids_to_offset
+                //     .get(root_hash_id)
+                //     .unwrap()
+                //     .unwrap()
+                //     .clone()
+                //     .unwrap();
+
+                let offset = new_hash_ids[start].offset();
 
                 let new_root_hash_id = self.copy_hash_to_snapshot(root_hash_id, on_disk_repo);
 
@@ -792,7 +797,7 @@ impl GCThread {
 
         let new_obj_ref = ObjectReference::new(Some(new_hash_id), offset);
 
-        hash_ids_to_offset.insert_at(hash_id, offset).unwrap();
+        // hash_ids_to_offset.insert_at(hash_id, offset).unwrap();
         // }
 
         storage.clear();
@@ -915,8 +920,8 @@ impl GCThread {
         let mut batch = Default::default();
         let mut string = String::with_capacity(1024);
 
-        let mut hash_id_to_offset =
-            IndexMap::<HashId, Option<AbsoluteOffset>, 1_000_000>::default();
+        // let mut hash_id_to_offset =
+        //     IndexMap::<HashId, Option<AbsoluteOffset>, 1_000_000>::default();
 
         let mut repository = Persistent::try_new(PersistentConfiguration {
             db_path: Some(path_tmp.clone()),
@@ -945,7 +950,7 @@ impl GCThread {
                 &mut output,
                 &mut stats,
                 &mut batch,
-                &mut hash_id_to_offset,
+                // &mut hash_id_to_offset,
                 &mut string,
             )
             .unwrap();
@@ -954,7 +959,7 @@ impl GCThread {
         println!("STORAGE={:#?}", storage.memory_usage(&strings));
         println!("HASHES={:#?}", hash_ids.len());
         println!("OUTPUT={:#?}", output.len());
-        println!("HASH_ID_TO_OFFSET={:#?}", hash_id_to_offset.capacity());
+        // println!("HASH_ID_TO_OFFSET={:#?}", hash_id_to_offset.capacity());
         println!("{:#?}", repository.shapes);
         println!("{:#?}", repository.string_interner);
 
