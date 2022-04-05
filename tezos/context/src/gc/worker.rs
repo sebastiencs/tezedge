@@ -625,6 +625,7 @@ impl GCThread {
             );
             on_disk_repo.append_to_disk(&output).unwrap();
             on_disk_repo.set_is_commiting();
+            on_disk_repo.deallocate_strings_shapes();
             output.clear();
         }
 

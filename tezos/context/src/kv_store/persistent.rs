@@ -611,6 +611,11 @@ hashes_file={:?}, in sizes.db={:?}",
         Ok(())
     }
 
+    pub fn deallocate_strings_shapes(&mut self) {
+        self.shapes.deallocate_serialized();
+        self.string_interner.deallocate_serialized();
+    }
+
     pub fn data_file_offset(&self) -> AbsoluteOffset {
         self.data_file.offset()
     }

@@ -115,6 +115,20 @@ where
         }
     }
 
+    pub fn deallocate_before(&mut self, index: usize) {
+        let (list_index, _) = self.get_indexes_at(index);
+        let list_index = list_index.saturating_sub(1);
+
+        let chunks = match self.list_of_chunks.get_mut(0..list_index) {
+            Some(chunks) => chunks,
+            None => return,
+        };
+
+        for chunk in chunks {
+            *chunk = Vec::new();
+        }
+    }
+
     pub fn extend_from(&mut self, other: &Self) {
         let our_length = self.list_of_chunks.len();
         let other_length = other.list_of_chunks.len();

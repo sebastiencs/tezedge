@@ -242,6 +242,15 @@ impl DirectoryShapes {
         output
     }
 
+    pub fn deallocate_serialized(&mut self) {
+        let first: usize = match self.to_serialize.get(0) {
+            Some(first) => first.start() as usize,
+            None => return,
+        };
+
+        self.shapes.deallocate_before(first);
+    }
+
     pub fn deserialize(
         shapes_file: File<{ TAG_SHAPE }>,
         shapes_index_file: File<{ TAG_SHAPE_INDEX }>,

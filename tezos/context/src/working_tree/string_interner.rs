@@ -175,6 +175,16 @@ impl BigStrings {
         self.to_serialize_index = self.offsets.len();
     }
 
+    pub fn deallocate_serialized(&mut self) {
+        let (start, _) = match self.offsets.get(self.to_serialize_index).copied() {
+            Some(offsets) => offsets,
+            None => return,
+        };
+
+        self.strings.deallocate_before(start as usize);
+        self.offsets.deallocate_before(self.to_serialize_index);
+    }
+
     fn deserialize(
         big_strings_file: File<{ TAG_BIG_STRINGS }>,
     ) -> Result<Self, DeserializationError> {
@@ -462,6 +472,10 @@ impl StringInterner {
     pub fn shrink_to_fit(&mut self) {
         self.string_to_offset.shrink_to_fit();
         self.big_strings.hashes.shrink_to_fit();
+    }
+
+    pub fn deallocate_serialized(&mut self) {
+        self.big_strings.deallocate_serialized();
     }
 }
 
