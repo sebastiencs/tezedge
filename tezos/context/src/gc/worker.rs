@@ -31,8 +31,10 @@ use crate::{
     },
     persistent::KeyValueStoreBackend,
     serialize::{
+        get_object_tag,
         in_memory::{self, iter_hash_ids},
         persistent::{self, AbsoluteOffset},
+        ObjectHeader, ObjectTag,
     },
     working_tree::{
         storage::Storage, string_interner::StringInterner, working_tree::SerializeOutput, Object,
@@ -487,6 +489,36 @@ impl GCThread {
         Ok(())
     }
 
+    fn for_each_child<F: FnMut(HashId)>(
+        &self,
+        hash_id: HashId,
+        bytes: &mut Vec<u8>,
+        fun: &mut F,
+    ) -> Result<(), GCError> {
+        bytes.clear();
+        self.with_object(hash_id, |object_bytes| {
+            bytes.extend_from_slice(object_bytes);
+        })?;
+
+        let tag = get_object_tag(bytes);
+
+        match tag {
+            ObjectTag::InodePointers => {
+                let bytes_clone = bytes.clone();
+                for hash_id in iter_hash_ids(&bytes_clone) {
+                    self.for_each_child(hash_id, bytes, fun)?;
+                }
+            }
+            _ => {
+                for hash_id in iter_hash_ids(bytes) {
+                    fun(hash_id);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     fn with_object(&self, hash_id: HashId, fun: impl FnOnce(&[u8])) -> Result<(), GCError> {
         self.objects_view.with(hash_id, |object_bytes| {
             let object_bytes = match object_bytes {
@@ -578,13 +610,20 @@ impl GCThread {
         string: &mut String,
     ) -> Result<ObjectReference, GCError> {
         let start = hash_ids.len();
-        self.with_object(hash_id, |object_bytes| {
-            // TODO: Check if this is correct with inodes
-            for hash_id in iter_hash_ids(object_bytes) {
-                hash_ids.push(hash_id);
-                new_hash_ids.push(hash_id);
-            }
+
+        self.for_each_child(hash_id, bytes, &mut |hash_id| {
+            hash_ids.push(hash_id);
+            new_hash_ids.push(hash_id);
         })?;
+
+        // self.with_object(hash_id, |object_bytes| {
+        //     // TODO: Check if this is correct with inodes
+        //     for hash_id in iter_hash_ids(object_bytes) {
+        //         hash_ids.push(hash_id);
+        //         new_hash_ids.push(hash_id);
+        //     }
+        // })?;
+
         let end = hash_ids.len();
 
         for index in start..end {
@@ -643,9 +682,7 @@ impl GCThread {
             fat_pointer.set_commited(false);
         }
 
-        for index in 0..storage.directories.len() {
-            let (string_id, _) = &mut storage.directories[index];
-
+        storage.directories.for_each_mut(|(string_id, _)| {
             {
                 // Read the string from the in-mem repo, lock it as short as possible
                 let in_mem_repo = self.in_mem_repo.as_ref().unwrap().read();
@@ -657,7 +694,7 @@ impl GCThread {
             // Replace the old string id (from the in-mem context) to the new string id (on disk)
             let new_string_id = on_disk_repo.string_interner.make_string_id(&string);
             *string_id = new_string_id;
-        }
+        });
 
         match &mut object {
             Object::Directory(dir_id) => {
@@ -672,7 +709,7 @@ impl GCThread {
                             return Ok(());
                         }
 
-                        let hash_id = hash_ids[index];
+                        let hash_id = hash_ids[index]; // fail here
                         let offset = hash_ids_to_offset.get(hash_id).unwrap().unwrap().clone();
                         dir_entry.set_offset(offset);
 
@@ -834,7 +871,7 @@ impl GCThread {
             IndexMap::<HashId, Option<AbsoluteOffset>, 1_000_000>::default();
 
         let mut repository = Persistent::try_new(PersistentConfiguration {
-            db_path: Some("/tmp/tezedge-mem/".to_string()),
+            db_path: Some("/tmp/tezedge-mem-tmp/".to_string()),
             startup_check: false,
             read_mode: false,
         })
@@ -871,6 +908,16 @@ impl GCThread {
 
         repository.put_context_hash(commit_ref).unwrap();
         repository.commit_to_disk(&output).unwrap();
+
+        let options = fs_extra::dir::CopyOptions {
+            overwrite: true,
+            skip_exist: false,
+            buffer_size: 64000,
+            copy_inside: true,
+            content_only: true,
+            depth: 0,
+        };
+        fs_extra::dir::move_dir("/tmp/tezedge-mem-tmp", "/tmp/tezedge-mem", &options).unwrap();
     }
 
     fn handle_commit(

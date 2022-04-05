@@ -87,6 +87,13 @@ impl ObjectHeader {
     }
 }
 
+pub fn get_object_tag(bytes: &[u8]) -> ObjectTag {
+    let header = bytes.get(0).copied().unwrap();
+    let header: ObjectHeader = ObjectHeader::from_bytes([header]);
+
+    header.tag_or_err().unwrap()
+}
+
 #[derive(Debug, Error)]
 pub enum SerializationError {
     #[error("IOError {error}")]

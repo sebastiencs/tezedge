@@ -277,9 +277,9 @@ ocaml_export! {
         let (block_level, _cycle_position): (i32, Option<i64>) = extra_data.to_rust(rt);
         let context_hash: Option<ContextHash> = context_hash.to_rust(rt);
 
-        if block_level == 101 {
-            std::thread::sleep_ms(300_000);
-        }
+        // if block_level == 101 {
+        //     std::thread::sleep_ms(300_000);
+        // }
 
         // We call `IndexApi::block_applied` only when `context_hash` is `Some(_)`:
         // For a single commit, `tezedge_index_block_applied` is called twice from OCaml
