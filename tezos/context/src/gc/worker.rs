@@ -957,7 +957,11 @@ impl GCThread {
 
         println!("SNAPSHOT DONE IN {:?}", now.elapsed());
         println!("STORAGE={:#?}", storage.memory_usage(&strings));
-        println!("HASHES={:#?}", hash_ids.len());
+        println!(
+            "HASHES LEN={:#?} CAP={:?}",
+            hash_ids.len(),
+            hash_ids.capacity()
+        );
         println!("OUTPUT={:#?}", output.len());
         // println!("HASH_ID_TO_OFFSET={:#?}", hash_id_to_offset.capacity());
         println!("{:#?}", repository.shapes);
