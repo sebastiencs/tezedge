@@ -617,6 +617,12 @@ impl GCThread {
         hash_ids_to_offset: &mut IndexMap<HashId, Option<AbsoluteOffset>, 1_000_000>,
         string: &mut String,
     ) -> Result<ObjectReference, GCError> {
+        if output.len() >= 20_000_000 {
+            on_disk_repo.commit_to_disk(&output).unwrap();
+            on_disk_repo.set_is_commiting();
+            output.clear();
+        }
+
         let start = hash_ids.len();
 
         self.for_each_child(hash_id, bytes, &mut |hash_id| {
@@ -863,19 +869,12 @@ impl GCThread {
         log!("{:?}", stats);
     }
 
-    fn make_snapshot(&self, commit_hash_id: HashId) {
-        let current = self.current_generation.get();
-
-        if !(current > 0 && current % 10 == 0) {
-            println!("Skipping snapshot");
-            return;
-        }
-
+    fn make_snapshot_paths(&self) -> (String, String) {
         let path = self
             .configuration
             .db_path
-            .clone()
-            .unwrap_or_else(|| "/tmp/tezedge-context".to_string());
+            .as_deref()
+            .unwrap_or_else(|| "/tmp/tezedge-context");
         let mut path = PathBuf::from(path);
         path.pop();
 
@@ -886,6 +885,19 @@ impl GCThread {
 
         let path_tmp = path_tmp.to_str().unwrap().to_string();
         let path = path.to_str().unwrap().to_string();
+
+        (path_tmp, path)
+    }
+
+    fn make_snapshot(&self, commit_hash_id: HashId) {
+        let current = self.current_generation.get();
+
+        if !(current > 0 && current % 10 == 0) {
+            println!("Skipping snapshot");
+            return;
+        }
+
+        let (path_tmp, path) = self.make_snapshot_paths();
 
         println!("MAKING SNAPSHOT tmp={:?} path={:?}", path_tmp, path);
 
@@ -937,6 +949,7 @@ impl GCThread {
         println!("STORAGE={:#?}", storage.memory_usage(&strings));
         println!("HASHES={:#?}", hash_ids.len());
         println!("OUTPUT={:#?}", output.len());
+        println!("HASH_ID_TO_OFFSET={:#?}", hash_id_to_offset.capacity());
 
         repository.put_context_hash(commit_ref).unwrap();
         repository.commit_to_disk(&output).unwrap();
@@ -1130,6 +1143,10 @@ mod tests {
         let hashes = SharedIndexMap::default();
         let id = HashId::new(10).unwrap();
         let chunks = ChunkedVec::new();
+        let conf = InMemoryConfiguration {
+            db_path: None,
+            startup_check: false,
+        };
 
         objects
             .insert_at(id, InlinedBoxedSlice::from(&[][..]))
@@ -1140,7 +1157,7 @@ mod tests {
         let objects_view = objects.get_view();
         let hashes_view = hashes.get_view();
 
-        let mut gc = GCThread::new(recv, producer, objects_view, hashes_view);
+        let mut gc = GCThread::new(recv, producer, objects_view, hashes_view, conf);
         gc.debug = true;
         gc.napplieds_since_last_run = NAPPLIED_BEFORE_COLLECT + 1;
 
