@@ -623,7 +623,7 @@ impl GCThread {
                 output.len(),
                 on_disk_repo.hashes_in_memory_len()
             );
-            on_disk_repo.commit_to_disk(&output).unwrap();
+            on_disk_repo.append_to_disk(&output).unwrap();
             on_disk_repo.set_is_commiting();
             output.clear();
         }
@@ -955,6 +955,8 @@ impl GCThread {
         println!("HASHES={:#?}", hash_ids.len());
         println!("OUTPUT={:#?}", output.len());
         println!("HASH_ID_TO_OFFSET={:#?}", hash_id_to_offset.capacity());
+        println!("{:#?}", repository.shapes);
+        println!("{:#?}", repository.string_interner);
 
         repository.put_context_hash(commit_ref).unwrap();
         repository.commit_to_disk(&output).unwrap();

@@ -114,7 +114,7 @@ pub struct Persistent {
     big_strings_file: File<{ TAG_BIG_STRINGS }>,
 
     hashes: Hashes,
-    shapes: DirectoryShapes,
+    pub shapes: DirectoryShapes,
     pub string_interner: StringInterner,
 
     pub context_hashes: Map<u64, ObjectReference>,
@@ -579,7 +579,7 @@ hashes_file={:?}, in sizes.db={:?}",
         Ok(hash_id.ok_or(DeserializationError::MissingHash)?)
     }
 
-    pub fn commit_to_disk(&mut self, data: &[u8]) -> Result<(), std::io::Error> {
+    pub fn append_to_disk(&mut self, data: &[u8]) -> Result<(), std::io::Error> {
         self.data_file.append(data)?;
 
         let strings = self.string_interner.serialize();
@@ -591,6 +591,12 @@ hashes_file={:?}, in sizes.db={:?}",
         self.shape_index_file.append(&shapes.index)?;
 
         self.hashes.commit()?;
+
+        Ok(())
+    }
+
+    pub fn commit_to_disk(&mut self, data: &[u8]) -> Result<(), std::io::Error> {
+        self.append_to_disk(data)?;
 
         self.data_file.sync()?;
         self.strings_file.sync()?;

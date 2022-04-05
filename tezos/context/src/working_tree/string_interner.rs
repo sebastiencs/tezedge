@@ -86,12 +86,27 @@ pub struct SerializeStrings {
     pub strings: Vec<u8>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 struct BigStrings {
     hashes: SortedMap<u64, u32>,
     strings: ChunkedString<{ 64 * 1024 * 1024 }>, // ~67MB
     offsets: ChunkedVec<(u32, u32), { 128 * 1024 }>, // ~1MB
     to_serialize_index: usize,
+}
+
+impl std::fmt::Debug for BigStrings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BigStrings")
+            .field("hashes_bytes", &self.hashes.total_bytes())
+            .field("strings_cap", &self.strings.capacity())
+            .field("offsets_cap", &self.offsets.capacity())
+            .field(
+                "offsets_bytes",
+                &(self.offsets.capacity() * std::mem::size_of::<(u32, u32)>()),
+            )
+            .field("to_serialize_index", &self.to_serialize_index)
+            .finish()
+    }
 }
 
 impl PartialEq for BigStrings {
@@ -200,7 +215,7 @@ impl BigStrings {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct StringInterner {
     /// `Map` of hash of the string to their `StringId`
     /// We don't use `HashMap<String, StringId>` because the map would
@@ -214,6 +229,23 @@ pub struct StringInterner {
     /// Concatenation of big strings. This is cleared/deallocated
     /// before every checkouts
     big_strings: BigStrings,
+}
+
+impl std::fmt::Debug for StringInterner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StringInterner")
+            .field(
+                "string_to_offset_bytes",
+                &self.string_to_offset.total_bytes(),
+            )
+            .field("all_strings_cap", &self.all_strings.capacity())
+            .field(
+                "all_strings_to_serialize_cap",
+                &self.all_strings_to_serialize.capacity(),
+            )
+            .field("big_strings", &self.big_strings)
+            .finish()
+    }
 }
 
 impl Default for StringInterner {
