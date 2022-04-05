@@ -184,6 +184,10 @@ impl Hashes {
         }
     }
 
+    fn in_memory_len(&self) -> usize {
+        self.in_memory.in_memory_len()
+    }
+
     fn get_hash(&self, hash_id: HashId) -> Result<Cow<ObjectHash>, DBError> {
         if let Some(hash) = self.in_memory.try_get_hash(hash_id)? {
             // The hash is in memory
@@ -295,6 +299,10 @@ impl Persistent {
 
     pub fn enable_hash_dedup(&mut self) {
         self.hashes.in_memory.dedup_hashes = Some(Default::default());
+    }
+
+    pub fn hashes_in_memory_len(&self) -> usize {
+        self.hashes.in_memory_len()
     }
 
     pub fn compute_integrity(&mut self, output: &mut File<{ TAG_SIZES }>) -> std::io::Result<()> {

@@ -617,7 +617,12 @@ impl GCThread {
         hash_ids_to_offset: &mut IndexMap<HashId, Option<AbsoluteOffset>, 1_000_000>,
         string: &mut String,
     ) -> Result<ObjectReference, GCError> {
-        if output.len() >= 20_000_000 {
+        if output.len() >= 20_000_000 || on_disk_repo.hashes_in_memory_len() >= 625_000 {
+            println!(
+                "Writing snapshot to disk output={:?} nhashes={:?}",
+                output.len(),
+                on_disk_repo.hashes_in_memory_len()
+            );
             on_disk_repo.commit_to_disk(&output).unwrap();
             on_disk_repo.set_is_commiting();
             output.clear();
