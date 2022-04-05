@@ -3,6 +3,7 @@
 
 use std::{
     num::TryFromIntError,
+    path::PathBuf,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -23,7 +24,7 @@ use crate::{
         stats::{CollectorStatistics, CommitStatistics, OnMessageStatistics},
     },
     kv_store::{
-        in_memory::{BATCH_CHUNK_CAPACITY, OBJECTS_CHUNK_CAPACITY},
+        in_memory::{InMemoryConfiguration, BATCH_CHUNK_CAPACITY, OBJECTS_CHUNK_CAPACITY},
         index_map::IndexMap,
         inline_boxed_slice::InlinedBoxedSlice,
         persistent::PersistentConfiguration,
@@ -106,6 +107,10 @@ impl Generation {
 
     const fn zero() -> Self {
         Self { inner: 0 }
+    }
+
+    const fn get(self) -> u8 {
+        self.inner
     }
 
     const fn wrapping_sub(self, rhs: u8) -> Self {
@@ -199,6 +204,7 @@ pub(crate) struct GCThread {
     napplieds_since_last_run: usize,
 
     in_mem_repo: Option<Arc<RwLock<ContextKeyValueStore>>>,
+    configuration: InMemoryConfiguration,
 }
 
 assert_eq_size!([u8; 16], Option<Box<[u8]>>);
@@ -255,6 +261,7 @@ impl GCThread {
         producer: Producer<HashId>,
         objects_view: SharedIndexMapView<HashId, Option<InlinedBoxedSlice>, OBJECTS_CHUNK_CAPACITY>,
         hashes_view: SharedIndexMapView<HashId, Option<Box<ObjectHash>>, OBJECTS_CHUNK_CAPACITY>,
+        configuration: InMemoryConfiguration,
     ) -> Self {
         Self {
             recv,
@@ -271,6 +278,7 @@ impl GCThread {
             napplieds_since_last_run: 0,
             highest_block_level: 0,
             in_mem_repo: None,
+            configuration,
         }
     }
 
@@ -856,7 +864,30 @@ impl GCThread {
     }
 
     fn make_snapshot(&self, commit_hash_id: HashId) {
-        println!("MAKING SNAPSHOT");
+        let current = self.current_generation.get();
+
+        if !(current > 0 && current % 10 == 0) {
+            println!("Skipping snapshot");
+            return;
+        }
+
+        let path = self
+            .configuration
+            .db_path
+            .clone()
+            .unwrap_or_else(|| "/tmp/tezedge-context".to_string());
+        let mut path = PathBuf::from(path);
+        path.pop();
+
+        let mut path_tmp = path.clone();
+        let mut path = path.clone();
+        path_tmp.push("snapshot-tmp");
+        path.push("snapshot");
+
+        let path_tmp = path_tmp.to_str().unwrap().to_string();
+        let path = path.to_str().unwrap().to_string();
+
+        println!("MAKING SNAPSHOT tmp={:?} path={:?}", path_tmp, path);
 
         let mut hash_ids = ChunkedVec::default();
         let mut new_hash_ids = ChunkedVec::default();
@@ -871,7 +902,8 @@ impl GCThread {
             IndexMap::<HashId, Option<AbsoluteOffset>, 1_000_000>::default();
 
         let mut repository = Persistent::try_new(PersistentConfiguration {
-            db_path: Some("/tmp/tezedge-mem-tmp/".to_string()),
+            db_path: Some(path_tmp.clone()),
+            // db_path: Some("/tmp/tezedge-mem-tmp/".to_string()),
             startup_check: false,
             read_mode: false,
         })
@@ -917,7 +949,7 @@ impl GCThread {
             content_only: true,
             depth: 0,
         };
-        fs_extra::dir::move_dir("/tmp/tezedge-mem-tmp", "/tmp/tezedge-mem", &options).unwrap();
+        fs_extra::dir::move_dir(path_tmp, path, &options).unwrap();
     }
 
     fn handle_commit(

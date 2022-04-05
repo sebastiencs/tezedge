@@ -54,7 +54,7 @@ use super::{HashId, VacantObjectHash};
 
 pub const BATCH_CHUNK_CAPACITY: usize = 8 * 1024;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct InMemoryConfiguration {
     pub db_path: Option<String>,
     pub startup_check: bool,
@@ -494,10 +494,13 @@ impl InMemory {
             let hashes = HashObjectStore::new(consumer);
             let objects_view = hashes.objects.get_view();
             let hashes_view = hashes.hashes.get_view();
+            let conf = configuration.clone();
 
             let thread_handle = std::thread::Builder::new()
                 .name("ctx-inmem-gc-thread".to_string())
-                .spawn(move || GCThread::new(recv, producer, objects_view, hashes_view).run())?;
+                .spawn(move || {
+                    GCThread::new(recv, producer, objects_view, hashes_view, conf).run()
+                })?;
 
             (Some(sender), Some(thread_handle), hashes)
         };
