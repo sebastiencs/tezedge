@@ -33,9 +33,8 @@ use crate::{
     persistent::KeyValueStoreBackend,
     serialize::{
         get_object_tag,
-        in_memory::{self, iter_hash_ids},
-        persistent::{self, AbsoluteOffset},
-        ObjectHeader, ObjectTag,
+        in_memory::{self, commit_parent_hash, iter_hash_ids},
+        persistent, ObjectTag,
     },
     working_tree::{
         storage::Storage, string_interner::StringInterner, working_tree::SerializeOutput, Object,
@@ -228,6 +227,8 @@ enum GCError {
         #[from]
         error: SharedIndexMapError,
     },
+    #[error("Unable to find a frozen commit for snapshot")]
+    FrozenCommitNotFound,
 }
 
 impl From<HashIdError> for GCError {
@@ -465,44 +466,15 @@ impl GCThread {
         }
     }
 
-    fn get_children_hash_ids(
-        &self,
-        hash_id: HashId,
-        hash_ids: &mut [Option<HashId>; 256],
-    ) -> Result<(), GCError> {
-        // Store the `HashId` of the children in this array, we avoid
-        // allocating a `Vec`
-        // The maximum depth of recursion is currently `16`, so a stack
-        // overflow will not occurs.
-        // Note: We could create a container that allocate a `Vec` when
-        // some `depth` is reached
-
-        self.objects_view.with(hash_id, |object_bytes| {
-            let object_bytes = match object_bytes {
-                Some(Some(object_bytes)) => object_bytes,
-                _ => {
-                    elog!("Missing Object object={:?}", object_bytes);
-                    return Err(GCError::TraverseTreeError);
-                }
-            };
-
-            // Store the `HashId` of all the children in `hash_ids`
-            for (index, hash_id) in iter_hash_ids(object_bytes).enumerate() {
-                hash_ids[index] = Some(hash_id);
-            }
-
-            Ok(())
-        })??;
-
-        Ok(())
-    }
-
-    fn for_each_child<F: FnMut(HashId)>(
+    fn for_each_child<F>(
         &self,
         hash_id: HashId,
         bytes: &mut Vec<u8>,
         fun: &mut F,
-    ) -> Result<(), GCError> {
+    ) -> Result<(), GCError>
+    where
+        F: FnMut(HashId),
+    {
         bytes.clear();
         self.with_object(hash_id, |object_bytes| {
             bytes.extend_from_slice(object_bytes);
@@ -527,7 +499,10 @@ impl GCThread {
         Ok(())
     }
 
-    fn with_object(&self, hash_id: HashId, fun: impl FnOnce(&[u8])) -> Result<(), GCError> {
+    fn with_object<F>(&self, hash_id: HashId, fun: F) -> Result<(), GCError>
+    where
+        F: FnOnce(&[u8]),
+    {
         self.objects_view.with(hash_id, |object_bytes| {
             let object_bytes = match object_bytes {
                 Some(Some(object_bytes)) => object_bytes,
@@ -625,6 +600,25 @@ impl GCThread {
         }
     }
 
+    fn find_frozen_commit(&self, commit_hash_id: HashId, bytes: &mut Vec<u8>) -> Option<HashId> {
+        let mut hash_id = commit_hash_id;
+
+        for _ in 0..PRESERVE_BLOCK_LEVEL {
+            bytes.clear();
+            self.with_object(hash_id, |object_bytes| {
+                bytes.extend_from_slice(object_bytes);
+            })
+            .ok()?;
+
+            hash_id = commit_parent_hash(bytes)?;
+        }
+
+        // Make sure that the hash_id (and its object) exists
+        self.with_object(hash_id, |_| {}).ok()?;
+
+        Some(hash_id)
+    }
+
     fn traverse_to_make_snapshot(
         &self,
         hash_id: HashId,
@@ -703,24 +697,22 @@ impl GCThread {
             _ => {}
         }
 
-        for dir_entry in storage.nodes.iter_values() {
+        storage.nodes.for_each_mut(|dir_entry| {
             dir_entry.set_commited(false);
-        }
-
+        });
         storage.thin_pointers.for_each_mut(|thin_pointer| {
             thin_pointer.set_commited(false);
         });
-
-        for fat_pointer in storage.fat_pointers.iter_values() {
+        storage.fat_pointers.for_each_mut(|fat_pointer| {
             fat_pointer.set_commited(false);
-        }
+        });
 
         storage.directories.for_each_mut(|(string_id, _)| {
+            string.clear();
             {
                 // Read the string from the in-mem repo, lock it as short as possible
                 let in_mem_repo = self.in_mem_repo.as_ref().unwrap().read();
                 let s = in_mem_repo.get_str(*string_id).unwrap();
-                string.clear();
                 string.push_str(s.as_ref());
             }
 
@@ -929,13 +921,18 @@ impl GCThread {
         let mut new_hash_ids = ChunkedVec::default();
         let mut storage = Storage::default();
         let mut strings = StringInterner::default();
-        let mut bytes = Vec::with_capacity(1024);
+        let mut bytes = Vec::with_capacity(16 * 1024 * 1024);
         let mut stats = SerializeStats::default();
         let mut batch = Default::default();
         let mut string = String::with_capacity(1024);
 
         // let mut hash_id_to_offset =
         //     IndexMap::<HashId, Option<AbsoluteOffset>, 1_000_000>::default();
+
+        let commit_hash_id = self
+            .find_frozen_commit(commit_hash_id, &mut bytes)
+            .ok_or(GCError::FrozenCommitNotFound)
+            .unwrap();
 
         let mut repository = Persistent::try_new(PersistentConfiguration {
             db_path: Some(path_tmp.clone()),
