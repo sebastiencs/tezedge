@@ -618,7 +618,7 @@ impl GCThread {
                 "Writing snapshot to disk output={:?} nhashes={:?} strings={:?}",
                 data_len, hashes_len, strings_len,
             );
-            on_disk_repo.append_to_disk(&output).unwrap();
+            on_disk_repo.commit_to_disk(&output).unwrap();
             on_disk_repo.set_is_commiting();
             on_disk_repo.deallocate_strings_shapes();
             output.clear();
