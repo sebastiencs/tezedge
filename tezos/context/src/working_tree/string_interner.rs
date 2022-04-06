@@ -92,6 +92,7 @@ struct BigStrings {
     strings: ChunkedString<{ 64 * 1024 * 1024 }>, // ~67MB
     offsets: ChunkedVec<(u32, u32), { 128 * 1024 }>, // ~1MB
     to_serialize_index: usize,
+    new_bytes_since_last_serialize: usize,
 }
 
 impl std::fmt::Debug for BigStrings {
@@ -133,6 +134,7 @@ impl BigStrings {
         let index = self.offsets.push((start as u32, end as u32)) as u32;
 
         self.hashes.insert(hashed, index);
+        self.new_bytes_since_last_serialize += s.len();
 
         index
     }
@@ -172,17 +174,27 @@ impl BigStrings {
             output.big_strings.extend_from_slice(string.as_bytes());
         }
 
+        self.new_bytes_since_last_serialize = 0;
         self.to_serialize_index = self.offsets.len();
     }
 
     pub fn deallocate_serialized(&mut self) {
-        let (start, _) = match self.offsets.get(self.to_serialize_index).copied() {
+        let index = match self.to_serialize_index.checked_sub(1) {
+            Some(index) => index,
+            None => return,
+        };
+
+        let (start, _) = match self.offsets.get(index).copied() {
             Some(offsets) => offsets,
             None => return,
         };
 
         self.strings.deallocate_before(start as usize);
         self.offsets.deallocate_before(self.to_serialize_index);
+    }
+
+    fn new_bytes_since_last_serialize(&self) -> usize {
+        self.new_bytes_since_last_serialize
     }
 
     fn deserialize(
@@ -239,6 +251,8 @@ pub struct StringInterner {
     /// Concatenation of big strings. This is cleared/deallocated
     /// before every checkouts
     big_strings: BigStrings,
+
+    new_bytes_since_last_serialize: usize,
 }
 
 impl std::fmt::Debug for StringInterner {
@@ -265,6 +279,7 @@ impl Default for StringInterner {
             all_strings: ChunkedString::new(), // ~512KB
             all_strings_to_serialize: ChunkedVec::default(),
             big_strings: BigStrings::default(),
+            new_bytes_since_last_serialize: 0,
         } // Total ~69MB
     }
 }
@@ -353,6 +368,7 @@ impl StringInterner {
 
         self.string_to_offset.insert(hashed, string_id);
         self.all_strings_to_serialize.push(string_id);
+        self.new_bytes_since_last_serialize += s.len();
 
         debug_assert_eq!(s, self.get_str(string_id).unwrap());
 
@@ -394,6 +410,10 @@ impl StringInterner {
         }
     }
 
+    pub fn new_bytes_since_last_serialize(&self) -> usize {
+        self.new_bytes_since_last_serialize + self.big_strings.new_bytes_since_last_serialize()
+    }
+
     pub fn serialize(&mut self) -> SerializeStrings {
         let mut output = SerializeStrings {
             big_strings: Vec::with_capacity(1000),
@@ -413,6 +433,7 @@ impl StringInterner {
             output.strings.extend_from_slice(string);
         }
 
+        self.new_bytes_since_last_serialize = 0;
         self.all_strings_to_serialize.clear();
         self.big_strings.serialize_big_strings(&mut output);
 

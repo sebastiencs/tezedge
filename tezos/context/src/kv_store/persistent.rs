@@ -583,6 +583,13 @@ hashes_file={:?}, in sizes.db={:?}",
         self.data_file.append(data)?;
 
         let strings = self.string_interner.serialize();
+
+        println!(
+            "APPEND STRINGS len={:?} big_len={:?}",
+            strings.strings.len(),
+            strings.big_strings.len()
+        );
+
         self.strings_file.append(&strings.strings)?;
         self.big_strings_file.append(&strings.big_strings)?;
 

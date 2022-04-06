@@ -602,6 +602,29 @@ impl GCThread {
             .unwrap()
     }
 
+    fn maybe_write_to_disk(&self, output: &mut SerializeOutput, on_disk_repo: &mut Persistent) {
+        let data_len = output.len();
+        let hashes_len = on_disk_repo.hashes_in_memory_len();
+        let strings_len = on_disk_repo
+            .string_interner
+            .new_bytes_since_last_serialize();
+
+        let data_limit_reached = data_len >= 20_000_000;
+        let hashes_limit_reached = hashes_len >= 625_000;
+        let strings_limit_reached = strings_len >= 10_000_000;
+
+        if data_limit_reached || hashes_limit_reached || strings_limit_reached {
+            println!(
+                "Writing snapshot to disk output={:?} nhashes={:?} strings={:?}",
+                data_len, hashes_len, strings_len,
+            );
+            on_disk_repo.append_to_disk(&output).unwrap();
+            on_disk_repo.set_is_commiting();
+            on_disk_repo.deallocate_strings_shapes();
+            output.clear();
+        }
+    }
+
     fn traverse_to_make_snapshot(
         &self,
         hash_id: HashId,
@@ -617,17 +640,7 @@ impl GCThread {
         // hash_ids_to_offset: &mut IndexMap<HashId, Option<AbsoluteOffset>, 1_000_000>,
         string: &mut String,
     ) -> Result<ObjectReference, GCError> {
-        if output.len() >= 20_000_000 || on_disk_repo.hashes_in_memory_len() >= 625_000 {
-            println!(
-                "Writing snapshot to disk output={:?} nhashes={:?}",
-                output.len(),
-                on_disk_repo.hashes_in_memory_len()
-            );
-            on_disk_repo.append_to_disk(&output).unwrap();
-            on_disk_repo.set_is_commiting();
-            on_disk_repo.deallocate_strings_shapes();
-            output.clear();
-        }
+        self.maybe_write_to_disk(output, on_disk_repo);
 
         let start = hash_ids.len();
 
