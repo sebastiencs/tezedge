@@ -984,15 +984,41 @@ impl GCThread {
         repository.put_context_hash(commit_ref).unwrap();
         repository.commit_to_disk(&output).unwrap();
 
-        let options = fs_extra::dir::CopyOptions {
-            overwrite: true,
-            skip_exist: false,
-            buffer_size: 64000,
-            copy_inside: true,
-            content_only: true,
-            depth: 0,
+        let path_tmp_clone = path_tmp.clone();
+
+        std::fs::create_dir_all(&path).unwrap();
+
+        let path_tmp = std::ffi::CString::new(path_tmp.as_str()).unwrap();
+        let path = std::ffi::CString::new(path.as_str()).unwrap();
+
+        let result = unsafe {
+            libc::renameat2(
+                libc::AT_FDCWD,
+                path_tmp.as_bytes_with_nul().as_ptr() as *const i8,
+                // path_tmp.as_bytes_with_nul() as *const i8,
+                // oldpath,
+                libc::AT_FDCWD,
+                path.as_bytes_with_nul().as_ptr() as *const i8,
+                libc::RENAME_EXCHANGE,
+            )
         };
-        fs_extra::dir::move_dir(path_tmp, path, &options).unwrap();
+
+        println!("RESULT={:?}", result);
+        assert_eq!(result, 0);
+
+        // panic!("WILL DELETE {:?}", path_tmp_clone);
+        // std::fs::remove_file(path_tmp_clone).unwrap();
+        std::fs::remove_dir_all(path_tmp_clone).unwrap();
+
+        // let options = fs_extra::dir::CopyOptions {
+        //     overwrite: true,
+        //     skip_exist: false,
+        //     buffer_size: 64000,
+        //     copy_inside: true,
+        //     content_only: true,
+        //     depth: 0,
+        // };
+        // fs_extra::dir::move_dir(path_tmp, path, &options).unwrap();
     }
 
     fn handle_commit(
