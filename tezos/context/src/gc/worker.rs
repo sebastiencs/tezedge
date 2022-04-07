@@ -23,6 +23,7 @@ use crate::{
         jemalloc::debug_jemalloc,
         stats::{CollectorStatistics, CommitStatistics, OnMessageStatistics},
     },
+    initializer::IndexInitializationError,
     kv_store::{
         in_memory::{InMemoryConfiguration, BATCH_CHUNK_CAPACITY, OBJECTS_CHUNK_CAPACITY},
         index_map::IndexMap,
@@ -30,15 +31,17 @@ use crate::{
         persistent::PersistentConfiguration,
         HashId, HashIdError,
     },
-    persistent::KeyValueStoreBackend,
+    persistent::{DBError, KeyValueStoreBackend},
     serialize::{
         get_object_tag,
         in_memory::{self, commit_parent_hash, iter_hash_ids},
-        persistent, ObjectTag,
+        persistent, DeserializationError, ObjectTag, SerializationError,
     },
     working_tree::{
-        storage::Storage, string_interner::StringInterner, working_tree::SerializeOutput, Object,
-        ObjectReference,
+        storage::Storage,
+        string_interner::StringInterner,
+        working_tree::{MerkleError, SerializeOutput},
+        Object, ObjectReference,
     },
     ContextKeyValueStore, ObjectHash, Persistent,
 };
@@ -229,6 +232,37 @@ enum GCError {
     },
     #[error("Unable to find a frozen commit for snapshot")]
     FrozenCommitNotFound,
+    #[error("DBError {error}")]
+    DBError {
+        #[from]
+        error: DBError,
+    },
+    #[error("MerkleError {error}")]
+    MerkleError {
+        #[from]
+        error: MerkleError,
+    },
+    #[error("Fail during deserialization {error}")]
+    DeserializationError {
+        #[from]
+        error: DeserializationError,
+    },
+    #[error("Fail during serialization {error}")]
+    SerializationError {
+        #[from]
+        error: SerializationError,
+    },
+    #[error("Fail while initializing repository {error}")]
+    IndexInitializationError {
+        #[from]
+        error: IndexInitializationError,
+    },
+    #[error("The GC thread doesn't have access to the in-mem repository")]
+    InMemContextNotFound,
+    #[error("String not found in the string interner")]
+    StringNotFound,
+    #[error("Unable to create a valid snapshot path")]
+    InvalidSnapshotPath,
 }
 
 impl From<HashIdError> for GCError {
@@ -563,21 +597,39 @@ impl GCThread {
         Ok(())
     }
 
-    fn copy_hash_to_snapshot(&self, hash_id: HashId, on_disk_repo: &mut Persistent) -> HashId {
-        on_disk_repo
-            .get_vacant_object_hash()
-            .unwrap()
-            .write_with(|entry| {
-                let in_mem_repo = self.in_mem_repo.as_ref().unwrap().read();
-                let hash = in_mem_repo
-                    .get_hash(ObjectReference::new(Some(hash_id), None))
-                    .unwrap();
-                entry.copy_from_slice(&*hash)
-            })
-            .unwrap()
+    fn copy_hash_to_snapshot(
+        &self,
+        hash_id: HashId,
+        on_disk_repo: &mut Persistent,
+        hash: &mut ObjectHash,
+    ) -> Result<HashId, GCError> {
+        {
+            // Copy to object hash (found in the in-mem context) into `hash`
+            // Lock the in-mem repo as short as possible
+            let in_mem_repo = self.in_mem_repository()?.read();
+            let object_hash = in_mem_repo.get_hash(ObjectReference::new(Some(hash_id), None))?;
+            *hash = *object_hash;
+        }
+
+        // Copy the hash into the on-disk repository, it now has a new `HashId`
+        let hash_id = on_disk_repo
+            .get_vacant_object_hash()?
+            .write_with(|entry| entry.copy_from_slice(hash))?;
+
+        Ok(hash_id)
     }
 
-    fn maybe_write_to_disk(&self, output: &mut SerializeOutput, on_disk_repo: &mut Persistent) {
+    fn in_mem_repository(&self) -> Result<&Arc<RwLock<ContextKeyValueStore>>, GCError> {
+        self.in_mem_repo
+            .as_ref()
+            .ok_or(GCError::InMemContextNotFound)
+    }
+
+    fn maybe_write_to_disk(
+        &self,
+        output: &mut SerializeOutput,
+        on_disk_repo: &mut Persistent,
+    ) -> Result<(), GCError> {
         let data_len = output.len();
         let hashes_len = on_disk_repo.hashes_in_memory_len();
         let strings_len = on_disk_repo
@@ -593,11 +645,15 @@ impl GCThread {
                 "Writing snapshot to disk output={:?} nhashes={:?} strings={:?}",
                 data_len, hashes_len, strings_len,
             );
-            on_disk_repo.commit_to_disk(&output).unwrap();
+            on_disk_repo
+                .commit_to_disk(&output)
+                .map_err(DBError::from)?;
             on_disk_repo.set_is_commiting();
             on_disk_repo.deallocate_strings_shapes();
             output.clear();
         }
+
+        Ok(())
     }
 
     fn find_frozen_commit(&self, commit_hash_id: HashId, bytes: &mut Vec<u8>) -> Option<HashId> {
@@ -633,8 +689,9 @@ impl GCThread {
         batch: &mut ChunkedVec<(HashId, InlinedBoxedSlice), { BATCH_CHUNK_CAPACITY }>,
         // hash_ids_to_offset: &mut IndexMap<HashId, Option<AbsoluteOffset>, 1_000_000>,
         string: &mut String,
+        hash: &mut ObjectHash,
     ) -> Result<ObjectReference, GCError> {
-        self.maybe_write_to_disk(output, on_disk_repo);
+        self.maybe_write_to_disk(output, on_disk_repo)?;
 
         let start = hash_ids.len();
 
@@ -655,22 +712,21 @@ impl GCThread {
 
         for index in start..end {
             let hash_id = hash_ids[index];
-            let new_obj_ref = self
-                .traverse_to_make_snapshot(
-                    hash_id,
-                    hash_ids,
-                    new_hash_ids,
-                    storage,
-                    strings,
-                    bytes,
-                    on_disk_repo,
-                    output,
-                    stats,
-                    batch,
-                    // hash_ids_to_offset,
-                    string,
-                )
-                .unwrap();
+            let new_obj_ref = self.traverse_to_make_snapshot(
+                hash_id,
+                hash_ids,
+                new_hash_ids,
+                storage,
+                strings,
+                bytes,
+                on_disk_repo,
+                output,
+                stats,
+                batch,
+                // hash_ids_to_offset,
+                string,
+                hash,
+            )?;
 
             new_hash_ids[index] = new_obj_ref;
         }
@@ -681,83 +737,95 @@ impl GCThread {
         })?;
 
         let mut object = {
-            let in_mem_repo = self.in_mem_repo.as_ref().unwrap().read();
-            in_memory::deserialize_object(bytes, storage, strings, &*in_mem_repo).unwrap()
+            let in_mem_repo = self.in_mem_repository()?.read();
+            in_memory::deserialize_object(bytes, storage, strings, &*in_mem_repo)?
         };
 
         // When the object is an inode, `in_memory::deserialize_object` only partialy
         // stores it in the `Storage`, we need to load it fully
         match object {
             Object::Directory(dir_id) if dir_id.is_inode() => {
-                let in_mem_repo = self.in_mem_repo.as_ref().unwrap().read();
-                storage
-                    .dir_full_load(dir_id, strings, &*in_mem_repo)
-                    .unwrap();
+                let in_mem_repo = self.in_mem_repository()?.read();
+                storage.dir_full_load(dir_id, strings, &*in_mem_repo)?;
             }
             _ => {}
         }
 
-        storage.nodes.for_each_mut(|dir_entry| {
+        storage.nodes.for_each_mut::<_, GCError>(|dir_entry| {
             dir_entry.set_commited(false);
-        });
-        storage.thin_pointers.for_each_mut(|thin_pointer| {
-            thin_pointer.set_commited(false);
-        });
-        storage.fat_pointers.for_each_mut(|fat_pointer| {
-            fat_pointer.set_commited(false);
-        });
+            Ok(())
+        })?;
+        storage
+            .thin_pointers
+            .for_each_mut::<_, GCError>(|thin_pointer| {
+                thin_pointer.set_commited(false);
+                Ok(())
+            })?;
+        storage
+            .fat_pointers
+            .for_each_mut::<_, GCError>(|fat_pointer| {
+                fat_pointer.set_commited(false);
+                Ok(())
+            })?;
 
-        storage.directories.for_each_mut(|(string_id, _)| {
-            string.clear();
-            {
-                // Read the string from the in-mem repo, lock it as short as possible
-                let in_mem_repo = self.in_mem_repo.as_ref().unwrap().read();
-                let s = in_mem_repo.get_str(*string_id).unwrap();
-                string.push_str(s.as_ref());
-            }
+        storage
+            .directories
+            .for_each_mut::<_, GCError>(|(string_id, _)| {
+                string.clear();
+                {
+                    // Read the string from the in-mem repo, lock it as short as possible
+                    let in_mem_repo = self.in_mem_repository()?.read();
+                    let s = in_mem_repo
+                        .get_str(*string_id)
+                        .ok_or(GCError::StringNotFound)?;
+                    string.push_str(s.as_ref());
+                }
 
-            // Replace the old string id (from the in-mem context) to the new string id (on disk)
-            let new_string_id = on_disk_repo.string_interner.make_string_id(&string);
-            *string_id = new_string_id;
-        });
+                // Replace the old string id (from the in-mem context) to the new string id (on disk)
+                let new_string_id = on_disk_repo.string_interner.make_string_id(&string);
+                *string_id = new_string_id;
+
+                Ok(())
+            });
 
         match &mut object {
             Object::Directory(dir_id) => {
                 let mut index = start;
 
-                storage
-                    .dir_iterate_unsorted(*dir_id, |(_, dir_entry_id)| {
-                        let dir_entry = storage.get_dir_entry(*dir_entry_id).unwrap();
+                storage.dir_iterate_unsorted(*dir_id, |(_, dir_entry_id)| {
+                    let dir_entry = storage.get_dir_entry(*dir_entry_id)?;
 
-                        if dir_entry.is_inlined_blob() {
-                            // Inlined blobs do not have a HashId or an offset
-                            return Ok(());
-                        }
+                    if dir_entry.is_inlined_blob() {
+                        // Inlined blobs do not have a HashId or an offset
+                        return Ok(());
+                    }
 
-                        // let hash_id = hash_ids[index]; // fail here
+                    // let hash_id = hash_ids[index]; // fail here
 
-                        let new_obj_ref = new_hash_ids[index];
+                    let new_obj_ref = new_hash_ids[index];
 
-                        // let offset = hash_ids_to_offset.get(hash_id).unwrap().unwrap().clone();
-                        dir_entry.set_offset(new_obj_ref.offset());
+                    // let offset = hash_ids_to_offset.get(hash_id).unwrap().unwrap().clone();
+                    dir_entry.set_offset(new_obj_ref.offset());
 
-                        // let new_hash_id = new_hash_ids[index];
-                        // let new_hash_id = self.copy_hash_to_snapshot(hash_id, on_disk_repo);
-                        dir_entry.set_hash_id(new_obj_ref.hash_id());
+                    // let new_hash_id = new_hash_ids[index];
+                    // let new_hash_id = self.copy_hash_to_snapshot(hash_id, on_disk_repo);
+                    dir_entry.set_hash_id(new_obj_ref.hash_id());
 
-                        assert!(dir_entry.hash_id().is_some());
+                    assert!(dir_entry.hash_id().is_some());
 
-                        index += 1;
-                        assert!(index <= end);
+                    index += 1;
+                    assert!(index <= end);
 
-                        Ok(())
-                    })
-                    .unwrap();
+                    Ok(())
+                })?;
             }
             Object::Commit(commit) => {
-                let new_parent_hash_id = commit
-                    .parent_hash_id()
-                    .map(|parent_hash_id| self.copy_hash_to_snapshot(parent_hash_id, on_disk_repo));
+                let new_parent_hash_id = match commit.parent_hash_id() {
+                    Some(hash_id) => {
+                        Some(self.copy_hash_to_snapshot(hash_id, on_disk_repo, hash)?)
+                    }
+                    None => None,
+                };
 
                 let root_hash_id = commit.root_ref.hash_id();
                 // let offset = hash_ids_to_offset
@@ -769,7 +837,8 @@ impl GCThread {
 
                 let offset = new_hash_ids[start].offset();
 
-                let new_root_hash_id = self.copy_hash_to_snapshot(root_hash_id, on_disk_repo);
+                let new_root_hash_id =
+                    self.copy_hash_to_snapshot(root_hash_id, on_disk_repo, hash)?;
 
                 commit.root_ref.set_offset(offset);
                 commit.root_ref.set_hash_id(new_root_hash_id);
@@ -787,7 +856,7 @@ impl GCThread {
         //     .map(|o| o.is_none())
         //     .unwrap_or(true)
         // {
-        let new_hash_id = self.copy_hash_to_snapshot(hash_id, on_disk_repo);
+        let new_hash_id = self.copy_hash_to_snapshot(hash_id, on_disk_repo, hash)?;
 
         let offset = persistent::serialize_object(
             &object,
@@ -798,8 +867,7 @@ impl GCThread {
             stats,
             batch,
             on_disk_repo,
-        )
-        .unwrap();
+        )?;
 
         let new_obj_ref = ObjectReference::new(Some(new_hash_id), offset);
 
@@ -885,7 +953,7 @@ impl GCThread {
         log!("{:?}", stats);
     }
 
-    fn make_snapshot_paths(&self) -> (String, String) {
+    fn make_snapshot_paths(&self) -> Result<(String, String), GCError> {
         let path = self
             .configuration
             .db_path
@@ -899,21 +967,27 @@ impl GCThread {
         path_tmp.push("snapshot-tmp");
         path.push("snapshot");
 
-        let path_tmp = path_tmp.to_str().unwrap().to_string();
-        let path = path.to_str().unwrap().to_string();
+        let path_tmp = path_tmp
+            .to_str()
+            .ok_or(GCError::InvalidSnapshotPath)?
+            .to_string();
+        let path = path
+            .to_str()
+            .ok_or(GCError::InvalidSnapshotPath)?
+            .to_string();
 
-        (path_tmp, path)
+        Ok((path_tmp, path))
     }
 
-    fn make_snapshot(&self, commit_hash_id: HashId) {
+    fn make_snapshot(&self, commit_hash_id: HashId) -> Result<(), GCError> {
         let current = self.current_generation.get();
 
         if !(current > 0 && current % 10 == 0) {
             println!("Skipping snapshot");
-            return;
+            return Ok(());
         }
 
-        let (path_tmp, path) = self.make_snapshot_paths();
+        let (path_tmp, path) = self.make_snapshot_paths()?;
 
         println!("MAKING SNAPSHOT tmp={:?} path={:?}", path_tmp, path);
 
@@ -925,22 +999,21 @@ impl GCThread {
         let mut stats = SerializeStats::default();
         let mut batch = Default::default();
         let mut string = String::with_capacity(1024);
+        let mut hash = ObjectHash::default();
 
         // let mut hash_id_to_offset =
         //     IndexMap::<HashId, Option<AbsoluteOffset>, 1_000_000>::default();
 
         let commit_hash_id = self
             .find_frozen_commit(commit_hash_id, &mut bytes)
-            .ok_or(GCError::FrozenCommitNotFound)
-            .unwrap();
+            .ok_or(GCError::FrozenCommitNotFound)?;
 
         let mut repository = Persistent::try_new(PersistentConfiguration {
             db_path: Some(path_tmp.clone()),
             // db_path: Some("/tmp/tezedge-mem-tmp/".to_string()),
             startup_check: false,
             read_mode: false,
-        })
-        .unwrap();
+        })?;
 
         repository.set_is_commiting();
 
@@ -949,22 +1022,21 @@ impl GCThread {
 
         let now = std::time::Instant::now();
 
-        let commit_ref = self
-            .traverse_to_make_snapshot(
-                commit_hash_id,
-                &mut hash_ids,
-                &mut new_hash_ids,
-                &mut storage,
-                &mut strings,
-                &mut bytes,
-                &mut repository,
-                &mut output,
-                &mut stats,
-                &mut batch,
-                // &mut hash_id_to_offset,
-                &mut string,
-            )
-            .unwrap();
+        let commit_ref = self.traverse_to_make_snapshot(
+            commit_hash_id,
+            &mut hash_ids,
+            &mut new_hash_ids,
+            &mut storage,
+            &mut strings,
+            &mut bytes,
+            &mut repository,
+            &mut output,
+            &mut stats,
+            &mut batch,
+            // &mut hash_id_to_offset,
+            &mut string,
+            &mut hash,
+        )?;
 
         println!("SNAPSHOT DONE IN {:?}", now.elapsed());
         println!("STORAGE={:#?}", storage.memory_usage(&strings));
@@ -978,15 +1050,17 @@ impl GCThread {
         println!("{:#?}", repository.shapes);
         println!("{:#?}", repository.string_interner);
 
-        repository.put_context_hash(commit_ref).unwrap();
-        repository.commit_to_disk(&output).unwrap();
+        repository.put_context_hash(commit_ref)?;
+        repository.commit_to_disk(&output).map_err(DBError::from)?;
 
         let path_tmp_clone = path_tmp.clone();
 
-        std::fs::create_dir_all(&path).unwrap();
+        std::fs::create_dir_all(&path).map_err(DBError::from)?;
 
-        let path_tmp = std::ffi::CString::new(path_tmp.as_str()).unwrap();
-        let path = std::ffi::CString::new(path.as_str()).unwrap();
+        let path_tmp =
+            std::ffi::CString::new(path_tmp.as_str()).map_err(|_| GCError::InvalidSnapshotPath)?;
+        let path =
+            std::ffi::CString::new(path.as_str()).map_err(|_| GCError::InvalidSnapshotPath)?;
 
         let result = unsafe {
             libc::renameat2(
@@ -1005,7 +1079,7 @@ impl GCThread {
 
         // panic!("WILL DELETE {:?}", path_tmp_clone);
         // std::fs::remove_file(path_tmp_clone).unwrap();
-        std::fs::remove_dir_all(path_tmp_clone).unwrap();
+        std::fs::remove_dir_all(path_tmp_clone).map_err(DBError::from)?;
 
         // let options = fs_extra::dir::CopyOptions {
         //     overwrite: true,
@@ -1016,6 +1090,8 @@ impl GCThread {
         //     depth: 0,
         // };
         // fs_extra::dir::move_dir(path_tmp, path, &options).unwrap();
+
+        Ok(())
     }
 
     fn handle_commit(
@@ -1056,7 +1132,7 @@ impl GCThread {
             return Ok(());
         }
 
-        self.make_snapshot(commit_hash_id);
+        self.make_snapshot(commit_hash_id)?;
 
         self.napplieds_since_last_run = 0;
         self.send_unused()?;
