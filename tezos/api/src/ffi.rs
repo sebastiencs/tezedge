@@ -182,7 +182,7 @@ pub struct BeginApplicationResponse {
 #[cfg_attr(feature = "fuzzing", derive(fuzzcheck::DefaultMutator))]
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GetCurrentHeadResponse {
-    pub level: Option<u64>,
+    pub level: Option<i32>,
     pub context_hash: Option<ContextHash>,
 }
 

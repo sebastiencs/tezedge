@@ -1,10 +1,12 @@
 // Copyright (c) SimpleStaking, Viable Systems and Tezedge Contributors
 // SPDX-License-Identifier: MIT
 
+use crypto::hash::ContextHash;
 use serde::{Deserialize, Serialize};
 
 use tezos_protocol_ipc_client::ProtocolRunnerError;
 
+use crate::protocol_runner::init::ProtocolRunnerInitState;
 use crate::protocol_runner::{ProtocolRunnerState, ProtocolRunnerToken};
 use crate::{EnablingCondition, State};
 
@@ -16,7 +18,10 @@ pub struct ProtocolRunnerCurrentHeadInitAction {}
 
 impl EnablingCondition<State> for ProtocolRunnerCurrentHeadInitAction {
     fn is_enabled(&self, state: &State) -> bool {
-        matches!(&state.protocol_runner, ProtocolRunnerState::Idle)
+        matches!(
+            &state.protocol_runner,
+            ProtocolRunnerState::Init(ProtocolRunnerInitState::Success { .. })
+        )
     }
 }
 
@@ -30,7 +35,7 @@ impl EnablingCondition<State> for ProtocolRunnerCurrentHeadPendingAction {
     fn is_enabled(&self, state: &State) -> bool {
         matches!(
             &state.protocol_runner,
-            ProtocolRunnerState::GetCurrentHead(ProtocolRunnerCurrentHeadState::Init)
+            ProtocolRunnerState::GetCurrentHead(ProtocolRunnerCurrentHeadState::Init { .. })
         )
     }
 }
@@ -55,6 +60,8 @@ impl EnablingCondition<State> for ProtocolRunnerCurrentHeadErrorAction {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ProtocolRunnerCurrentHeadSuccessAction {
     pub token: ProtocolRunnerToken,
+    pub context_head_level: Option<i32>,
+    pub context_head_hash: Option<ContextHash>,
 }
 
 impl EnablingCondition<State> for ProtocolRunnerCurrentHeadSuccessAction {

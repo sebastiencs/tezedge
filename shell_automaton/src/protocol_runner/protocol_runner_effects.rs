@@ -3,8 +3,8 @@
 
 use crate::current_head::CurrentHeadRehydrateInitAction;
 use crate::protocol_runner::current_head::{
-    ProtocolRunnerCurrentHeadErrorAction, ProtocolRunnerCurrentHeadState,
-    ProtocolRunnerCurrentHeadSuccessAction,
+    ProtocolRunnerCurrentHeadErrorAction, ProtocolRunnerCurrentHeadInitAction,
+    ProtocolRunnerCurrentHeadState, ProtocolRunnerCurrentHeadSuccessAction,
 };
 use crate::protocol_runner::init::context::{
     ProtocolRunnerInitContextErrorAction, ProtocolRunnerInitContextState,
@@ -51,8 +51,13 @@ where
             store.dispatch(ProtocolRunnerInitAction {});
         }
         Action::ProtocolRunnerInitSuccess(_) => {
-            eprintln!("protocol_runner_effects action={:?}", action.action);
-            store.dispatch(ProtocolRunnerReadyAction {});
+            eprintln!(
+                "protocol_runner_effects action={:?} state={:?}",
+                action.action,
+                &store.state().protocol_runner
+            );
+            store.dispatch(ProtocolRunnerCurrentHeadInitAction {});
+            // store.dispatch(ProtocolRunnerReadyAction {});
         }
         Action::ProtocolRunnerReady(_) => {
             eprintln!("protocol_runner_effects action={:?}", action.action);
@@ -65,6 +70,7 @@ where
                         genesis_commit_hash,
                     });
                 }
+
                 store.dispatch(CurrentHeadRehydrateInitAction {});
                 store.dispatch(ProtocolRunnerNotifyStatusAction {});
             }
@@ -115,13 +121,25 @@ where
                         }
                     },
                     ProtocolRunnerState::GetCurrentHead(state) => match state {
-                        ProtocolRunnerCurrentHeadState::Pending { token } => match result {
+                        ProtocolRunnerCurrentHeadState::Pending { .. } => match result {
                             ProtocolRunnerResult::GetCurrentHead((token, Ok(current_head))) => {
-                                todo!()
+                                store.dispatch(ProtocolRunnerCurrentHeadSuccessAction {
+                                    token,
+                                    context_head_level: current_head.level,
+                                    context_head_hash: current_head.context_hash.clone(),
+                                });
+                                continue;
                             },
                             ProtocolRunnerResult::GetCurrentHead((token, Err(error))) => {
-                                todo!()
-                                // store.dispatch(ProtocolRunnerCurrentHeadErrorAction { token, error });
+                                eprintln!("TOKEN={:?} ERROR={:?}", token, error);
+                                // store.dispatch(ProtocolRunnerCurrentHeadSuccessAction {
+                                //     token,
+                                //     context_head_level: None,
+                                //     context_head_hash: None,
+                                // });
+                                // eprintln!("state={:?}", );
+                                // store.dispatch(ProtocolRunnerReadyAction {});
+                                continue;
                                 // continue;
                             },
                             result => {

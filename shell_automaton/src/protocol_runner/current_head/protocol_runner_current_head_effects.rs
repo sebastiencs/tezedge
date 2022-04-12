@@ -1,6 +1,7 @@
 // Copyright (c) SimpleStaking, Viable Systems and Tezedge Contributors
 // SPDX-License-Identifier: MIT
 
+use crate::protocol_runner::ProtocolRunnerReadyAction;
 use crate::service::ProtocolRunnerService;
 use crate::{Action, ActionWithMeta, Service, Store};
 
@@ -10,8 +11,20 @@ pub fn protocol_runner_current_head_effects<S>(store: &mut Store<S>, action: &Ac
 where
     S: Service,
 {
-    if let Action::ProtocolRunnerSpawnServerInit(_) = &action.action {
-        let token = store.service.protocol_runner().get_current_head();
-        store.dispatch(ProtocolRunnerCurrentHeadPendingAction { token });
+    match &action.action {
+        Action::ProtocolRunnerCurrentHeadInit(_) => {
+            eprintln!("GET CURRENT HEAD");
+            let token = store.service.protocol_runner().get_current_head();
+            store.dispatch(ProtocolRunnerCurrentHeadPendingAction { token });
+        }
+        Action::ProtocolRunnerCurrentHeadSuccess(_) => {
+            eprintln!("GET CURRENT HEAD");
+            store.dispatch(ProtocolRunnerReadyAction {});
+        }
+        _ => {}
     }
+
+    // eprintln!("ACTION={:?}", &action.action);
+    // if let Action::ProtocolRunnerCurrentHeadInit(_) = &action.action {
+    // }
 }
