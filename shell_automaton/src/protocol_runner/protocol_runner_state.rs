@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crypto::hash::ContextHash;
 
+use super::current_head::ProtocolRunnerCurrentHeadState;
 use super::init::ProtocolRunnerInitState;
 use super::spawn_server::ProtocolRunnerSpawnServerState;
 
@@ -26,6 +27,10 @@ pub enum ProtocolRunnerState {
     /// Initializing protocol runner
     #[from]
     Init(ProtocolRunnerInitState),
+
+    /// Load context's current head
+    #[from]
+    GetCurrentHead(ProtocolRunnerCurrentHeadState),
 
     /// Protocol runner intialized and ready
     #[from]

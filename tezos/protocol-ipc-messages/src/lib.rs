@@ -13,10 +13,10 @@ use tezos_api::ffi::{
     ApplyBlockError, ApplyBlockRequest, ApplyBlockResponse, BeginApplicationError,
     BeginApplicationRequest, BeginApplicationResponse, BeginConstructionError,
     BeginConstructionRequest, CommitGenesisResult, ComputePathError, ComputePathRequest,
-    ComputePathResponse, DumpContextError, FfiJsonEncoderError, GetDataError,
-    HelpersPreapplyBlockRequest, HelpersPreapplyError, HelpersPreapplyResponse,
-    InitProtocolContextResult, PrevalidatorWrapper, ProtocolDataError, ProtocolRpcError,
-    ProtocolRpcRequest, ProtocolRpcResponse, RestoreContextError, RustBytes,
+    ComputePathResponse, DumpContextError, FfiJsonEncoderError, GetCurrentHeadError,
+    GetCurrentHeadResponse, GetDataError, HelpersPreapplyBlockRequest, HelpersPreapplyError,
+    HelpersPreapplyResponse, InitProtocolContextResult, PrevalidatorWrapper, ProtocolDataError,
+    ProtocolRpcError, ProtocolRpcRequest, ProtocolRpcResponse, RestoreContextError, RustBytes,
     TezosRuntimeConfiguration, TezosStorageInitError, ValidateOperationError,
     ValidateOperationRequest, ValidateOperationResponse,
 };
@@ -51,6 +51,7 @@ pub enum ProtocolMessage {
     ContextGetTreeByPrefix(ContextGetTreeByPrefixRequest),
     DumpContext(DumpContextRequest),
     RestoreContext(RestoreContextRequest),
+    GetCurrentHead,
     Ping,
     ShutdownCall,
 }
@@ -154,6 +155,7 @@ pub enum NodeMessage {
     ContextGetTreeByPrefixResult(Result<StringTreeObject, String>),
     DumpContextResponse(Result<i64, DumpContextError>),
     RestoreContextResponse(Result<(), RestoreContextError>),
+    GetCurrentHeadResponse(Result<GetCurrentHeadResponse, GetCurrentHeadError>),
 
     // TODO: generic error response instead with error types?
     IpcResponseEncodingFailure(String),

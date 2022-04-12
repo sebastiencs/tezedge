@@ -113,4 +113,8 @@ impl ProtocolRunnerService for ProtocolRunnerServiceDummy {
     fn notify_status(&mut self, _: bool) {}
 
     fn shutdown(&mut self) {}
+
+    fn get_current_head(&mut self) -> ProtocolRunnerToken {
+        self.new_token()
+    }
 }

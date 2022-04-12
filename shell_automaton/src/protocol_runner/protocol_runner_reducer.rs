@@ -27,6 +27,8 @@ pub fn protocol_runner_reducer(state: &mut State, action: &ActionWithMeta) {
         Action::ProtocolRunnerShutdownSuccess(_) => {
             state.protocol_runner = ProtocolRunnerState::ShutdownSuccess;
         }
-        _ => {}
-    }
+        _ => return,
+    };
+
+    eprintln!("protocol_runner_reducer action={:?}", action.action);
 }

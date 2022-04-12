@@ -179,6 +179,20 @@ pub struct BeginApplicationResponse {
     pub result: String,
 }
 
+#[cfg_attr(feature = "fuzzing", derive(fuzzcheck::DefaultMutator))]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GetCurrentHeadResponse {
+    pub level: Option<u64>,
+    pub context_hash: Option<ContextHash>,
+}
+
+#[cfg_attr(feature = "fuzzing", derive(fuzzcheck::DefaultMutator))]
+#[derive(Error, Serialize, Deserialize, Debug, Clone)]
+pub enum GetCurrentHeadError {
+    #[error("Failed to get the context's current head: {message}!")]
+    FailedToGetCurrentHead { message: String },
+}
+
 // TODO: check if all the field are needed.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BeginConstructionRequest {
@@ -1045,6 +1059,8 @@ pub enum ProtocolError {
     DumpContextError { reason: DumpContextError },
     #[error("Failed when restoring the context from a dump: {reason}")]
     RestoreContextError { reason: RestoreContextError },
+    #[error("Failed to get context's current head: {reason}")]
+    GetCurrentHeadError { reason: GetCurrentHeadError },
 }
 
 impl ProtocolError {
