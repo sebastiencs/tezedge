@@ -125,8 +125,8 @@ where
                             ProtocolRunnerResult::GetCurrentHead((token, Ok(current_head))) => {
                                 store.dispatch(ProtocolRunnerCurrentHeadSuccessAction {
                                     token,
-                                    context_head_level: current_head.level,
-                                    context_head_hash: current_head.context_hash.clone(),
+                                    context_head_level: None,
+                                    context_head_hash: None,
                                 });
                                 continue;
                             },
