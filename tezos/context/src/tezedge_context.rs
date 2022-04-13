@@ -863,6 +863,10 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
         )))
     }
 
+    fn current_head(&self) -> Result<Vec<ContextHash>, ContextError> {
+        Ok(Vec::new()) // TODO
+    }
+
     fn block_applied(
         &self,
         block_level: u32,

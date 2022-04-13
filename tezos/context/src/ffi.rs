@@ -213,6 +213,20 @@ ocaml_export! {
         }
     }
 
+    fn tezedge_current_head(
+        rt,
+        index: OCamlRef<DynBox<TezedgeIndexFFI>>,
+    ) -> OCaml<Result<OCamlList<OCamlContextHash>, String>> {
+        let ocaml_index = rt.get(index);
+        let index: &TezedgeIndexFFI = ocaml_index.borrow();
+        let index = index.0.borrow().clone();
+
+        let result = index.current_head()
+            .map_err(|err| format!("{:?}", err));
+
+        result.to_ocaml(rt)
+    }
+
     fn tezedge_index_close(
         rt,
         _index: OCamlRef<DynBox<TezedgeIndexFFI>>,
