@@ -64,8 +64,7 @@ pub fn protocol_runner_current_head_reducer(state: &mut State, action: &ActionWi
             state.protocol_runner = ProtocolRunnerCurrentHeadState::Success {
                 token: content.token,
                 genesis_commit_hash,
-                context_head_level: content.context_head_level.clone(),
-                context_head_hash: content.context_head_hash.clone(),
+                latest_context_hashes: content.latest_context_hashes.clone(),
             }
             .into();
         }

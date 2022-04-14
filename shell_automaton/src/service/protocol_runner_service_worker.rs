@@ -249,7 +249,8 @@ impl ProtocolRunnerServiceWorker {
                     .send(ProtocolRunnerResult::BeginConstruction((token, res)))
                     .await;
             }
-            ProtocolMessage::GetCurrentHead => {
+            ProtocolMessage::ContextGetLatestContextHashes(req) => {
+                // TODO: Handle `req`
                 let res = conn.current_head().await;
                 let _ = channel
                     .send(ProtocolRunnerResult::GetCurrentHead((token, res)))

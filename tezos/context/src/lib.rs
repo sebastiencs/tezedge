@@ -154,6 +154,7 @@ use gc::GarbageCollectionError;
 pub use kv_store::persistent::Persistent;
 
 use persistent::{DBError, KeyValueStoreBackend};
+use tezos_api::ffi::GetCurrentHeadResponse;
 use tezos_context_api::{ContextKey, ContextKeyOwned, ContextValue, StringTreeObject};
 use thiserror::Error;
 
@@ -225,9 +226,9 @@ pub trait IndexApi<T: ShellContextApi + ProtocolContextApi> {
         block_level: u32,
         context_hash: &ContextHash,
     ) -> Result<(), ContextError>;
-    // return the head of the context
+    // Return the last context hashes
     // The vector is ordered from oldest to latest context hash
-    fn current_head(&self) -> Result<Vec<ContextHash>, ContextError>;
+    fn latest_context_hashes(&self) -> Result<GetCurrentHeadResponse, ContextError>;
     // called when a new cycle starts
     fn cycle_started(&mut self) -> Result<(), ContextError>;
     // get value for key from a point in history indicated by context hash

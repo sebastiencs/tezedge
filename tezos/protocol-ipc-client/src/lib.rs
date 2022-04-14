@@ -316,6 +316,9 @@ pub struct ProtocolRunnerConnection {
 macro_rules! handle_request {
     ($io:expr, $msg:ident $(($($arg:ident),+))?, $resp:ident($result:ident), $error:ident, $timeout:expr $(,)?) => {{
         let msg = ProtocolMessage::$msg $(($($arg),+))?;
+
+        // eprintln!("MSG1={:?}", msg);
+
         $io.send(&msg).await?;
 
         match $io.try_receive($timeout).await? {
@@ -329,6 +332,8 @@ macro_rules! handle_request {
     }};
 
     ($io:expr, $msg:ident $(($($arg:ident),+))?, $resp:ident $(($result:ident))? => $result_expr:expr, $timeout:expr $(,)?) => {{
+        eprintln!("MSG2");
+
         $io.send(&ProtocolMessage::$msg $(($($arg),+))?).await?;
 
         match $io.try_receive($timeout).await? {
@@ -372,16 +377,38 @@ impl ProtocolRunnerConnection {
         )
     }
 
+    // /// Get context's current head
+    // pub async fn current_head(&mut self) -> Result<GetCurrentHeadResponse, ProtocolServiceError> {
+    //     handle_request!(
+    //         self.io,
+    //         ContextGetLatestContextHashes(10),
+    //         ContextGetLatestContextHashesResult(result) => Ok(result.ok().unwrap()),
+    //         Some(Self::GET_CURRENT_HEAD_TIMEOUT),
+    //     )
+    // }
+
     /// Get context's current head
     pub async fn current_head(&mut self) -> Result<GetCurrentHeadResponse, ProtocolServiceError> {
+        let count = ContextGetLatestContextHashesRequest { count: 10 };
+
         handle_request!(
             self.io,
-            GetCurrentHead,
-            GetCurrentHeadResponse(result),
+            ContextGetLatestContextHashes(count),
+            ContextGetLatestContextHashesResult(result),
             GetCurrentHeadError,
             Some(Self::GET_CURRENT_HEAD_TIMEOUT),
         )
     }
+
+    // /// Ping the protocol runner
+    // pub async fn ping(&mut self) -> Result<(), ProtocolServiceError> {
+    //     handle_request!(
+    //         self.io,
+    //         Ping,
+    //         PingResult => Ok(()),
+    //         Some(Self::PING_TIMEOUT),
+    //     )
+    // }
 
     pub async fn assert_encoding_for_protocol_data(
         &mut self,

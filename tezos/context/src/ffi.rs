@@ -29,8 +29,8 @@ use crate::{
 };
 use tezos_context_api::TezosContextTezEdgeStorageConfiguration;
 use tezos_conv::{
-    OCamlBlockHash, OCamlContextHash, OCamlOperationHash, OCamlProtocolHash,
-    OCamlTezosContextTezEdgeStorageConfiguration,
+    OCamlBlockHash, OCamlContextHash, OCamlGetCurrentHeadResponse, OCamlOperationHash,
+    OCamlProtocolHash, OCamlTezosContextTezEdgeStorageConfiguration,
 };
 
 // TODO: instead of converting errors into strings, it may be useful to pass
@@ -213,18 +213,29 @@ ocaml_export! {
         }
     }
 
-    fn tezedge_current_head(
+    fn tezedge_index_latest_context_hashes(
         rt,
         index: OCamlRef<DynBox<TezedgeIndexFFI>>,
-    ) -> OCaml<Result<OCamlList<OCamlContextHash>, String>> {
+        count: OCamlRef<OCamlInt32>,
+    ) -> OCaml<Result<OCamlGetCurrentHeadResponse, String>> {
+        let count: i32 = count.to_rust(rt);
+
+        eprintln!("CALLLLED count={:?}", count);
+
         let ocaml_index = rt.get(index);
         let index: &TezedgeIndexFFI = ocaml_index.borrow();
         let index = index.0.borrow().clone();
 
-        let result = index.current_head()
+        eprintln!("CALLLLED2");
+
+        let result = index.latest_context_hashes()
             .map_err(|err| format!("{:?}", err));
 
-        result.to_ocaml(rt)
+        let res = result.to_ocaml(rt);
+
+        eprintln!("CALLLLED3");
+
+        res
     }
 
     fn tezedge_index_close(
@@ -1041,6 +1052,7 @@ pub fn initialize_callbacks() {
             tezedge_index_close,
             tezedge_index_block_applied,
             tezedge_index_init,
+            tezedge_index_latest_context_hashes,
         );
         initialize_tezedge_timing_callbacks(
             tezedge_timing_set_block,

@@ -17,7 +17,8 @@ use tezos_api::ffi::{
 use tezos_context_api::{PatchContext, TezosContextStorageConfiguration};
 use tezos_protocol_ipc_client::{ProtocolRunnerApi, ProtocolRunnerError, ProtocolServiceError};
 use tezos_protocol_ipc_messages::{
-    GenesisResultDataParams, InitProtocolContextParams, ProtocolMessage,
+    ContextGetLatestContextHashesRequest, GenesisResultDataParams, InitProtocolContextParams,
+    ProtocolMessage,
 };
 
 use crate::protocol_runner::ProtocolRunnerToken;
@@ -353,7 +354,8 @@ impl ProtocolRunnerService for ProtocolRunnerServiceDefault {
 
     fn get_current_head(&mut self) -> ProtocolRunnerToken {
         let token = self.new_token();
-        let message = ProtocolMessage::GetCurrentHead;
+        let req = ContextGetLatestContextHashesRequest { count: 11 }; // TODO: Don't hardcode req
+        let message = ProtocolMessage::ContextGetLatestContextHashes(req);
         self.channel
             .blocking_send(ProtocolRunnerRequest::Message((token, message)))
             .unwrap();

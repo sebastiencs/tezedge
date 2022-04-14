@@ -182,7 +182,7 @@ pub struct BeginApplicationResponse {
 #[cfg_attr(feature = "fuzzing", derive(fuzzcheck::DefaultMutator))]
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GetCurrentHeadResponse {
-    pub context_hashes: Vec<ContextHash>,
+    pub latest_context_hashes: Vec<ContextHash>,
 }
 
 #[cfg_attr(feature = "fuzzing", derive(fuzzcheck::DefaultMutator))]
@@ -190,6 +190,14 @@ pub struct GetCurrentHeadResponse {
 pub enum GetCurrentHeadError {
     #[error("Failed to get the context's current head: {message}!")]
     FailedToGetCurrentHead { message: String },
+}
+
+impl From<TezosErrorTrace> for GetCurrentHeadError {
+    fn from(error: TezosErrorTrace) -> Self {
+        GetCurrentHeadError::FailedToGetCurrentHead {
+            message: error.trace_json,
+        }
+    }
 }
 
 // TODO: check if all the field are needed.

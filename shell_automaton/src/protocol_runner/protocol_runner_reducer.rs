@@ -12,19 +12,12 @@ pub fn protocol_runner_reducer(state: &mut State, action: &ActionWithMeta) {
         Action::ProtocolRunnerReady(_) => {
             eprintln!("OK ICI STATE={:?}", &state.protocol_runner);
 
-            let (genesis_commit_hash, context_head_level, context_head_hash) = match &state
-                .protocol_runner
-            {
+            let (genesis_commit_hash, latest_context_hashes) = match &state.protocol_runner {
                 ProtocolRunnerState::GetCurrentHead(ProtocolRunnerCurrentHeadState::Success {
                     genesis_commit_hash,
-                    context_head_level,
-                    context_head_hash,
+                    latest_context_hashes,
                     ..
-                }) => (
-                    genesis_commit_hash.clone(),
-                    context_head_level.clone(),
-                    context_head_hash.clone(),
-                ),
+                }) => (genesis_commit_hash.clone(), latest_context_hashes.clone()),
                 // ProtocolRunnerState::Init(ProtocolRunnerInitState::Success {
                 //     genesis_commit_hash,
                 // }) => genesis_commit_hash.clone(),
@@ -40,8 +33,7 @@ pub fn protocol_runner_reducer(state: &mut State, action: &ActionWithMeta) {
 
             state.protocol_runner = ProtocolRunnerReadyState {
                 genesis_commit_hash,
-                context_head_level,
-                context_head_hash,
+                latest_context_hashes,
             }
             .into();
         }

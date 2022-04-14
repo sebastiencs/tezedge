@@ -18,7 +18,7 @@ where
             store.dispatch(ProtocolRunnerCurrentHeadPendingAction { token });
         }
         Action::ProtocolRunnerCurrentHeadSuccess(_) => {
-            eprintln!("GET CURRENT HEAD");
+            eprintln!("GET CURRENT HEAD SUCCESS");
             store.dispatch(ProtocolRunnerReadyAction {});
         }
         _ => {}

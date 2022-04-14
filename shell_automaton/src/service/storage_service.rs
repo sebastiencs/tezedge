@@ -1,13 +1,14 @@
 // Copyright (c) SimpleStaking, Viable Systems and Tezedge Contributors
 // SPDX-License-Identifier: MIT
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::{fmt, thread};
 
 use enum_kinds::EnumKind;
 use serde::{Deserialize, Serialize};
 
-use crypto::hash::{BlockHash, ChainId, ProtocolHash};
+use crypto::hash::{BlockHash, ChainId, ContextHash, ProtocolHash};
 use storage::block_meta_storage::Meta;
 use storage::cycle_eras_storage::CycleErasData;
 use storage::cycle_storage::CycleData;
@@ -87,7 +88,7 @@ pub enum StorageRequestPayload {
     CycleErasGet(ProtocolHash),
     CycleMetaGet(CycleKey),
 
-    CurrentHeadGet(ChainId, Option<Level>),
+    CurrentHeadGet(ChainId, Option<Level>, Vec<ContextHash>),
 
     BlockHeaderPut(ChainId, BlockHeaderWithHash),
     BlockOperationsPut(OperationsForBlocksMessage),
@@ -227,6 +228,48 @@ impl fmt::Debug for StorageServiceDefault {
     }
 }
 
+fn find_block_in_both_storages(
+    head_block_storage: BlockHeaderWithHash,
+    latest_context_hashes: Vec<ContextHash>,
+    block_storage: &BlockStorage,
+) -> Result<BlockHeaderWithHash, StorageError> {
+    if latest_context_hashes.is_empty() {
+        return Ok(head_block_storage);
+    }
+
+    let mut head = head_block_storage;
+    let latest_context_hashes = HashSet::<&ContextHash>::from_iter(latest_context_hashes.iter());
+
+    let mut n = 0;
+
+    eprintln!("FIND IN BOTH");
+
+    while !latest_context_hashes.contains(head.header.context()) {
+        if head.header.level() == 0 {
+            eprintln!("HEAD IS LEVEL 0");
+            break;
+        }
+
+        head = match block_storage.get(head.header.predecessor()) {
+            Ok(Some(head)) => head,
+            Ok(None) => {
+                eprintln!("HEAD IS NONE");
+                break;
+            }
+            Err(e) => {
+                eprintln!("HEAD ERR {:?}", e);
+                break;
+            }
+        };
+
+        n += 1;
+    }
+
+    eprintln!("HEAD={:?} n={:?}", head, n);
+
+    Ok(head)
+}
+
 impl StorageServiceDefault {
     fn run_worker(
         log: slog::Logger,
@@ -308,7 +351,7 @@ impl StorageServiceDefault {
                     .map(|cycle_eras| CycleErasGetSuccess(proto_hash.clone(), cycle_eras))
                     .map_err(|err| CycleErasGetError(proto_hash, err.into())),
 
-                CurrentHeadGet(chain_id, level_override) => {
+                CurrentHeadGet(chain_id, level_override, latest_context_hashes) => {
                     let result = level_override
                         .and_then(|level| {
                             Some(match block_storage.get_block_by_level(level) {
@@ -316,8 +359,15 @@ impl StorageServiceDefault {
                                 Err(err) => Err(err),
                             })
                         })
-                        .unwrap_or_else(|| storage::hydrate_current_head(&chain_id, &storage))
+                        .unwrap_or_else(|| {
+                            let block = storage::hydrate_current_head(&chain_id, &storage);
+                            // let block = find_block_in_both_storages();
+                            block
+                        })
                         .map_err(StorageError::from)
+                        .and_then(|head| {
+                            find_block_in_both_storages(head, latest_context_hashes, &block_storage)
+                        })
                         .and_then(|head| {
                             let pred = if head.header.level() > 0 {
                                 block_storage.get(head.header.predecessor())?

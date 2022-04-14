@@ -23,8 +23,7 @@ pub enum ProtocolRunnerCurrentHeadState {
     },
     Success {
         genesis_commit_hash: Option<ContextHash>,
-        context_head_level: Option<i32>,
-        context_head_hash: Option<ContextHash>,
+        latest_context_hashes: Vec<ContextHash>,
         token: ProtocolRunnerToken,
     },
 }

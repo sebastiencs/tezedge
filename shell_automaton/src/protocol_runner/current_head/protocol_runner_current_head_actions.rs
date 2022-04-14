@@ -60,8 +60,7 @@ impl EnablingCondition<State> for ProtocolRunnerCurrentHeadErrorAction {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ProtocolRunnerCurrentHeadSuccessAction {
     pub token: ProtocolRunnerToken,
-    pub context_head_level: Option<i32>,
-    pub context_head_hash: Option<ContextHash>,
+    pub latest_context_hashes: Vec<ContextHash>,
 }
 
 impl EnablingCondition<State> for ProtocolRunnerCurrentHeadSuccessAction {

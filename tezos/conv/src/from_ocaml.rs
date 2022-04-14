@@ -5,8 +5,8 @@ use std::convert::TryFrom;
 
 use crate::{
     OCamlApplyBlockExecutionTimestamps, OCamlBlockPayloadHash, OCamlCommitGenesisResult,
-    OCamlComputePathResponse, OCamlCycleRollsOwnerSnapshot, OCamlInitProtocolContextResult,
-    OCamlNodeMessage, OCamlTezosContextTezedgeOnDiskBackendOptions,
+    OCamlComputePathResponse, OCamlCycleRollsOwnerSnapshot, OCamlGetCurrentHeadResponse,
+    OCamlInitProtocolContextResult, OCamlNodeMessage, OCamlTezosContextTezedgeOnDiskBackendOptions,
 };
 
 use super::{
@@ -31,11 +31,12 @@ use tezos_api::ffi::{
     Applied, ApplyBlockError, ApplyBlockExecutionTimestamps, ApplyBlockResponse,
     BeginApplicationError, BeginApplicationResponse, BeginConstructionError, CommitGenesisResult,
     ComputePathError, ComputePathResponse, CycleRollsOwnerSnapshot, DumpContextError, Errored,
-    FfiJsonEncoderError, ForkingTestchainData, GetDataError, HelpersPreapplyError,
-    HelpersPreapplyResponse, InitProtocolContextResult, OperationProtocolDataJsonWithErrorListJson,
-    PrevalidatorWrapper, ProtocolDataError, ProtocolRpcError, ProtocolRpcResponse,
-    RestoreContextError, RpcArgDesc, RpcMethod, TezosErrorTrace, TezosStorageInitError,
-    ValidateOperationError, ValidateOperationResponse, ValidateOperationResult,
+    FfiJsonEncoderError, ForkingTestchainData, GetCurrentHeadError, GetCurrentHeadResponse,
+    GetDataError, HelpersPreapplyError, HelpersPreapplyResponse, InitProtocolContextResult,
+    OperationProtocolDataJsonWithErrorListJson, PrevalidatorWrapper, ProtocolDataError,
+    ProtocolRpcError, ProtocolRpcResponse, RestoreContextError, RpcArgDesc, RpcMethod,
+    TezosErrorTrace, TezosStorageInitError, ValidateOperationError, ValidateOperationResponse,
+    ValidateOperationResult,
 };
 use tezos_context_api::{
     ContextKvStoreConfiguration, TezosContextTezEdgeStorageConfiguration,
@@ -132,6 +133,12 @@ impl_from_ocaml_record! {
         seed_bytes: OCamlBytes,
         rolls_data: OCamlList<(OCamlBytes, OCamlList<OCamlInt>)>,
         last_roll: OCamlInt32,
+    }
+}
+
+impl_from_ocaml_record! {
+    OCamlGetCurrentHeadResponse => GetCurrentHeadResponse {
+        latest_context_hashes: OCamlList<OCamlContextHash>
     }
 }
 
@@ -399,6 +406,9 @@ impl_from_ocaml_polymorphic_variant! {
         RestoreContextResponse(result: Result<(), OCamlTezosErrorTrace>) =>
             NodeMessage::RestoreContextResponse(result),
 
+        ContextGetLatestContextHashesResult(result: Result<OCamlGetCurrentHeadResponse, OCamlTezosErrorTrace>) =>
+            NodeMessage::ContextGetLatestContextHashesResult(result),
+
         IpcResponseEncodingFailure(message: String) => NodeMessage::IpcResponseEncodingFailure(message),
 
         PingResult => NodeMessage::PingResult,
@@ -438,4 +448,5 @@ from_ocaml_tezos_error_trace!(GetDataError);
 from_ocaml_tezos_error_trace!(FfiJsonEncoderError);
 from_ocaml_tezos_error_trace!(ComputePathError, tezos_api::ffi::CallError);
 from_ocaml_tezos_error_trace!(DumpContextError);
+from_ocaml_tezos_error_trace!(GetCurrentHeadError);
 from_ocaml_tezos_error_trace!(RestoreContextError);

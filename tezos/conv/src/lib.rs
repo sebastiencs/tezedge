@@ -91,6 +91,8 @@ pub struct OCamlTezosContextConfiguration {}
 pub struct OCamlContextGetKeyFromHistoryRequest {}
 pub struct OCamlContextGetKeyValuesByPrefixRequest {}
 pub struct OCamlContextGetTreeByPrefixRequest {}
+pub struct OCamlGetCurrentHeadResponse {}
+pub struct OCamlContextGetLatestContextHashesRequest {}
 
 // Dumps
 pub struct OCamlDumpContextRequest {}

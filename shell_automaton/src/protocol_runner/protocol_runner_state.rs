@@ -13,8 +13,7 @@ use super::spawn_server::ProtocolRunnerSpawnServerState;
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ProtocolRunnerReadyState {
     pub genesis_commit_hash: Option<ContextHash>,
-    pub context_head_level: Option<i32>,
-    pub context_head_hash: Option<ContextHash>,
+    pub latest_context_hashes: Vec<ContextHash>,
 }
 
 #[derive(From, Serialize, Deserialize, Debug, Clone)]

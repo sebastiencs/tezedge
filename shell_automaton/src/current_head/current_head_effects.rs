@@ -4,6 +4,7 @@
 use networking::network_channel::NewCurrentHeadNotification;
 
 use crate::bootstrap::BootstrapInitAction;
+use crate::protocol_runner::ProtocolRunnerState;
 use crate::service::actors_service::{ActorsMessageTo, ActorsService};
 use crate::service::storage_service::{
     StorageRequestPayload, StorageResponseError, StorageResponseSuccess,
@@ -26,13 +27,22 @@ where
             let level_override = store.state().config.current_head_level_override;
             let storage_req_id = store.state().storage.requests.next_req_id();
 
+            let latest_context_hashes = match &store.state().protocol_runner {
+                ProtocolRunnerState::Ready(state) => state.latest_context_hashes.clone(),
+                _ => Vec::new(),
+            };
+
             eprintln!(
-                "Action::CurrentHeadRehydrateInit chain_id={:?} level_override={:?}",
-                chain_id, level_override
+                "Action::CurrentHeadRehydrateInit chain_id={:?} level_override={:?} latest={:?}",
+                chain_id, level_override, latest_context_hashes,
             );
 
             store.dispatch(StorageRequestCreateAction {
-                payload: StorageRequestPayload::CurrentHeadGet(chain_id, level_override),
+                payload: StorageRequestPayload::CurrentHeadGet(
+                    chain_id,
+                    level_override,
+                    latest_context_hashes,
+                ),
                 requestor: StorageRequestor::None,
             });
             store.dispatch(CurrentHeadRehydratePendingAction { storage_req_id });

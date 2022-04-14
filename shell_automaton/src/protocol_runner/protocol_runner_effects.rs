@@ -122,11 +122,11 @@ where
                     },
                     ProtocolRunnerState::GetCurrentHead(state) => match state {
                         ProtocolRunnerCurrentHeadState::Pending { .. } => match result {
-                            ProtocolRunnerResult::GetCurrentHead((token, Ok(current_head))) => {
+                            ProtocolRunnerResult::GetCurrentHead((token, Ok(response))) => {
+                                eprintln!("SUCCESS {:?}", response);
                                 store.dispatch(ProtocolRunnerCurrentHeadSuccessAction {
                                     token,
-                                    context_head_level: None,
-                                    context_head_hash: None,
+                                    latest_context_hashes: response.latest_context_hashes,
                                 });
                                 continue;
                             },

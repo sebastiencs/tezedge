@@ -51,7 +51,7 @@ pub enum ProtocolMessage {
     ContextGetTreeByPrefix(ContextGetTreeByPrefixRequest),
     DumpContext(DumpContextRequest),
     RestoreContext(RestoreContextRequest),
-    GetCurrentHead,
+    ContextGetLatestContextHashes(ContextGetLatestContextHashesRequest),
     Ping,
     ShutdownCall,
 }
@@ -86,6 +86,11 @@ pub struct RestoreContextRequest {
     pub expected_context_hash: ContextHash,
     pub restore_from_path: String,
     pub nb_context_elements: i64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ContextGetLatestContextHashesRequest {
+    pub count: i32,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -155,7 +160,8 @@ pub enum NodeMessage {
     ContextGetTreeByPrefixResult(Result<StringTreeObject, String>),
     DumpContextResponse(Result<i64, DumpContextError>),
     RestoreContextResponse(Result<(), RestoreContextError>),
-    GetCurrentHeadResponse(Result<GetCurrentHeadResponse, GetCurrentHeadError>),
+    // ContextGetLatestContextHashesResult(Result<GetCurrentHeadResponse, String>),
+    ContextGetLatestContextHashesResult(Result<GetCurrentHeadResponse, GetCurrentHeadError>),
 
     // TODO: generic error response instead with error types?
     IpcResponseEncodingFailure(String),
