@@ -257,6 +257,7 @@ pub struct InMemory {
     string_interner: StringInterner,
     configuration: InMemoryConfiguration,
     self_ptr: Option<Arc<RwLock<ContextKeyValueStore>>>,
+    latest_context_hash: Option<ContextHash>,
 }
 
 impl GarbageCollector for InMemory {
@@ -461,6 +462,14 @@ impl KeyValueStoreBackend for InMemory {
         Ok(None)
     }
 
+    fn latest_context_hashes(&self) -> Result<Vec<ContextHash>, DBError> {
+        if let Some(latest) = self.latest_context_hash.clone() {
+            Ok(vec![latest])
+        } else {
+            Ok(vec![])
+        }
+    }
+
     #[cfg(test)]
     fn synchronize_data(
         &mut self,
@@ -514,6 +523,7 @@ impl InMemory {
             string_interner: StringInterner::default(),
             configuration,
             self_ptr: None,
+            latest_context_hash: None,
         })
     }
 
@@ -583,14 +593,15 @@ impl InMemory {
         };
 
         // Commit the tree in the in-memory repository
-        self.commit_impl(
-            &tree,
-            parent_ref,
-            commit.author,
-            commit.message,
-            commit.time,
-        )
-        .map_err(|error| ReloadError::CommitFailed { error })?;
+        let (commit_hash, _) = self
+            .commit_impl(
+                &tree,
+                parent_ref,
+                commit.author,
+                commit.message,
+                commit.time,
+            )
+            .map_err(|error| ReloadError::CommitFailed { error })?;
 
         self.string_interner = tree
             .index
@@ -603,6 +614,8 @@ impl InMemory {
 
         log!("[after reload] memory_usage={:#?}", self.memory_usage());
         debug_jemalloc();
+
+        self.latest_context_hash = Some(commit_hash);
 
         Ok(())
     }

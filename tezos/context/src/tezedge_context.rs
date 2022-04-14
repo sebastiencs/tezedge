@@ -866,11 +866,14 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
 
     fn latest_context_hashes(&self) -> Result<GetCurrentHeadResponse, ContextError> {
         eprintln!("latest_context_hashes called");
-        let hash = ContextHash::try_from_bytes(&[1; 32]).unwrap();
+
+        let hash = self.repository.read().latest_context_hashes()?;
+
+        // let hash = ContextHash::try_from_bytes(&[1; 32]).unwrap();
         eprintln!("CONTEXT_HASH={:?}", hash);
 
         Ok(GetCurrentHeadResponse {
-            latest_context_hashes: vec![hash],
+            latest_context_hashes: hash,
         }) // TODO
     }
 

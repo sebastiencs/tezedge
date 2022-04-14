@@ -950,6 +950,10 @@ impl KeyValueStoreBackend for Persistent {
         Ok(())
     }
 
+    fn latest_context_hashes(&self) -> Result<Vec<ContextHash>, DBError> {
+        Ok(vec![])
+    }
+
     fn store_own_repository(&mut self, repository: Arc<RwLock<ContextKeyValueStore>>) {
         // no-op
     }

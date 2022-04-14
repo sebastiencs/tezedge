@@ -359,14 +359,18 @@ impl StorageServiceDefault {
                                 Err(err) => Err(err),
                             })
                         })
-                        .unwrap_or_else(|| {
-                            let block = storage::hydrate_current_head(&chain_id, &storage);
-                            // let block = find_block_in_both_storages();
-                            block
-                        })
+                        .unwrap_or_else(|| storage::hydrate_current_head(&chain_id, &storage))
                         .map_err(StorageError::from)
                         .and_then(|head| {
-                            find_block_in_both_storages(head, latest_context_hashes, &block_storage)
+                            if level_override.is_none() {
+                                find_block_in_both_storages(
+                                    head,
+                                    latest_context_hashes,
+                                    &block_storage,
+                                )
+                            } else {
+                                Ok(head)
+                            }
                         })
                         .and_then(|head| {
                             let pred = if head.header.level() > 0 {

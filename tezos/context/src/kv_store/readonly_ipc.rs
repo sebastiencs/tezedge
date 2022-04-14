@@ -74,6 +74,10 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
         // no-op
     }
 
+    fn latest_context_hashes(&self) -> Result<Vec<ContextHash>, DBError> {
+        Ok(vec![])
+    }
+
     fn contains(&self, hash_id: HashId) -> Result<bool, DBError> {
         if let Some(hash_id) = hash_id.get_in_working_tree()? {
             self.hashes.contains(hash_id).map_err(Into::into)

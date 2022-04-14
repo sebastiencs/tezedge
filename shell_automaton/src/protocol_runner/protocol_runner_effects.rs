@@ -97,7 +97,7 @@ where
         }
         Action::WakeupEvent(_) => {
             while let Ok(result) = store.service.protocol_runner().try_recv() {
-                eprintln!("protocol_runner_effects action={:?}", action.action);
+                // eprintln!("protocol_runner_effects action={:?}", action.action);
                 // TODO: clean this up
                 let init_state = match &store.state().protocol_runner {
                     ProtocolRunnerState::SpawnServer(state) => match state {

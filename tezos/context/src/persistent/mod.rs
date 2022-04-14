@@ -159,6 +159,7 @@ pub trait KeyValueStoreBackend {
     /// `Self::try_new` needs to be called with `read_mode=true`
     fn get_read_statistics(&self) -> Result<Option<ReadStatistics>, DBError>;
     /// Simulate a `commit`, by writing data to disk/memory, without computing hash
+    fn latest_context_hashes(&self) -> Result<Vec<ContextHash>, DBError>;
     #[cfg(test)]
     fn synchronize_data(
         &mut self,
