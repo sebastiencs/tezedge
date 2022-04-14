@@ -314,6 +314,9 @@ ocaml_export! {
         let result = match context_hash {
             Some(ref context_hash) => {
                 let block_level = block_level as u32;
+
+                eprintln!("tezedge_index_block_applied level={:?}", block_level);
+
                 index.block_applied(block_level, context_hash)
                      .map_err(|err| format!("BlockApplied: {:?}", err))
             },
