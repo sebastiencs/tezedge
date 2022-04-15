@@ -228,7 +228,30 @@ impl fmt::Debug for StorageServiceDefault {
     }
 }
 
-fn find_block_in_both_storages(
+fn find_block_matching_context_storage_impl(
+    head_block_storage: BlockHeaderWithHash,
+    latest_context_hashes: &[ContextHash],
+    block_storage: &BlockStorage,
+) -> Result<Option<BlockHeaderWithHash>, StorageError> {
+    let mut head = head_block_storage;
+    let latest_context_hashes = HashSet::<&ContextHash>::from_iter(latest_context_hashes.iter());
+
+    while !latest_context_hashes.contains(head.header.context()) {
+        if head.header.level() == 0 {
+            return Ok(None);
+        }
+
+        head = match block_storage.get(head.header.predecessor())? {
+            Some(head) => head,
+            _ => return Ok(None),
+        };
+    }
+
+    Ok(Some(head))
+}
+
+fn find_block_matching_context_storage(
+    log: &slog::Logger,
     head_block_storage: BlockHeaderWithHash,
     latest_context_hashes: Vec<ContextHash>,
     block_storage: &BlockStorage,
@@ -237,37 +260,21 @@ fn find_block_in_both_storages(
         return Ok(head_block_storage);
     }
 
-    let mut head = head_block_storage;
-    let latest_context_hashes = HashSet::<&ContextHash>::from_iter(latest_context_hashes.iter());
-
-    let mut n = 0;
-
-    eprintln!("FIND IN BOTH");
-
-    while !latest_context_hashes.contains(head.header.context()) {
-        if head.header.level() == 0 {
-            eprintln!("HEAD IS LEVEL 0");
-            break;
+    match find_block_matching_context_storage_impl(
+        head_block_storage.clone(),
+        &latest_context_hashes,
+        block_storage,
+    )? {
+        Some(head) => Ok(head),
+        None => {
+            slog::warn!(
+                &log,
+                "Unable to find a block matching the context storage";
+                "latest_context_hashes" => format!("{:?}", latest_context_hashes)
+            );
+            Ok(head_block_storage)
         }
-
-        head = match block_storage.get(head.header.predecessor()) {
-            Ok(Some(head)) => head,
-            Ok(None) => {
-                eprintln!("HEAD IS NONE");
-                break;
-            }
-            Err(e) => {
-                eprintln!("HEAD ERR {:?}", e);
-                break;
-            }
-        };
-
-        n += 1;
     }
-
-    eprintln!("HEAD={:?} n={:?}", head, n);
-
-    Ok(head)
 }
 
 impl StorageServiceDefault {
@@ -363,7 +370,8 @@ impl StorageServiceDefault {
                         .map_err(StorageError::from)
                         .and_then(|head| {
                             if level_override.is_none() {
-                                find_block_in_both_storages(
+                                find_block_matching_context_storage(
+                                    &log,
                                     head,
                                     latest_context_hashes,
                                     &block_storage,
