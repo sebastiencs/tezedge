@@ -114,7 +114,7 @@ impl ProtocolRunnerService for ProtocolRunnerServiceDummy {
 
     fn shutdown(&mut self) {}
 
-    fn get_current_head(&mut self) -> ProtocolRunnerToken {
+    fn get_latest_context_hashes(&mut self, _: i32) -> ProtocolRunnerToken {
         self.new_token()
     }
 }

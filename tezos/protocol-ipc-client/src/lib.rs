@@ -373,9 +373,10 @@ impl ProtocolRunnerConnection {
     }
 
     /// Get context's current head
-    pub async fn current_head(&mut self) -> Result<Vec<ContextHash>, ProtocolServiceError> {
-        let count = ContextGetLatestContextHashesRequest { count: 10 };
-
+    pub async fn latest_context_hashes(
+        &mut self,
+        count: i32,
+    ) -> Result<Vec<ContextHash>, ProtocolServiceError> {
         handle_request!(
             self.io,
             ContextGetLatestContextHashes(count),

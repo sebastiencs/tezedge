@@ -51,7 +51,7 @@ pub enum ProtocolMessage {
     ContextGetTreeByPrefix(ContextGetTreeByPrefixRequest),
     DumpContext(DumpContextRequest),
     RestoreContext(RestoreContextRequest),
-    ContextGetLatestContextHashes(ContextGetLatestContextHashesRequest),
+    ContextGetLatestContextHashes(i32),
     Ping,
     ShutdownCall,
 }
@@ -86,11 +86,6 @@ pub struct RestoreContextRequest {
     pub expected_context_hash: ContextHash,
     pub restore_from_path: String,
     pub nb_context_elements: i64,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ContextGetLatestContextHashesRequest {
-    pub count: i32,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
