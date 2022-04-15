@@ -5,14 +5,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 
+use crypto::hash::ContextHash;
 use serde::{Deserialize, Serialize};
 
 use slog::Logger;
 use tezos_api::environment::TezosEnvironmentConfiguration;
 use tezos_api::ffi::{
     ApplyBlockRequest, ApplyBlockResponse, BeginConstructionRequest, CommitGenesisResult,
-    GetCurrentHeadResponse, InitProtocolContextResult, PrevalidatorWrapper,
-    TezosRuntimeConfiguration, ValidateOperationRequest, ValidateOperationResponse,
+    InitProtocolContextResult, PrevalidatorWrapper, TezosRuntimeConfiguration,
+    ValidateOperationRequest, ValidateOperationResponse,
 };
 use tezos_context_api::{PatchContext, TezosContextStorageConfiguration};
 use tezos_protocol_ipc_client::{ProtocolRunnerApi, ProtocolRunnerError, ProtocolServiceError};
@@ -53,7 +54,7 @@ pub enum ProtocolRunnerResult {
     GetCurrentHead(
         (
             ProtocolRunnerToken,
-            Result<GetCurrentHeadResponse, ProtocolServiceError>,
+            Result<Vec<ContextHash>, ProtocolServiceError>,
         ),
     ),
 

@@ -32,11 +32,6 @@ where
                 _ => Vec::new(),
             };
 
-            eprintln!(
-                "Action::CurrentHeadRehydrateInit chain_id={:?} level_override={:?} latest={:?}",
-                chain_id, level_override, latest_context_hashes,
-            );
-
             store.dispatch(StorageRequestCreateAction {
                 payload: StorageRequestPayload::CurrentHeadGet(
                     chain_id,

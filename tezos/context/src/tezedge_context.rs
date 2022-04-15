@@ -9,7 +9,6 @@ use std::{cell::RefCell, convert::TryInto, sync::Arc};
 use crypto::hash::{ContextHash, HashTrait};
 use ocaml_interop::BoxRoot;
 use parking_lot::RwLock;
-use tezos_api::ffi::GetCurrentHeadResponse;
 use tezos_context_api::StringDirectoryMap;
 use tezos_timing::{BlockMemoryUsage, ContextMemoryUsage};
 
@@ -864,7 +863,7 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
         )))
     }
 
-    fn latest_context_hashes(&self) -> Result<GetCurrentHeadResponse, ContextError> {
+    fn latest_context_hashes(&self) -> Result<Vec<ContextHash>, ContextError> {
         eprintln!("latest_context_hashes called");
 
         let hash = self.repository.read().latest_context_hashes()?;
@@ -872,9 +871,7 @@ impl IndexApi<TezedgeContext> for TezedgeIndex {
         // let hash = ContextHash::try_from_bytes(&[1; 32]).unwrap();
         eprintln!("CONTEXT_HASH={:?}", hash);
 
-        Ok(GetCurrentHeadResponse {
-            latest_context_hashes: hash,
-        }) // TODO
+        Ok(hash)
     }
 
     fn block_applied(

@@ -27,7 +27,7 @@ impl EnablingCondition<State> for ProtocolRunnerReadyAction {
     fn is_enabled(&self, state: &State) -> bool {
         matches!(
             &state.protocol_runner,
-            ProtocolRunnerState::GetCurrentHead(ProtocolRunnerCurrentHeadState::Success { .. }) // ProtocolRunnerState::Init(ProtocolRunnerInitState::Success { .. })
+            ProtocolRunnerState::GetCurrentHead(ProtocolRunnerCurrentHeadState::Success { .. })
         )
     }
 }

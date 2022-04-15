@@ -9,9 +9,8 @@ use crate::{
     OCamlBlockPayloadHash, OCamlComputePathRequest, OCamlContextGetKeyFromHistoryRequest,
     OCamlContextGetKeyValuesByPrefixRequest, OCamlContextGetLatestContextHashesRequest,
     OCamlContextGetTreeByPrefixRequest, OCamlCycleRollsOwnerSnapshot, OCamlDumpContextRequest,
-    OCamlGenesisChain, OCamlGenesisResultDataParams, OCamlGetCurrentHeadResponse,
-    OCamlHelpersPreapplyBlockRequest, OCamlInitProtocolContextParams,
-    OCamlJsonEncodeApplyBlockOperationsMetadataParams,
+    OCamlGenesisChain, OCamlGenesisResultDataParams, OCamlHelpersPreapplyBlockRequest,
+    OCamlInitProtocolContextParams, OCamlJsonEncodeApplyBlockOperationsMetadataParams,
     OCamlJsonEncodeApplyBlockResultMetadataParams, OCamlOperation, OCamlOperationShellHeader,
     OCamlPatchContext, OCamlProtocolMessage, OCamlProtocolOverrides, OCamlProtocolRpcRequest,
     OCamlRestoreContextRequest, OCamlRpcRequest, OCamlTezosContextConfiguration,
@@ -40,9 +39,8 @@ use ocaml_interop::{
 use tezos_api::ffi::{
     ApplyBlockExecutionTimestamps, ApplyBlockRequest, ApplyBlockResponse, BeginApplicationRequest,
     BeginConstructionRequest, ComputePathRequest, CycleRollsOwnerSnapshot, ForkingTestchainData,
-    GetCurrentHeadResponse, HelpersPreapplyBlockRequest, PrevalidatorWrapper, ProtocolRpcRequest,
-    RpcMethod, RpcRequest, TezosRuntimeConfiguration, TezosRuntimeLogLevel,
-    ValidateOperationRequest,
+    HelpersPreapplyBlockRequest, PrevalidatorWrapper, ProtocolRpcRequest, RpcMethod, RpcRequest,
+    TezosRuntimeConfiguration, TezosRuntimeLogLevel, ValidateOperationRequest,
 };
 use tezos_context_api::{
     ContextKvStoreConfiguration, GenesisChain, PatchContext, ProtocolOverrides,
@@ -509,12 +507,6 @@ impl_to_ocaml_record! {
 impl_to_ocaml_record! {
     ContextGetLatestContextHashesRequest => OCamlContextGetLatestContextHashesRequest {
         count: OCamlInt
-    }
-}
-
-impl_to_ocaml_record! {
-    GetCurrentHeadResponse => OCamlGetCurrentHeadResponse {
-        latest_context_hashes: OCamlList<OCamlContextHash>
     }
 }
 

@@ -5,8 +5,8 @@ use std::convert::TryFrom;
 
 use crate::{
     OCamlApplyBlockExecutionTimestamps, OCamlBlockPayloadHash, OCamlCommitGenesisResult,
-    OCamlComputePathResponse, OCamlCycleRollsOwnerSnapshot, OCamlGetCurrentHeadResponse,
-    OCamlInitProtocolContextResult, OCamlNodeMessage, OCamlTezosContextTezedgeOnDiskBackendOptions,
+    OCamlComputePathResponse, OCamlCycleRollsOwnerSnapshot, OCamlInitProtocolContextResult,
+    OCamlNodeMessage, OCamlTezosContextTezedgeOnDiskBackendOptions,
 };
 
 use super::{
@@ -31,8 +31,8 @@ use tezos_api::ffi::{
     Applied, ApplyBlockError, ApplyBlockExecutionTimestamps, ApplyBlockResponse,
     BeginApplicationError, BeginApplicationResponse, BeginConstructionError, CommitGenesisResult,
     ComputePathError, ComputePathResponse, CycleRollsOwnerSnapshot, DumpContextError, Errored,
-    FfiJsonEncoderError, ForkingTestchainData, GetCurrentHeadError, GetCurrentHeadResponse,
-    GetDataError, HelpersPreapplyError, HelpersPreapplyResponse, InitProtocolContextResult,
+    FfiJsonEncoderError, ForkingTestchainData, GetCurrentHeadError, GetDataError,
+    HelpersPreapplyError, HelpersPreapplyResponse, InitProtocolContextResult,
     OperationProtocolDataJsonWithErrorListJson, PrevalidatorWrapper, ProtocolDataError,
     ProtocolRpcError, ProtocolRpcResponse, RestoreContextError, RpcArgDesc, RpcMethod,
     TezosErrorTrace, TezosStorageInitError, ValidateOperationError, ValidateOperationResponse,
@@ -133,12 +133,6 @@ impl_from_ocaml_record! {
         seed_bytes: OCamlBytes,
         rolls_data: OCamlList<(OCamlBytes, OCamlList<OCamlInt>)>,
         last_roll: OCamlInt32,
-    }
-}
-
-impl_from_ocaml_record! {
-    OCamlGetCurrentHeadResponse => GetCurrentHeadResponse {
-        latest_context_hashes: OCamlList<OCamlContextHash>
     }
 }
 
@@ -406,7 +400,7 @@ impl_from_ocaml_polymorphic_variant! {
         RestoreContextResponse(result: Result<(), OCamlTezosErrorTrace>) =>
             NodeMessage::RestoreContextResponse(result),
 
-        ContextGetLatestContextHashesResult(result: Result<OCamlGetCurrentHeadResponse, OCamlTezosErrorTrace>) =>
+        ContextGetLatestContextHashesResult(result: Result<OCamlList<OCamlContextHash>, OCamlTezosErrorTrace>) =>
             NodeMessage::ContextGetLatestContextHashesResult(result),
 
         IpcResponseEncodingFailure(message: String) => NodeMessage::IpcResponseEncodingFailure(message),

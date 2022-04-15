@@ -180,12 +180,6 @@ pub struct BeginApplicationResponse {
 }
 
 #[cfg_attr(feature = "fuzzing", derive(fuzzcheck::DefaultMutator))]
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct GetCurrentHeadResponse {
-    pub latest_context_hashes: Vec<ContextHash>,
-}
-
-#[cfg_attr(feature = "fuzzing", derive(fuzzcheck::DefaultMutator))]
 #[derive(Error, Serialize, Deserialize, Debug, Clone)]
 pub enum GetCurrentHeadError {
     #[error("Failed to get the context's current head: {message}!")]

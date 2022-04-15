@@ -32,9 +32,8 @@ use super::init::context_ipc_server::{
 use super::init::ProtocolRunnerInitAction;
 use super::spawn_server::ProtocolRunnerSpawnServerInitAction;
 use super::{
-    ProtocolRunnerNotifyStatusAction, ProtocolRunnerReadyAction,
-    ProtocolRunnerResponseUnexpectedAction, ProtocolRunnerShutdownPendingAction,
-    ProtocolRunnerShutdownSuccessAction, ProtocolRunnerState,
+    ProtocolRunnerNotifyStatusAction, ProtocolRunnerResponseUnexpectedAction,
+    ProtocolRunnerShutdownPendingAction, ProtocolRunnerShutdownSuccessAction, ProtocolRunnerState,
 };
 
 pub fn protocol_runner_effects<S>(store: &mut Store<S>, action: &ActionWithMeta)
@@ -43,24 +42,15 @@ where
 {
     match &action.action {
         Action::ProtocolRunnerStart(_) => {
-            eprintln!("protocol_runner_effects action={:?}", action.action);
             store.dispatch(ProtocolRunnerSpawnServerInitAction {});
         }
         Action::ProtocolRunnerSpawnServerSuccess(_) => {
-            eprintln!("protocol_runner_effects action={:?}", action.action);
             store.dispatch(ProtocolRunnerInitAction {});
         }
         Action::ProtocolRunnerInitSuccess(_) => {
-            eprintln!(
-                "protocol_runner_effects action={:?} state={:?}",
-                action.action,
-                &store.state().protocol_runner
-            );
             store.dispatch(ProtocolRunnerCurrentHeadInitAction {});
-            // store.dispatch(ProtocolRunnerReadyAction {});
         }
         Action::ProtocolRunnerReady(_) => {
-            eprintln!("protocol_runner_effects action={:?}", action.action);
             if let ProtocolRunnerState::Ready(state) = &store.state.get().protocol_runner {
                 if let Some(hash) = state.genesis_commit_hash.as_ref() {
                     // Init storing of genesis block data, if genesis
@@ -76,12 +66,10 @@ where
             }
         }
         Action::ProtocolRunnerNotifyStatus(_) => {
-            eprintln!("protocol_runner_effects action={:?}", action.action);
             // TODO: notify failure too.
             store.service.protocol_runner().notify_status(true);
         }
         Action::ProtocolRunnerShutdownInit(_) => {
-            eprintln!("protocol_runner_effects action={:?}", action.action);
             store.service.protocol_runner().notify_status(false);
             match &store.state().protocol_runner {
                 ProtocolRunnerState::Idle | ProtocolRunnerState::SpawnServer(_) => {
@@ -97,7 +85,6 @@ where
         }
         Action::WakeupEvent(_) => {
             while let Ok(result) = store.service.protocol_runner().try_recv() {
-                // eprintln!("protocol_runner_effects action={:?}", action.action);
                 // TODO: clean this up
                 let init_state = match &store.state().protocol_runner {
                     ProtocolRunnerState::SpawnServer(state) => match state {
@@ -122,38 +109,34 @@ where
                     },
                     ProtocolRunnerState::GetCurrentHead(state) => match state {
                         ProtocolRunnerCurrentHeadState::Pending { .. } => match result {
-                            ProtocolRunnerResult::GetCurrentHead((token, Ok(response))) => {
-                                eprintln!("SUCCESS {:?}", response);
+                            ProtocolRunnerResult::GetCurrentHead((
+                                token,
+                                Ok(latest_context_hashes),
+                            )) => {
                                 store.dispatch(ProtocolRunnerCurrentHeadSuccessAction {
                                     token,
-                                    latest_context_hashes: response.latest_context_hashes,
+                                    latest_context_hashes,
                                 });
                                 continue;
-                            },
+                            }
                             ProtocolRunnerResult::GetCurrentHead((token, Err(error))) => {
-                                eprintln!("TOKEN={:?} ERROR={:?}", token, error);
-                                // store.dispatch(ProtocolRunnerCurrentHeadSuccessAction {
-                                //     token,
-                                //     context_head_level: None,
-                                //     context_head_hash: None,
-                                // });
-                                // eprintln!("state={:?}", );
-                                // store.dispatch(ProtocolRunnerReadyAction {});
+                                slog::error!(&store.state().log, "failed to get context's latest commits";
+                                    "error" => format!("{:?}", error));
+                                store.dispatch(ProtocolRunnerCurrentHeadSuccessAction {
+                                    token,
+                                    latest_context_hashes: Vec::new(),
+                                });
                                 continue;
-                                // continue;
-                            },
+                            }
                             result => {
                                 store.dispatch(ProtocolRunnerResponseUnexpectedAction { result });
                                 continue;
                             }
-                        }
+                        },
                         _ => {
                             store.dispatch(ProtocolRunnerResponseUnexpectedAction { result });
                             continue;
                         }
-                        // ProtocolRunnerCurrentHeadState::Init => todo!(),
-                        // ProtocolRunnerCurrentHeadState::Error { token } => todo!(),
-                        // ProtocolRunnerCurrentHeadState::Success { token } => todo!(),
                     },
                     ProtocolRunnerState::Init(v) => v,
                     ProtocolRunnerState::Idle => {
@@ -182,8 +165,6 @@ where
                         continue;
                     }
                 };
-
-                eprintln!("protocol_runner_effects init_state={:?}", init_state);
 
                 match init_state {
                     ProtocolRunnerInitState::Runtime(ProtocolRunnerInitRuntimeState::Pending {

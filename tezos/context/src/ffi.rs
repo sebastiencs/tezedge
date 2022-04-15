@@ -29,8 +29,8 @@ use crate::{
 };
 use tezos_context_api::TezosContextTezEdgeStorageConfiguration;
 use tezos_conv::{
-    OCamlBlockHash, OCamlContextHash, OCamlGetCurrentHeadResponse, OCamlOperationHash,
-    OCamlProtocolHash, OCamlTezosContextTezEdgeStorageConfiguration,
+    OCamlBlockHash, OCamlContextHash, OCamlOperationHash, OCamlProtocolHash,
+    OCamlTezosContextTezEdgeStorageConfiguration,
 };
 
 // TODO: instead of converting errors into strings, it may be useful to pass
@@ -217,7 +217,7 @@ ocaml_export! {
         rt,
         index: OCamlRef<DynBox<TezedgeIndexFFI>>,
         count: OCamlRef<OCamlInt32>,
-    ) -> OCaml<Result<OCamlGetCurrentHeadResponse, String>> {
+    ) -> OCaml<Result<OCamlList<OCamlContextHash>, String>> {
         let count: i32 = count.to_rust(rt);
 
         eprintln!("CALLLLED count={:?}", count);

@@ -13,18 +13,12 @@ where
 {
     match &action.action {
         Action::ProtocolRunnerCurrentHeadInit(_) => {
-            eprintln!("GET CURRENT HEAD");
             let token = store.service.protocol_runner().get_current_head();
             store.dispatch(ProtocolRunnerCurrentHeadPendingAction { token });
         }
         Action::ProtocolRunnerCurrentHeadSuccess(_) => {
-            eprintln!("GET CURRENT HEAD SUCCESS");
             store.dispatch(ProtocolRunnerReadyAction {});
         }
         _ => {}
     }
-
-    // eprintln!("ACTION={:?}", &action.action);
-    // if let Action::ProtocolRunnerCurrentHeadInit(_) = &action.action {
-    // }
 }
