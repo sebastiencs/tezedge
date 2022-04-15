@@ -375,7 +375,7 @@ impl ProtocolRunnerConnection {
     /// Get context's current head
     pub async fn latest_context_hashes(
         &mut self,
-        count: i32,
+        count: i64,
     ) -> Result<Vec<ContextHash>, ProtocolServiceError> {
         handle_request!(
             self.io,

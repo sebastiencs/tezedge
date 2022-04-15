@@ -51,7 +51,7 @@ pub enum ProtocolMessage {
     ContextGetTreeByPrefix(ContextGetTreeByPrefixRequest),
     DumpContext(DumpContextRequest),
     RestoreContext(RestoreContextRequest),
-    ContextGetLatestContextHashes(i32),
+    ContextGetLatestContextHashes(i64),
     Ping,
     ShutdownCall,
 }

@@ -216,9 +216,9 @@ ocaml_export! {
     fn tezedge_index_latest_context_hashes(
         rt,
         index: OCamlRef<DynBox<TezedgeIndexFFI>>,
-        count: OCamlRef<OCamlInt32>,
+        count: OCamlRef<OCamlInt>,
     ) -> OCaml<Result<OCamlList<OCamlContextHash>, String>> {
-        let count: i32 = count.to_rust(rt);
+        let count: i64 = count.to_rust(rt);
 
         eprintln!("CALLLLED count={:?}", count);
 

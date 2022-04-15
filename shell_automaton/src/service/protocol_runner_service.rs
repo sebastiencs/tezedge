@@ -140,7 +140,7 @@ pub trait ProtocolRunnerService {
 
     fn apply_block(&mut self, req: ApplyBlockRequest);
 
-    fn get_latest_context_hashes(&mut self, count: i32) -> ProtocolRunnerToken;
+    fn get_latest_context_hashes(&mut self, count: i64) -> ProtocolRunnerToken;
 
     // Prevalidator
     fn begin_construction_for_prevalidation(
@@ -352,7 +352,7 @@ impl ProtocolRunnerService for ProtocolRunnerServiceDefault {
             .unwrap();
     }
 
-    fn get_latest_context_hashes(&mut self, count: i32) -> ProtocolRunnerToken {
+    fn get_latest_context_hashes(&mut self, count: i64) -> ProtocolRunnerToken {
         let token = self.new_token();
         let message = ProtocolMessage::ContextGetLatestContextHashes(count);
         self.channel
