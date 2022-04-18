@@ -218,24 +218,15 @@ ocaml_export! {
         index: OCamlRef<DynBox<TezedgeIndexFFI>>,
         count: OCamlRef<OCamlInt>,
     ) -> OCaml<Result<OCamlList<OCamlContextHash>, String>> {
-        let count: i64 = count.to_rust(rt);
-
-        eprintln!("CALLLLED count={:?}", count);
-
         let ocaml_index = rt.get(index);
+        let count: i64 = count.to_rust(rt);
         let index: &TezedgeIndexFFI = ocaml_index.borrow();
         let index = index.0.borrow().clone();
 
-        eprintln!("CALLLLED2");
-
-        let result = index.latest_context_hashes()
+        let result = index.latest_context_hashes(count)
             .map_err(|err| format!("{:?}", err));
 
-        let res = result.to_ocaml(rt);
-
-        eprintln!("CALLLLED3");
-
-        res
+        result.to_ocaml(rt)
     }
 
     fn tezedge_index_close(

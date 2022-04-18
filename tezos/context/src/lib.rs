@@ -227,7 +227,7 @@ pub trait IndexApi<T: ShellContextApi + ProtocolContextApi> {
     ) -> Result<(), ContextError>;
     // Return the last context hashes
     // The vector is ordered from oldest to latest context hash
-    fn latest_context_hashes(&self) -> Result<Vec<ContextHash>, ContextError>;
+    fn latest_context_hashes(&self, count: i64) -> Result<Vec<ContextHash>, ContextError>;
     // called when a new cycle starts
     fn cycle_started(&mut self) -> Result<(), ContextError>;
     // get value for key from a point in history indicated by context hash

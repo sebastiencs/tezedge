@@ -3,7 +3,7 @@
 
 use std::{
     borrow::Cow,
-    collections::hash_map::DefaultHasher,
+    collections::{hash_map::DefaultHasher, VecDeque},
     convert::TryInto,
     hash::Hasher,
     io::{Read, Write},
@@ -132,7 +132,7 @@ pub struct Persistent {
     /// This repeats 10 times
     sizes_file: File<{ TAG_SIZES }>,
     startup_check: bool,
-    last_commit_on_startup: Option<ObjectReference>,
+    last_commits_on_startup: VecDeque<ObjectReference>,
     read_statistics: Option<Mutex<ReadStatistics>>,
 }
 
@@ -288,7 +288,7 @@ impl Persistent {
             commit_counter: Default::default(),
             sizes_file,
             startup_check,
-            last_commit_on_startup: None,
+            last_commits_on_startup: VecDeque::default(),
             read_statistics: if read_mode {
                 Some(Mutex::new(ReadStatistics::default()))
             } else {
@@ -714,18 +714,28 @@ hashes_file={:?}, in sizes.db={:?}",
         self.shapes = shapes;
         self.string_interner = string_interner;
         self.context_hashes = context_hashes.index;
-        self.last_commit_on_startup = context_hashes.last_commit;
+        self.last_commits_on_startup = context_hashes.last_commits;
         self.commit_counter = commit_counter;
 
         Ok(())
     }
 
     pub fn get_last_context_hash(&self) -> Option<ContextHash> {
-        let object_ref = self.last_commit_on_startup?;
-        let raw_hash = self.get_hash(object_ref).unwrap();
-        let context_hash = ContextHash::try_from_bytes(raw_hash.as_ref()).unwrap();
+        self.last_commits_on_startup
+            .back()
+            .cloned()
+            .map(|obj_ref| self.get_hash(obj_ref).ok())?
+            .map(|hash| ContextHash::try_from_bytes(hash.as_ref()).ok())?
+    }
 
-        Some(context_hash)
+    pub fn get_lastest_context_hashes(&self) -> Vec<ContextHash> {
+        self.last_commits_on_startup
+            .iter()
+            .map(|obj_ref| self.get_hash(obj_ref.clone()).ok())
+            .filter_map(|h| h)
+            .map(|hash| ContextHash::try_from_bytes(hash.as_ref()).ok())
+            .filter_map(|h| h)
+            .collect()
     }
 
     pub fn get_file_sizes(&self) -> FileSizes {
@@ -871,9 +881,11 @@ impl FileSizes {
     }
 }
 
+const NLAST_COMMITS: usize = 10;
+
 struct DeserializedCommitIndex {
     index: Map<u64, ObjectReference>,
-    last_commit: Option<ObjectReference>,
+    last_commits: VecDeque<ObjectReference>,
 }
 
 fn deserialize_commit_index(
@@ -887,7 +899,7 @@ fn deserialize_commit_index(
     let mut hash_id_bytes = [0u8; 8];
     let mut hash_offset_bytes = [0u8; 8];
     let mut commit_hash: ObjectHash = Default::default();
-    let mut last_commit = None;
+    let mut last_commits = VecDeque::with_capacity(NLAST_COMMITS);
 
     let mut commit_index_file = commit_index_file.buffered()?;
 
@@ -905,8 +917,12 @@ fn deserialize_commit_index(
         commit_index_file.read_exact(&mut commit_hash)?;
         offset += commit_hash.len() as u64;
 
+        if last_commits.len() == NLAST_COMMITS {
+            last_commits.pop_front();
+        }
+
         let object_reference = ObjectReference::new(HashId::new(hash_id), Some(hash_offset.into()));
-        last_commit = Some(object_reference);
+        last_commits.push_back(object_reference);
 
         let mut hasher = DefaultHasher::new();
         hasher.write(&commit_hash);
@@ -917,7 +933,7 @@ fn deserialize_commit_index(
 
     Ok(DeserializedCommitIndex {
         index: context_hashes,
-        last_commit,
+        last_commits,
     })
 }
 
@@ -950,8 +966,12 @@ impl KeyValueStoreBackend for Persistent {
         Ok(())
     }
 
-    fn latest_context_hashes(&self) -> Result<Vec<ContextHash>, DBError> {
-        Ok(vec![])
+    fn latest_context_hashes(&self, count: i64) -> Result<Vec<ContextHash>, DBError> {
+        let mut latests = self.get_lastest_context_hashes();
+        latests.reverse();
+        latests.truncate(count.try_into().unwrap_or(0));
+        latests.reverse();
+        Ok(latests)
     }
 
     fn store_own_repository(&mut self, repository: Arc<RwLock<ContextKeyValueStore>>) {

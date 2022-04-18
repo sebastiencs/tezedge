@@ -462,7 +462,8 @@ impl KeyValueStoreBackend for InMemory {
         Ok(None)
     }
 
-    fn latest_context_hashes(&self) -> Result<Vec<ContextHash>, DBError> {
+    fn latest_context_hashes(&self, _count: i64) -> Result<Vec<ContextHash>, DBError> {
+        // Ignore `count`, the in-memory context only has at most 1 context hash on {re}start
         if let Some(latest) = self.latest_context_hash.clone() {
             Ok(vec![latest])
         } else {

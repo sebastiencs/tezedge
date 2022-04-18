@@ -74,7 +74,7 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
         // no-op
     }
 
-    fn latest_context_hashes(&self) -> Result<Vec<ContextHash>, DBError> {
+    fn latest_context_hashes(&self, count: i64) -> Result<Vec<ContextHash>, DBError> {
         Ok(vec![])
     }
 

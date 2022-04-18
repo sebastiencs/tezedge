@@ -12,7 +12,7 @@ use crate::{EnablingCondition, State};
 
 use super::ProtocolRunnerCurrentHeadState;
 
-pub const DEFAULT_NUMBER_OF_CONTEXT_HASHES: i32 = 10;
+pub const DEFAULT_NUMBER_OF_CONTEXT_HASHES: i64 = 10;
 
 #[cfg_attr(feature = "fuzzing", derive(fuzzcheck::DefaultMutator))]
 #[derive(Serialize, Deserialize, Debug, Clone)]
