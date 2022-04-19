@@ -731,10 +731,8 @@ hashes_file={:?}, in sizes.db={:?}",
     pub fn get_lastest_context_hashes(&self) -> Vec<ContextHash> {
         self.last_commits_on_startup
             .iter()
-            .map(|obj_ref| self.get_hash(obj_ref.clone()).ok())
-            .filter_map(|h| h)
-            .map(|hash| ContextHash::try_from_bytes(hash.as_ref()).ok())
-            .filter_map(|h| h)
+            .filter_map(|obj_ref| self.get_hash(*obj_ref).ok())
+            .filter_map(|hash| ContextHash::try_from_bytes(hash.as_ref()).ok())
             .collect()
     }
 

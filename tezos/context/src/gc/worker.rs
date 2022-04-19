@@ -645,9 +645,7 @@ impl GCThread {
                 "Writing snapshot to disk output={:?} nhashes={:?} strings={:?}",
                 data_len, hashes_len, strings_len,
             );
-            on_disk_repo
-                .commit_to_disk(&output)
-                .map_err(DBError::from)?;
+            on_disk_repo.commit_to_disk(output).map_err(DBError::from)?;
             on_disk_repo.set_is_commiting();
             on_disk_repo.deallocate_strings_shapes();
             output.clear();
@@ -675,6 +673,7 @@ impl GCThread {
         Some(hash_id)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn traverse_to_make_snapshot(
         &self,
         hash_id: HashId,
@@ -687,7 +686,6 @@ impl GCThread {
         output: &mut SerializeOutput,
         stats: &mut SerializeStats,
         batch: &mut ChunkedVec<(HashId, InlinedBoxedSlice), { BATCH_CHUNK_CAPACITY }>,
-        // hash_ids_to_offset: &mut IndexMap<HashId, Option<AbsoluteOffset>, 1_000_000>,
         string: &mut String,
         hash: &mut ObjectHash,
     ) -> Result<ObjectReference, GCError> {
@@ -699,14 +697,6 @@ impl GCThread {
             hash_ids.push(hash_id);
             new_hash_ids.push(ObjectReference::default());
         })?;
-
-        // self.with_object(hash_id, |object_bytes| {
-        //     // TODO: Check if this is correct with inodes
-        //     for hash_id in iter_hash_ids(object_bytes) {
-        //         hash_ids.push(hash_id);
-        //         new_hash_ids.push(hash_id);
-        //     }
-        // })?;
 
         let end = hash_ids.len();
 
@@ -723,7 +713,6 @@ impl GCThread {
                 output,
                 stats,
                 batch,
-                // hash_ids_to_offset,
                 string,
                 hash,
             )?;
@@ -782,7 +771,7 @@ impl GCThread {
                 }
 
                 // Replace the old string id (from the in-mem context) to the new string id (on disk)
-                let new_string_id = on_disk_repo.string_interner.make_string_id(&string);
+                let new_string_id = on_disk_repo.string_interner.make_string_id(string);
                 *string_id = new_string_id;
 
                 Ok(())
@@ -800,15 +789,9 @@ impl GCThread {
                         return Ok(());
                     }
 
-                    // let hash_id = hash_ids[index]; // fail here
-
                     let new_obj_ref = new_hash_ids[index];
 
-                    // let offset = hash_ids_to_offset.get(hash_id).unwrap().unwrap().clone();
                     dir_entry.set_offset(new_obj_ref.offset());
-
-                    // let new_hash_id = new_hash_ids[index];
-                    // let new_hash_id = self.copy_hash_to_snapshot(hash_id, on_disk_repo);
                     dir_entry.set_hash_id(new_obj_ref.hash_id());
 
                     assert!(dir_entry.hash_id().is_some());
@@ -828,13 +811,6 @@ impl GCThread {
                 };
 
                 let root_hash_id = commit.root_ref.hash_id();
-                // let offset = hash_ids_to_offset
-                //     .get(root_hash_id)
-                //     .unwrap()
-                //     .unwrap()
-                //     .clone()
-                //     .unwrap();
-
                 let offset = new_hash_ids[start].offset();
 
                 let new_root_hash_id =
@@ -850,12 +826,6 @@ impl GCThread {
             Object::Blob(..) => {}
         }
 
-        // if hash_ids_to_offset
-        //     .get(hash_id)
-        //     .unwrap()
-        //     .map(|o| o.is_none())
-        //     .unwrap_or(true)
-        // {
         let new_hash_id = self.copy_hash_to_snapshot(hash_id, on_disk_repo, hash)?;
 
         let offset = persistent::serialize_object(
@@ -870,9 +840,6 @@ impl GCThread {
         )?;
 
         let new_obj_ref = ObjectReference::new(Some(new_hash_id), offset);
-
-        // hash_ids_to_offset.insert_at(hash_id, offset).unwrap();
-        // }
 
         storage.clear();
 
@@ -958,7 +925,7 @@ impl GCThread {
             .configuration
             .db_path
             .as_deref()
-            .unwrap_or_else(|| "/tmp/tezedge-context");
+            .unwrap_or("/tmp/tezedge-context");
         let mut path = PathBuf::from(path);
         path.pop();
 
