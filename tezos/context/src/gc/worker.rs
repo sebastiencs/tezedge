@@ -263,6 +263,8 @@ enum GCError {
     StringNotFound,
     #[error("Unable to create a valid snapshot path")]
     InvalidSnapshotPath,
+    #[error("Call to renameat2 failed with code {0}")]
+    RenameAt2Failed(i32),
 }
 
 impl From<HashIdError> for GCError {
@@ -288,6 +290,58 @@ pub enum Command {
         repository: Arc<RwLock<ContextKeyValueStore>>,
     },
     Close,
+}
+
+#[cfg(not(target_os = "linux"))]
+fn replace_context_with_snapshot(path_context: &str, path_snapshot: &str) -> Result<(), GCError> {
+    let options = fs_extra::dir::CopyOptions {
+        overwrite: true,
+        skip_exist: false,
+        buffer_size: 64000,
+        copy_inside: true,
+        content_only: true,
+        depth: 0,
+    };
+    fs_extra::dir::move_dir(path_snapshot, path_context, &options).unwrap();
+    std::fs::remove_dir_all(path_snapshot).map_err(DBError::from)?;
+
+    Ok(())
+}
+
+// `renameat2` is a Linux syscall
+#[cfg(target_os = "linux")]
+fn replace_context_with_snapshot(path_context: &str, path_snapshot: &str) -> Result<(), GCError> {
+    // Make sure `path_context` exist, or `renameat2` will fail
+    std::fs::create_dir_all(&path_context).map_err(DBError::from)?;
+
+    // Convert `path_{context,snapshot}` to C strings
+    let cstr_snapshot =
+        std::ffi::CString::new(path_snapshot).map_err(|_| GCError::InvalidSnapshotPath)?;
+    let cstr_snapshot = cstr_snapshot.as_bytes_with_nul().as_ptr() as *const i8;
+
+    let cstr_context =
+        std::ffi::CString::new(path_context).map_err(|_| GCError::InvalidSnapshotPath)?;
+    let cstr_context = cstr_context.as_bytes_with_nul().as_ptr() as *const i8;
+
+    // Exchange `path_context` with `path_snapshot` atomically
+    let result = unsafe {
+        libc::renameat2(
+            libc::AT_FDCWD,
+            cstr_snapshot,
+            libc::AT_FDCWD,
+            cstr_context,
+            libc::RENAME_EXCHANGE,
+        )
+    };
+
+    if result != 0 {
+        return Err(GCError::RenameAt2Failed(result));
+    }
+
+    // Remove snapshot path
+    std::fs::remove_dir_all(path_snapshot).map_err(DBError::from)?;
+
+    Ok(())
 }
 
 impl GCThread {
@@ -921,42 +975,37 @@ impl GCThread {
     }
 
     fn make_snapshot_paths(&self) -> Result<(String, String), GCError> {
-        let path = self
+        let path_context = self
             .configuration
             .db_path
             .as_deref()
             .unwrap_or("/tmp/tezedge-context");
-        let mut path = PathBuf::from(path);
-        path.pop();
 
-        let mut path_tmp = path.clone();
-        let mut path = path.clone();
-        path_tmp.push("snapshot-tmp");
-        path.push("snapshot");
+        let mut path_snapshot = PathBuf::from(path_context);
+        path_snapshot.push("snapshot");
 
-        let path_tmp = path_tmp
-            .to_str()
-            .ok_or(GCError::InvalidSnapshotPath)?
-            .to_string();
-        let path = path
+        let path_snapshot = path_snapshot
             .to_str()
             .ok_or(GCError::InvalidSnapshotPath)?
             .to_string();
 
-        Ok((path_tmp, path))
+        Ok((path_snapshot, path_context.to_string()))
     }
 
     fn make_snapshot(&self, commit_hash_id: HashId) -> Result<(), GCError> {
         let current = self.current_generation.get();
 
         if !(current > 0 && current % 10 == 0) {
-            println!("Skipping snapshot");
             return Ok(());
         }
 
-        let (path_tmp, path) = self.make_snapshot_paths()?;
+        let (path_snapshot, path_context) = self.make_snapshot_paths()?;
 
-        println!("MAKING SNAPSHOT tmp={:?} path={:?}", path_tmp, path);
+        log!(
+            "Making snapshot snapshot_path={:?} context_path={:?}",
+            path_snapshot,
+            path_context
+        );
 
         let mut hash_ids = ChunkedVec::default();
         let mut new_hash_ids = ChunkedVec::default();
@@ -968,16 +1017,12 @@ impl GCThread {
         let mut string = String::with_capacity(1024);
         let mut hash = ObjectHash::default();
 
-        // let mut hash_id_to_offset =
-        //     IndexMap::<HashId, Option<AbsoluteOffset>, 1_000_000>::default();
-
         let commit_hash_id = self
             .find_frozen_commit(commit_hash_id, &mut bytes)
             .ok_or(GCError::FrozenCommitNotFound)?;
 
         let mut repository = Persistent::try_new(PersistentConfiguration {
-            db_path: Some(path_tmp.clone()),
-            // db_path: Some("/tmp/tezedge-mem-tmp/".to_string()),
+            db_path: Some(path_snapshot.clone()),
             startup_check: false,
             read_mode: false,
         })?;
@@ -1000,63 +1045,16 @@ impl GCThread {
             &mut output,
             &mut stats,
             &mut batch,
-            // &mut hash_id_to_offset,
             &mut string,
             &mut hash,
         )?;
 
-        println!("SNAPSHOT DONE IN {:?}", now.elapsed());
-        println!("STORAGE={:#?}", storage.memory_usage(&strings));
-        println!(
-            "HASHES LEN={:#?} CAP={:?}",
-            hash_ids.len(),
-            hash_ids.capacity()
-        );
-        println!("OUTPUT={:#?}", output.len());
-        // println!("HASH_ID_TO_OFFSET={:#?}", hash_id_to_offset.capacity());
-        println!("{:#?}", repository.shapes);
-        println!("{:#?}", repository.string_interner);
-
         repository.put_context_hash(commit_ref)?;
         repository.commit_to_disk(&output).map_err(DBError::from)?;
 
-        let path_tmp_clone = path_tmp.clone();
+        log!("Snapshot done in {:?}", now.elapsed());
 
-        std::fs::create_dir_all(&path).map_err(DBError::from)?;
-
-        let path_tmp =
-            std::ffi::CString::new(path_tmp.as_str()).map_err(|_| GCError::InvalidSnapshotPath)?;
-        let path =
-            std::ffi::CString::new(path.as_str()).map_err(|_| GCError::InvalidSnapshotPath)?;
-
-        let result = unsafe {
-            libc::renameat2(
-                libc::AT_FDCWD,
-                path_tmp.as_bytes_with_nul().as_ptr() as *const i8,
-                // path_tmp.as_bytes_with_nul() as *const i8,
-                // oldpath,
-                libc::AT_FDCWD,
-                path.as_bytes_with_nul().as_ptr() as *const i8,
-                libc::RENAME_EXCHANGE,
-            )
-        };
-
-        println!("RESULT={:?}", result);
-        assert_eq!(result, 0);
-
-        // panic!("WILL DELETE {:?}", path_tmp_clone);
-        // std::fs::remove_file(path_tmp_clone).unwrap();
-        std::fs::remove_dir_all(path_tmp_clone).map_err(DBError::from)?;
-
-        // let options = fs_extra::dir::CopyOptions {
-        //     overwrite: true,
-        //     skip_exist: false,
-        //     buffer_size: 64000,
-        //     copy_inside: true,
-        //     content_only: true,
-        //     depth: 0,
-        // };
-        // fs_extra::dir::move_dir(path_tmp, path, &options).unwrap();
+        replace_context_with_snapshot(&path_context, &path_snapshot)?;
 
         Ok(())
     }
