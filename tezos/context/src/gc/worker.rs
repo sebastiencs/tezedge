@@ -358,6 +358,8 @@ impl GCThread {
             _ => Duration::from_secs(60 * 60 * 12), // 12 hours
         };
 
+        println!("delay_between_snapshot={:?}", delay_between_snapshot);
+
         Self {
             recv,
             free_ids: producer,
@@ -990,6 +992,7 @@ impl GCThread {
             .unwrap_or("/tmp/tezedge-context");
 
         let mut path_snapshot = PathBuf::from(path_context);
+        path_snapshot.pop();
         path_snapshot.push("snapshot");
 
         let path_snapshot = path_snapshot
@@ -1001,7 +1004,13 @@ impl GCThread {
     }
 
     fn make_snapshot(&mut self, commit_hash_id: HashId) -> Result<(), GCError> {
-        if self.last_snapshot_timestamp.elapsed() < self.delay_between_snapshot {
+        let elapsed = self.last_snapshot_timestamp.elapsed();
+        println!(
+            "ELAPSED={:?} DELAY={:?}",
+            elapsed, self.delay_between_snapshot
+        );
+
+        if elapsed < self.delay_between_snapshot {
             return Ok(());
         }
 
