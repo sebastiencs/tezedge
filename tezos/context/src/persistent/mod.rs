@@ -146,9 +146,10 @@ pub trait KeyValueStoreBackend {
     fn make_hash_id_ready_for_commit(&mut self, hash_id: HashId) -> Result<HashId, DBError>;
     /// Reload the persistent database and verify its integrity
     fn reload_database(&mut self) -> Result<(), ReloadError>;
-    /// Reload the persistent database and verify its integrity
+    /// Store a pointer to the repository
+    /// This is used for the garbage collector, to have a reference to the in-mem repository
     fn store_own_repository(&mut self, repository: Arc<RwLock<ContextKeyValueStore>>);
-    /// Reload the persistent database and verify its integrity
+    /// Add serialized objects to the repository
     fn add_serialized_objects(
         &mut self,
         batch: ChunkedVec<(HashId, InlinedBoxedSlice), { BATCH_CHUNK_CAPACITY }>,

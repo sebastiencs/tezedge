@@ -306,7 +306,6 @@ impl KeyValueStoreBackend for InMemory {
     }
 
     fn store_own_repository(&mut self, repository: Arc<RwLock<ContextKeyValueStore>>) {
-        println!("STORE OWN");
         self.self_ptr.replace(repository.clone());
         if let Some(sender) = self.sender.as_ref() {
             sender

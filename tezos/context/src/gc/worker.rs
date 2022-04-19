@@ -731,8 +731,8 @@ impl GCThread {
     fn traverse_to_make_snapshot(
         &self,
         hash_id: HashId,
-        hash_ids: &mut ChunkedVec<HashId, 8192>,
-        new_hash_ids: &mut ChunkedVec<ObjectReference, 8192>,
+        stack_hash_id: &mut ChunkedVec<HashId, 8192>,
+        stack_new_refs: &mut ChunkedVec<ObjectReference, 8192>,
         storage: &mut Storage,
         strings: &mut StringInterner,
         bytes: &mut Vec<u8>,
@@ -745,21 +745,21 @@ impl GCThread {
     ) -> Result<ObjectReference, GCError> {
         self.maybe_write_to_disk(output, on_disk_repo)?;
 
-        let start = hash_ids.len();
+        let start = stack_hash_id.len();
 
         self.for_each_child(hash_id, bytes, &mut |hash_id| {
-            hash_ids.push(hash_id);
-            new_hash_ids.push(ObjectReference::default());
+            stack_hash_id.push(hash_id);
+            stack_new_refs.push(ObjectReference::default());
         })?;
 
-        let end = hash_ids.len();
+        let end = stack_hash_id.len();
 
         for index in start..end {
-            let hash_id = hash_ids[index];
+            let hash_id = stack_hash_id[index];
             let new_obj_ref = self.traverse_to_make_snapshot(
                 hash_id,
-                hash_ids,
-                new_hash_ids,
+                stack_hash_id,
+                stack_new_refs,
                 storage,
                 strings,
                 bytes,
@@ -771,7 +771,7 @@ impl GCThread {
                 hash,
             )?;
 
-            new_hash_ids[index] = new_obj_ref;
+            stack_new_refs[index] = new_obj_ref;
         }
 
         bytes.clear();
@@ -843,7 +843,7 @@ impl GCThread {
                         return Ok(());
                     }
 
-                    let new_obj_ref = new_hash_ids[index];
+                    let new_obj_ref = stack_new_refs[index];
 
                     dir_entry.set_offset(new_obj_ref.offset());
                     dir_entry.set_hash_id(new_obj_ref.hash_id());
@@ -865,7 +865,7 @@ impl GCThread {
                 };
 
                 let root_hash_id = commit.root_ref.hash_id();
-                let offset = new_hash_ids[start].offset();
+                let offset = stack_new_refs[start].offset();
 
                 let new_root_hash_id =
                     self.copy_hash_to_snapshot(root_hash_id, on_disk_repo, hash)?;
@@ -897,11 +897,11 @@ impl GCThread {
 
         storage.clear();
 
-        assert_eq!(end, hash_ids.len());
-        hash_ids.remove_last_nelems(end - start);
+        assert_eq!(end, stack_hash_id.len());
+        stack_hash_id.remove_last_nelems(end - start);
 
-        assert_eq!(end, new_hash_ids.len());
-        new_hash_ids.remove_last_nelems(end - start);
+        assert_eq!(end, stack_new_refs.len());
+        stack_new_refs.remove_last_nelems(end - start);
 
         Ok(new_obj_ref)
     }

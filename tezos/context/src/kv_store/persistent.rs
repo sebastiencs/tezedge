@@ -879,6 +879,7 @@ impl FileSizes {
     }
 }
 
+/// Number of last commits we keep as references in `DeserializedCommitIndex::last_commits`
 const NLAST_COMMITS: usize = 10;
 
 struct DeserializedCommitIndex {
