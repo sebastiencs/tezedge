@@ -8,7 +8,7 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use crossbeam_channel::{Receiver, RecvError};
@@ -111,10 +111,6 @@ impl Generation {
         Self { inner: 0 }
     }
 
-    const fn get(self) -> u8 {
-        self.inner
-    }
-
     const fn wrapping_sub(self, rhs: u8) -> Self {
         if rhs > self.inner {
             assert!(rhs < 128); // Do not handle this case
@@ -207,6 +203,8 @@ pub(crate) struct GCThread {
 
     in_mem_repo: Option<Arc<RwLock<ContextKeyValueStore>>>,
     configuration: InMemoryConfiguration,
+    last_snapshot_timestamp: Instant,
+    delay_between_snapshot: Duration,
 }
 
 assert_eq_size!([u8; 16], Option<Box<[u8]>>);
@@ -352,6 +350,14 @@ impl GCThread {
         hashes_view: SharedIndexMapView<HashId, Option<Box<ObjectHash>>, OBJECTS_CHUNK_CAPACITY>,
         configuration: InMemoryConfiguration,
     ) -> Self {
+        let delay_between_snapshot = match std::env::var("GC_TEZEDGE_DELAY_SNAPSHOT_SEC")
+            .ok()
+            .and_then(|d| d.parse().ok())
+        {
+            Some(delay_sec) => Duration::from_secs(delay_sec),
+            _ => Duration::from_secs(60 * 60 * 12), // 12 hours
+        };
+
         Self {
             recv,
             free_ids: producer,
@@ -368,6 +374,8 @@ impl GCThread {
             highest_block_level: 0,
             in_mem_repo: None,
             configuration,
+            last_snapshot_timestamp: std::time::Instant::now(),
+            delay_between_snapshot,
         }
     }
 
@@ -992,10 +1000,8 @@ impl GCThread {
         Ok((path_snapshot, path_context.to_string()))
     }
 
-    fn make_snapshot(&self, commit_hash_id: HashId) -> Result<(), GCError> {
-        let current = self.current_generation.get();
-
-        if !(current > 0 && current % 10 == 0) {
+    fn make_snapshot(&mut self, commit_hash_id: HashId) -> Result<(), GCError> {
+        if self.last_snapshot_timestamp.elapsed() < self.delay_between_snapshot {
             return Ok(());
         }
 
@@ -1055,6 +1061,8 @@ impl GCThread {
         log!("Snapshot done in {:?}", now.elapsed());
 
         replace_context_with_snapshot(&path_context, &path_snapshot)?;
+
+        self.last_snapshot_timestamp = std::time::Instant::now();
 
         Ok(())
     }
