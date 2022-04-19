@@ -359,8 +359,6 @@ impl GCThread {
             _ => Duration::from_secs(60 * 60 * 12), // 12 hours
         };
 
-        println!("delay_between_snapshot={:?}", delay_between_snapshot);
-
         Self {
             recv,
             free_ids: producer,
@@ -706,10 +704,6 @@ impl GCThread {
         let strings_limit_reached = strings_len >= 10_000_000;
 
         if data_limit_reached || hashes_limit_reached || strings_limit_reached {
-            println!(
-                "Writing snapshot to disk output={:?} nhashes={:?} strings={:?}",
-                data_len, hashes_len, strings_len,
-            );
             on_disk_repo.commit_to_disk(output).map_err(DBError::from)?;
             on_disk_repo.set_is_commiting();
             on_disk_repo.deallocate_strings_shapes();
@@ -1005,15 +999,10 @@ impl GCThread {
     }
 
     fn make_snapshot(&mut self, commit_hash_id: HashId) -> Result<(), GCError> {
-        let elapsed = self.last_snapshot_timestamp.elapsed();
-        println!(
-            "ELAPSED={:?} DELAY={:?}",
-            elapsed, self.delay_between_snapshot
-        );
-
-        if elapsed < self.delay_between_snapshot {
+        if self.last_snapshot_timestamp.elapsed() < self.delay_between_snapshot {
             return Ok(());
         }
+        self.last_snapshot_timestamp = std::time::Instant::now();
 
         let (path_snapshot, path_context) = self.make_snapshot_paths()?;
 
@@ -1071,8 +1060,6 @@ impl GCThread {
         log!("Snapshot done in {:?}", now.elapsed());
 
         replace_context_with_snapshot(&path_context, &path_snapshot)?;
-
-        self.last_snapshot_timestamp = std::time::Instant::now();
 
         Ok(())
     }
