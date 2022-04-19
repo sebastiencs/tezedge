@@ -261,8 +261,8 @@ enum GCError {
     StringNotFound,
     #[error("Unable to create a valid snapshot path")]
     InvalidSnapshotPath,
-    #[error("Call to renameat2 failed with code {0}")]
-    RenameAt2Failed(i32),
+    #[error("Call to renameat2 failed with {error}")]
+    RenameAt2Failed { error: std::io::Error },
 }
 
 impl From<HashIdError> for GCError {
@@ -333,7 +333,8 @@ fn replace_context_with_snapshot(path_context: &str, path_snapshot: &str) -> Res
     };
 
     if result != 0 {
-        return Err(GCError::RenameAt2Failed(result));
+        let error = std::io::Error::last_os_error();
+        return Err(GCError::RenameAt2Failed { error });
     }
 
     // Remove snapshot path
