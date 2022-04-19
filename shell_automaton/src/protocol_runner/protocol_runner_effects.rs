@@ -3,8 +3,8 @@
 
 use crate::current_head::CurrentHeadRehydrateInitAction;
 use crate::protocol_runner::current_head::{
-    ProtocolRunnerCurrentHeadErrorAction, ProtocolRunnerCurrentHeadInitAction,
-    ProtocolRunnerCurrentHeadState, ProtocolRunnerCurrentHeadSuccessAction,
+    ProtocolRunnerCurrentHeadInitAction, ProtocolRunnerCurrentHeadState,
+    ProtocolRunnerCurrentHeadSuccessAction,
 };
 use crate::protocol_runner::init::context::{
     ProtocolRunnerInitContextErrorAction, ProtocolRunnerInitContextState,

@@ -70,11 +70,11 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
         Ok(())
     }
 
-    fn store_own_repository(&mut self, repository: Arc<RwLock<ContextKeyValueStore>>) {
+    fn store_own_repository(&mut self, _repository: Arc<RwLock<ContextKeyValueStore>>) {
         // no-op
     }
 
-    fn latest_context_hashes(&self, count: i64) -> Result<Vec<ContextHash>, DBError> {
+    fn latest_context_hashes(&self, _count: i64) -> Result<Vec<ContextHash>, DBError> {
         Ok(vec![])
     }
 

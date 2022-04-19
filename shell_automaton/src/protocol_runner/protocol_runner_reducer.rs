@@ -4,7 +4,6 @@
 use crate::protocol_runner::current_head::ProtocolRunnerCurrentHeadState;
 use crate::{Action, ActionWithMeta, State};
 
-use super::init::ProtocolRunnerInitState;
 use super::{ProtocolRunnerReadyState, ProtocolRunnerState};
 
 pub fn protocol_runner_reducer(state: &mut State, action: &ActionWithMeta) {

@@ -974,7 +974,7 @@ impl KeyValueStoreBackend for Persistent {
         Ok(latests)
     }
 
-    fn store_own_repository(&mut self, repository: Arc<RwLock<ContextKeyValueStore>>) {
+    fn store_own_repository(&mut self, _repository: Arc<RwLock<ContextKeyValueStore>>) {
         // no-op
     }
 

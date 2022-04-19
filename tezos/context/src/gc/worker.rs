@@ -786,7 +786,7 @@ impl GCThread {
                 *string_id = new_string_id;
 
                 Ok(())
-            });
+            })?;
 
         match &mut object {
             Object::Directory(dir_id) => {

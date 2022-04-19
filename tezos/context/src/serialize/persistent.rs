@@ -245,14 +245,18 @@ fn serialize_shaped_directory(
         }
     }
 
-    write_object_header(output, start, ObjectTag::ShapedDirectory);
+    write_object_header(output, start, ObjectTag::ShapedDirectory)?;
 
     stats.add_shape(nblobs_inlined, blobs_length);
 
     Ok(())
 }
 
-fn write_object_header(output: &mut SerializeOutput, start: usize, tag: ObjectTag) {
+fn write_object_header(
+    output: &mut SerializeOutput,
+    start: usize,
+    tag: ObjectTag,
+) -> Result<(), SerializationError> {
     let length = output.len() - start;
 
     if length <= 0xFF {
@@ -281,7 +285,7 @@ fn write_object_header(output: &mut SerializeOutput, start: usize, tag: ObjectTa
         output[start] = header[0];
         output[start + 1..start + 3].copy_from_slice(&length.to_le_bytes());
     } else {
-        output.write_all(&[0, 0, 0]);
+        output.write_all(&[0, 0, 0])?;
 
         let end = output.len();
         output.copy_within(start + 2..end - 3, start + 5);
@@ -297,6 +301,8 @@ fn write_object_header(output: &mut SerializeOutput, start: usize, tag: ObjectTa
         output[start] = header[0];
         output[start + 1..start + 5].copy_from_slice(&length.to_le_bytes());
     }
+
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -418,7 +424,7 @@ fn serialize_directory(
         }
     }
 
-    write_object_header(output, start, ObjectTag::Directory);
+    write_object_header(output, start, ObjectTag::Directory)?;
 
     stats.add_directory(keys_length, nblobs_inlined, blobs_length);
 
@@ -479,7 +485,7 @@ pub fn serialize_object(
             serialize_hash_id(object_hash_id, output, repository, stats)?;
             output.write_all(blob.as_ref())?;
 
-            write_object_header(output, start, ObjectTag::Blob);
+            write_object_header(output, start, ObjectTag::Blob)?;
 
             stats.add_blob(blob.len());
         }
@@ -553,7 +559,7 @@ pub fn serialize_object(
             // It's until the end of the slice
             output.write_all(commit.message.as_bytes())?;
 
-            write_object_header(output, start, ObjectTag::Commit);
+            write_object_header(output, start, ObjectTag::Commit)?;
         }
     };
 
@@ -716,7 +722,7 @@ fn serialize_inode(
                 serialize_offset(output, relative_offset, offset_length, stats)?;
             }
 
-            write_object_header(output, start, ObjectTag::InodePointers);
+            write_object_header(output, start, ObjectTag::InodePointers)?;
         }
         DirectoryOrInodeId::Directory(dir_id) => {
             // We don't check if it's a new inode because the parent

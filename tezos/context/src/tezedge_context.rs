@@ -6,7 +6,7 @@
 use std::rc::Rc;
 use std::{cell::RefCell, convert::TryInto, sync::Arc};
 
-use crypto::hash::{ContextHash, HashTrait};
+use crypto::hash::ContextHash;
 use ocaml_interop::BoxRoot;
 use parking_lot::RwLock;
 use tezos_context_api::StringDirectoryMap;
