@@ -6,9 +6,9 @@ USER root
 RUN apt-get update && apt-get install -y libssl-dev zlib1g
 
 # Checkout and compile tezedge source code
-ARG tezedge_git="https://github.com/tezedge/tezedge.git"
+ARG tezedge_git="https://github.com/sebastiencs/tezedge.git"
 ARG rust_toolchain="1.58.1"
-ARG SOURCE_BRANCH
+ARG SOURCE_BRANCH=context-hybrid-demo
 RUN curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain ${rust_toolchain} -y
 ENV PATH=/home/appuser/.cargo/bin:$PATH
 ENV RUST_BACKTRACE=1
