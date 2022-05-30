@@ -44,6 +44,12 @@ enum Commands {
         #[clap(short, long)]
         context_path: String,
     },
+    /// Check if the context match its `sizes.db`
+    CountDuplicateContexts {
+        /// Path of the persistent context
+        #[clap(short, long)]
+        context_path: String,
+    },
     /// Display `sizes.db` file
     DumpChecksums {
         /// Path of the persistent context
@@ -162,6 +168,9 @@ fn main() {
                 context_path,
                 context_hash
             );
+        }
+        Commands::CountDuplicateContexts { context_path } => {
+            let _ = reload_context_readonly(context_path.clone());
         }
         Commands::ContextSize {
             context_path,

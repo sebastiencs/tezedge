@@ -893,6 +893,8 @@ fn deserialize_commit_index(
     let mut hash_offset_bytes = [0u8; 8];
     let mut commit_hash: ObjectHash = Default::default();
     let mut last_commits = VecDeque::with_capacity(NLAST_COMMITS);
+    let mut ndup = 0;
+    let mut total = 0;
 
     let mut commit_index_file = commit_index_file.buffered()?;
 
@@ -921,8 +923,17 @@ fn deserialize_commit_index(
         hasher.write(&commit_hash);
         let hashed = hasher.finish();
 
-        context_hashes.insert(hashed, object_reference);
+        let old = context_hashes.insert(hashed, object_reference);
+        let is_dup = old.is_some();
+
+        if is_dup {
+            ndup += 1;
+        }
+        total += 1;
     }
+
+    elog!("Duplicates found: {:?}", ndup);
+    elog!("Total found: {:?}", total);
 
     Ok(DeserializedCommitIndex {
         index: context_hashes,
