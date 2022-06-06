@@ -2594,6 +2594,10 @@ mod tool {
         ) -> Result<(), StorageError> {
             let mut unique: HashMap<ObjectHash, HashId> = HashMap::default();
 
+            let mut uniq = 0;
+            let mut ndup = 0;
+            let mut ndup_p = 0;
+
             for (_, dir_entry_id) in self.directories.iter() {
                 let dir_entry = self.get_dir_entry(*dir_entry_id).unwrap();
 
@@ -2602,8 +2606,13 @@ mod tool {
                     None => continue,
                 };
 
+                ndup += 1;
+
                 let hash: ObjectHash = repository.get_hash(hash_id.into()).unwrap().into_owned();
-                let new_hash_id: HashId = *unique.entry(hash).or_insert(hash_id);
+                let new_hash_id: HashId = *unique.entry(hash).or_insert_with(|| {
+                    uniq += 1;
+                    hash_id
+                });
 
                 dir_entry.set_hash_id(new_hash_id);
             }
@@ -2616,11 +2625,15 @@ mod tool {
                     None => continue,
                 };
 
+                ndup_p += 1;
+
                 let hash: ObjectHash = repository.get_hash(hash_id.into()).unwrap().into_owned();
                 let new_hash_id: HashId = *unique.entry(hash).or_insert(hash_id);
 
                 self.pointer_set_hashid(&pointer, new_hash_id)?;
             }
+
+            eprintln!("TOTAL={:?} UNIQ={:?} NDUP_P={:?}", ndup, uniq, ndup_p);
 
             Ok(())
         }

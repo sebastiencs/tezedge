@@ -1004,6 +1004,12 @@ impl WorkingTree {
         enable_dedup_objects: bool,
     ) -> Result<PostCommitData, MerkleError> {
         let root_hash_id = self.get_root_directory_hash(repository)?;
+
+        // {
+        //     let mut storage = self.index.storage.borrow_mut();
+        //     storage.deduplicate_hashes(repository)?;
+        // }
+
         let root = self.get_root_directory();
 
         let new_commit = Commit {
@@ -1211,8 +1217,10 @@ impl WorkingTree {
                     if dir_entry.is_commited() {
                         return Ok(());
                     }
+                    // dir_entry.set_commited(true);
 
                     if let Some(offset) = data.get_dedup_object(object_hash_id) {
+                        // panic!("DEDUP");
                         dir_entry.set_offset(offset);
                         return Ok(());
                     }

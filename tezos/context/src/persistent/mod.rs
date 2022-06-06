@@ -149,6 +149,7 @@ pub trait KeyValueStoreBackend {
     /// Store a pointer to the repository
     /// This is used for the garbage collector, to have a reference to the in-mem repository
     fn store_own_repository(&mut self, repository: Arc<RwLock<ContextKeyValueStore>>);
+    fn dedup_hash(&mut self, hash_id: HashId) -> Option<HashId>;
     /// Add serialized objects to the repository
     fn add_serialized_objects(
         &mut self,

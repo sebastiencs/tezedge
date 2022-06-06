@@ -222,6 +222,10 @@ fn hash_long_inode(
         .get_vacant_object_hash()?
         .write_with(|object| hasher.finalize_variable(|r| object.copy_from_slice(r)))?;
 
+    if let Some(hash_id) = store.dedup_hash(hash_id) {
+        return Ok(hash_id);
+    }
+
     Ok(hash_id)
 }
 
@@ -274,6 +278,10 @@ fn hash_short_inode(
         .get_vacant_object_hash()?
         .write_with(|object| hasher.finalize_variable(|r| object.copy_from_slice(r)))?;
 
+    if let Some(hash_id) = store.dedup_hash(hash_id) {
+        return Ok(hash_id);
+    }
+
     Ok(hash_id)
 }
 
@@ -313,6 +321,10 @@ pub(crate) fn hash_blob(
     let hash_id = store
         .get_vacant_object_hash()?
         .write_with(|object| hasher.finalize_variable(|r| object.copy_from_slice(r)))?;
+
+    if let Some(hash_id) = store.dedup_hash(hash_id) {
+        return Ok(Some(hash_id));
+    }
 
     Ok(Some(hash_id))
 }

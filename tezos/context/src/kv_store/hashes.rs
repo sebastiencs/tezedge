@@ -20,11 +20,11 @@ use super::index_map::IndexMap;
 /// such as `WorkingTree::hash` and the ones being commited.
 pub struct HashesContainer {
     /// `ObjectHash` created during the working tree manipulation
-    working_tree: IndexMap<HashId, ObjectHash, 1000>,
+    pub working_tree: IndexMap<HashId, ObjectHash, 1000>,
     /// `ObjectHash` ready to be commited to disk
-    commiting: IndexMap<HashId, ObjectHash, 1000>,
+    pub commiting: IndexMap<HashId, ObjectHash, 1000>,
     /// `true` when we create `ObjectHash` to must be commited
-    is_commiting: bool,
+    pub is_commiting: bool,
     /// First `HashId` in `Self::working_tree` and `Self::commiting`
     first_index: usize,
     /// Keep an index on duplicate hashes
@@ -39,7 +39,8 @@ impl HashesContainer {
             commiting: IndexMap::default(),
             is_commiting: false,
             first_index,
-            dedup_hashes: None,
+            dedup_hashes: Some(Default::default()),
+            // dedup_hashes: None,
         }
     }
 
@@ -122,6 +123,19 @@ impl HashesContainer {
                 .ok_or(DBError::HashNotFound {
                     object_ref: hash_id.into(),
                 })?;
+
+        // for (k, v) in self.commiting.iter_with_keys() {
+        //     if v == hash {
+        //         if let Some(dedup) = self.dedup_hashes.as_mut() {
+        //             dedup.insert(old_hash_id, k);
+        //         };
+        //         return Ok(k);
+        //     }
+        // }
+
+        // for h in self.commiting.iter_values() {
+        //     assert_ne!(h, hash);
+        // }
 
         // Push the `ObjectHash` into `Self::commiting`
         let commiting_index: usize = self.commiting.push(*hash)?.try_into()?;

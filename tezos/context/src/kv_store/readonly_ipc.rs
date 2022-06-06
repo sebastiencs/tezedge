@@ -74,6 +74,10 @@ impl KeyValueStoreBackend for ReadonlyIpcBackend {
         // no-op
     }
 
+    fn dedup_hash(&mut self, hash_id: HashId) -> Option<HashId> {
+        None
+    }
+
     fn latest_context_hashes(&self, _count: i64) -> Result<Vec<ContextHash>, DBError> {
         Ok(vec![])
     }

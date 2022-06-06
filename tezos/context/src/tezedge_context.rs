@@ -1124,6 +1124,13 @@ impl TezedgeContext {
     ) -> Result<ContextHash, ContextError> {
         self.index.synchronize_interned_strings_to_repository()?;
 
+        // {
+        //     // Compute the hashes of the whole tree and remove the duplicate ones
+        //     let mut repo = self.index.repository.write();
+        //     let _ = self.tree.get_root_directory_hash(&mut *repo)?;
+        //     self.index.storage.borrow_mut().deduplicate_hashes(&*repo).unwrap();
+        // }
+
         let (commit_hash, serialize_stats) = {
             let mut repository = self.index.repository.write();
             let date: u64 = date.try_into()?;

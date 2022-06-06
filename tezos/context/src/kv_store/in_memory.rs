@@ -305,6 +305,10 @@ impl KeyValueStoreBackend for InMemory {
         self.reload_database()
     }
 
+    fn dedup_hash(&mut self, hash_id: HashId) -> Option<HashId> {
+        None
+    }
+
     fn store_own_repository(&mut self, repository: Arc<RwLock<ContextKeyValueStore>>) {
         self.self_ptr.replace(repository.clone());
         if let Some(sender) = self.sender.as_ref() {

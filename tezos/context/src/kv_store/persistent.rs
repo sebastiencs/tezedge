@@ -3,7 +3,7 @@
 
 use std::{
     borrow::Cow,
-    collections::{hash_map::DefaultHasher, VecDeque},
+    collections::{hash_map::DefaultHasher, HashMap, VecDeque},
     convert::TryInto,
     hash::Hasher,
     io::{Read, Write},
@@ -134,6 +134,10 @@ pub struct Persistent {
     startup_check: bool,
     lastest_commits_on_startup: VecDeque<ObjectReference>,
     read_statistics: Option<Mutex<ReadStatistics>>,
+
+    dedup_hashes: Option<HashMap<ObjectHash, HashId>>,
+    uniq: usize,
+    total: usize,
 }
 
 impl Drop for Persistent {
@@ -294,6 +298,9 @@ impl Persistent {
             } else {
                 None
             },
+            dedup_hashes: None,
+            uniq: 0,
+            total: 0,
         })
     }
 
@@ -1145,8 +1152,11 @@ impl KeyValueStoreBackend for Persistent {
         let offset = self.data_file.offset();
 
         self.hashes.in_memory.set_is_commiting();
+        // self.dedup_hashes = Some(HashMap::with_capacity(10_000));
 
         let enable_dedub_objects = self.hashes.in_memory.dedup_hashes.is_some();
+
+        assert!(enable_dedub_objects);
 
         let PostCommitData {
             commit_ref,
@@ -1173,7 +1183,43 @@ impl KeyValueStoreBackend for Persistent {
         self.commit_to_disk(&output)
             .map_err(|err| DBError::CommitToDiskError { err })?;
 
+        self.dedup_hashes = Some(HashMap::with_capacity(100_000));
+        // self.dedup_hashes = None;
+
+        eprintln!("TOTAL={:?} UNIQ={:?}", self.total, self.uniq);
+
+        self.uniq = 0;
+        self.total = 0;
+
         Ok((commit_hash, serialize_stats))
+    }
+
+    fn dedup_hash(&mut self, hash_id: HashId) -> Option<HashId> {
+        return None;
+
+        let dedup = self.dedup_hashes.as_mut()?;
+
+        self.total += 1;
+
+        let hash = self.hashes.get_hash(hash_id).unwrap().into_owned();
+
+        let old_hash_id = match dedup.entry(hash) {
+            std::collections::hash_map::Entry::Occupied(v) => v.get().clone(),
+            std::collections::hash_map::Entry::Vacant(v) => {
+                v.insert(hash_id);
+                return None;
+            }
+        };
+
+        self.uniq += 1;
+
+        if self.hashes.in_memory.is_commiting {
+            self.hashes.in_memory.commiting.remove_last_nelems(1);
+        } else {
+            self.hashes.in_memory.working_tree.remove_last_nelems(1);
+        }
+
+        Some(old_hash_id)
     }
 
     fn add_serialized_objects(
