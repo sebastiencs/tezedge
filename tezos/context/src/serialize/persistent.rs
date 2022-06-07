@@ -121,6 +121,8 @@ fn get_relative_offset(
     current_offset: AbsoluteOffset,
     target_offset: AbsoluteOffset,
 ) -> (RelativeOffset, RelativeOffsetLength) {
+    use RelativeOffsetLength::*;
+
     let current_offset = current_offset.as_u64();
     let target_offset = target_offset.as_u64();
 
@@ -129,25 +131,13 @@ fn get_relative_offset(
     let relative_offset = current_offset - target_offset;
 
     if relative_offset <= 0xFF {
-        (
-            RelativeOffset(relative_offset),
-            RelativeOffsetLength::OneByte,
-        )
+        (RelativeOffset(relative_offset), OneByte)
     } else if relative_offset <= 0xFFFF {
-        (
-            RelativeOffset(relative_offset),
-            RelativeOffsetLength::TwoBytes,
-        )
+        (RelativeOffset(relative_offset), TwoBytes)
     } else if relative_offset <= 0xFFFFFFFF {
-        (
-            RelativeOffset(relative_offset),
-            RelativeOffsetLength::FourBytes,
-        )
+        (RelativeOffset(relative_offset), FourBytes)
     } else {
-        (
-            RelativeOffset(relative_offset),
-            RelativeOffsetLength::EightBytes,
-        )
+        (RelativeOffset(relative_offset), EightBytes)
     }
 }
 
@@ -161,23 +151,25 @@ fn serialize_offset(
 
     match offset_length {
         RelativeOffsetLength::OneByte => {
-            let offset: u8 = relative_offset as u8;
+            let offset: u8 = relative_offset.try_into().unwrap();
             output.write_all(&offset.to_le_bytes())?;
             stats.add_offset(1);
         }
         RelativeOffsetLength::TwoBytes => {
-            let offset: u16 = relative_offset as u16;
+            let offset: u16 = relative_offset.try_into().unwrap();
             output.write_all(&offset.to_le_bytes())?;
             stats.add_offset(2);
         }
         RelativeOffsetLength::FourBytes => {
-            let offset: u32 = relative_offset as u32;
+            let offset: u32 = relative_offset.try_into().unwrap();
             output.write_all(&offset.to_le_bytes())?;
             stats.add_offset(4);
         }
         RelativeOffsetLength::EightBytes => {
-            output.write_all(&relative_offset.to_le_bytes())?;
-            stats.add_offset(8);
+            let bytes: [u8; 8] = relative_offset.to_le_bytes();
+
+            output.write_all(&bytes[0..6])?;
+            stats.add_offset(6);
         }
     }
 
@@ -786,10 +778,14 @@ fn deserialize_offset(
             Ok((absolute_offset.into(), 4))
         }
         RelativeOffsetLength::EightBytes => {
-            let bytes = data.get(..8).ok_or(UnexpectedEOF)?;
-            let relative_offset: u64 = u64::from_le_bytes(bytes.try_into()?);
+            let bytes = data.get(..6).ok_or(UnexpectedEOF)?;
+
+            let mut relative_offset_bytes: [u8; 8] = [0; 8];
+            relative_offset_bytes[..6].copy_from_slice(bytes);
+
+            let relative_offset: u64 = u64::from_le_bytes(relative_offset_bytes);
             let absolute_offset: u64 = object_offset - relative_offset;
-            Ok((absolute_offset.into(), 8))
+            Ok((absolute_offset.into(), 6))
         }
     }
 }
@@ -1757,6 +1753,35 @@ mod tests {
             header.clear(index);
             header.set(index, RelativeOffsetLength::EightBytes);
             assert_eq!(header.get(index), RelativeOffsetLength::EightBytes);
+        }
+    }
+
+    #[test]
+    fn test_offsets() {
+        use RelativeOffsetLength::*;
+
+        let mut output = SerializeOutput::new(None);
+        let mut stats = SerializeStats::default();
+        let pointer_offset = AbsoluteOffset(10);
+
+        for (offset, output_len, offset_len) in [
+            (100, 1, OneByte),
+            (1000, 2, TwoBytes),
+            (100000000, 4, FourBytes),
+            (100000000000, 6, EightBytes),
+        ] {
+            output.clear();
+            let offset = AbsoluteOffset(offset);
+
+            let (relative_offset, offset_length) = get_relative_offset(offset, pointer_offset);
+            assert_eq!(offset_length, offset_len);
+
+            serialize_offset(&mut output, relative_offset, offset_length, &mut stats).unwrap();
+            assert_eq!(output.len(), output_len);
+
+            let (off, len) = deserialize_offset(&output, offset_length, offset).unwrap();
+            assert_eq!(len, output_len);
+            assert_eq!(off, pointer_offset);
         }
     }
 }
