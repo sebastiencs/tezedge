@@ -95,6 +95,7 @@ pub struct DirectoryShapes {
 impl std::fmt::Debug for DirectoryShapes {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DirectoryShapes")
+            .field("hash_to_strings_cap", &self.hash_to_strings.capacity())
             .field("hash_to_strings_bytes", &self.hash_to_strings.total_bytes())
             .field("shapes_cap", &self.shapes.capacity())
             .field(

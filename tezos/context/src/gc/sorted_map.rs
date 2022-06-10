@@ -452,6 +452,11 @@ where
         })
     }
 
+    pub fn capacity(&self) -> usize {
+        let capacity = self.list.iter().fold(0, |acc, c| acc + c.capacity());
+        capacity
+    }
+
     pub fn total_bytes(&self) -> usize {
         let list_size = self.list.len() * std::mem::size_of::<Chunk<K, V, CHUNK_SIZE>>();
         // TODO: Change this

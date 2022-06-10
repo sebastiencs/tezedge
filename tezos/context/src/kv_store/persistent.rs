@@ -714,6 +714,19 @@ hashes_file={:?}, in sizes.db={:?}",
         self.lastest_commits_on_startup = context_hashes.last_commits;
         self.commit_counter = commit_counter;
 
+        eprintln!("BEFORE SHRINK");
+        eprintln!("Shape {:#?}", &self.shapes);
+        eprintln!("Shape total {:#?}", &self.shapes.total_bytes());
+        eprintln!("Strings {:#?}", &self.string_interner.memory_usage());
+
+        self.string_interner.shrink_to_fit();
+        self.shapes.shrink_to_fit();
+
+        eprintln!("AFTER SHRINK");
+        eprintln!("Shape {:#?}", &self.shapes);
+        eprintln!("Shape total {:#?}", &self.shapes.total_bytes());
+        eprintln!("Strings {:#?}", &self.string_interner.memory_usage());
+
         Ok(())
     }
 
@@ -1172,6 +1185,8 @@ impl KeyValueStoreBackend for Persistent {
 
         self.commit_to_disk(&output)
             .map_err(|err| DBError::CommitToDiskError { err })?;
+
+        eprintln!("Shapes={:#?}", &self.shapes);
 
         Ok((commit_hash, serialize_stats))
     }

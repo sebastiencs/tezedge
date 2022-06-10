@@ -258,6 +258,7 @@ pub struct StringInterner {
 impl std::fmt::Debug for StringInterner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("StringInterner")
+            .field("string_to_offset_cap", &self.string_to_offset.capacity())
             .field(
                 "string_to_offset_bytes",
                 &self.string_to_offset.total_bytes(),
